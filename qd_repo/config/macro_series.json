@@ -1,0 +1,17 @@
+{
+  "_comment": "Config-driven macro series list per architecture doc section 1.2. Add/remove entries here without touching schema or script code. 'units' follows FRED's own transformation params (lin = no transform, pc1 = percent change from year ago).",
+  "fred": [
+    { "series_id": "DGS10", "units": "lin", "label": "US 10Y Treasury Yield" },
+    { "series_id": "FEDFUNDS", "units": "lin", "label": "Fed Funds Rate" },
+    { "series_id": "CPIAUCSL", "units": "pc1", "label": "US CPI YoY" },
+    { "series_id": "UNRATE", "units": "lin", "label": "US Unemployment Rate" }
+  ],
+  "bot": {
+    "_status": "NOT IMPLEMENTED YET -- see fetch_macro.py docstring",
+    "_todo": [
+      "Register for a Bank of Thailand Open Data API key at https://apiportal.bot.or.th",
+      "Confirm the exact endpoint + response schema for: policy rate, Thai CPI, quarterly GDP growth",
+      "This could not be verified from this sandbox (BOT's API host is not reachable here) -- treat as a separate follow-up, not silently guessed."
+    ]
+  }
+}
