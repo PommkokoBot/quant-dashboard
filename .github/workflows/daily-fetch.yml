@@ -1,0 +1,47 @@
+name: Daily data fetch
+
+on:
+  schedule:
+    - cron: "30 23 * * *"
+  workflow_dispatch:
+    inputs:
+      full_history:
+        description: "Pull full price history instead of the last 10 days (use for first run / backfill)"
+        type: boolean
+        default: false
+      lookback_days:
+        description: "Override the incremental lookback window (days)"
+        type: number
+        default: 10
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch prices (Yahoo Finance)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ "${{ inputs.full_history }}" = "true" ]; then
+            python scripts/fetch_prices.py --full-history
+          else
+            python scripts/fetch_prices.py --lookback-days "${{ inputs.lookback_days || 10 }}"
+          fi
+
+      - name: Fetch macro series (FRED)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python scripts/fetch_macro.py
+        continue-on-error: true
