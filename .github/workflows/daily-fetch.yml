@@ -2,6 +2,7 @@ name: Daily data fetch
 
 on:
   schedule:
+    # 23:30 UTC = 06:30 Thailand time (covers prior-day US close + same-day Asia close)
     - cron: "30 23 * * *"
   workflow_dispatch:
     inputs:
@@ -43,5 +44,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python scripts/fetch_macro.py
+        run: |
+          if [ "${{ inputs.full_history }}" = "true" ]; then
+            python scripts/fetch_macro.py --full-history
+          else
+            python scripts/fetch_macro.py --lookback-days "${{ inputs.lookback_days || 10 }}"
+          fi
+        # Don't fail the whole run if macro fetch has issues (e.g. FRED_API_KEY not
+        # added yet) -- the price fetch above is the critical path for the dashboard.
         continue-on-error: true
