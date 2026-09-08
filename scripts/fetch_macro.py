@@ -20,6 +20,7 @@ Env vars required:
 Usage:
   python scripts/fetch_macro.py
   python scripts/fetch_macro.py --lookback-days 30
+  python scripts/fetch_macro.py --full-history    # pull max available history (first run / backfill)
 """
 import argparse
 import json
@@ -33,6 +34,12 @@ from supabase import create_client
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "macro_series.json"
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
+
+# Same fixed backfill start date used by fetch_prices.py, so a --full-history run pulls
+# each FRED series' full available history instead of just the last N days. FRED applies
+# any "units" transform (e.g. pc1) on its own full series first, then filters by
+# observation_start -- so an early start date here does not distort the transformed values.
+FULL_HISTORY_START = "1990-01-01"
 
 
 def get_client():
@@ -85,12 +92,12 @@ def fetch_bot_series(*_args, **_kwargs):
     )
 
 
-def run(lookback_days: int):
+def run(lookback_days: int, full_history: bool = False):
     config = load_config()
     client = get_client()
     fred_key = os.environ.get("FRED_API_KEY")
 
-    start_date = (date.today() - timedelta(days=lookback_days)).isoformat()
+    start_date = FULL_HISTORY_START if full_history else (date.today() - timedelta(days=lookback_days)).isoformat()
     ok, errored = 0, 0
 
     for series in config.get("fred", []):
@@ -120,5 +127,6 @@ def run(lookback_days: int):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--lookback-days", type=int, default=10, help="Re-fetch observations from the last N days. Default 10.")
+    parser.add_argument("--full-history", action="store_true", help="Pull max available history instead of the lookback window. Use for the first run / backfill.")
     args = parser.parse_args()
-    run(args.lookback_days)
+    run(args.lookback_days, args.full_history)

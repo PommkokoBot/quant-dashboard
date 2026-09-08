@@ -14,8 +14,10 @@ the end of this file for the recommended first-run check.
 
 Run: python scripts/test_fetch_offline.py
 """
+import os
 import sys
 import unittest
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -185,6 +187,37 @@ class TestFredParsing(unittest.TestCase):
     def test_bot_fetch_raises_not_implemented(self):
         with self.assertRaises(NotImplementedError):
             fetch_macro.fetch_bot_series()
+
+
+class TestMacroFullHistory(unittest.TestCase):
+    """Pins down the fix for the macro backfill gap: a --full-history run must send
+    FULL_HISTORY_START as observation_start instead of the 10-day lookback window,
+    for every configured FRED series."""
+
+    @patch("fetch_macro.get_client")
+    @patch("fetch_macro.fetch_fred_series")
+    def test_full_history_true_uses_fixed_start_for_every_series(self, mock_fetch, mock_get_client):
+        mock_get_client.return_value = MagicMock()
+        mock_fetch.return_value = []
+        with patch.dict(os.environ, {"FRED_API_KEY": "fake_key"}):
+            fetch_macro.run(lookback_days=10, full_history=True)
+        self.assertGreater(mock_fetch.call_count, 0)
+        for call in mock_fetch.call_args_list:
+            series_id, units, api_key, start_date = call.args
+            self.assertEqual(start_date, fetch_macro.FULL_HISTORY_START)
+
+    @patch("fetch_macro.get_client")
+    @patch("fetch_macro.fetch_fred_series")
+    def test_full_history_false_uses_lookback_window(self, mock_fetch, mock_get_client):
+        mock_get_client.return_value = MagicMock()
+        mock_fetch.return_value = []
+        with patch.dict(os.environ, {"FRED_API_KEY": "fake_key"}):
+            fetch_macro.run(lookback_days=10, full_history=False)
+        expected_start = (date.today() - timedelta(days=10)).isoformat()
+        for call in mock_fetch.call_args_list:
+            _, _, _, start_date = call.args
+            self.assertEqual(start_date, expected_start)
+            self.assertNotEqual(start_date, fetch_macro.FULL_HISTORY_START)
 
 
 if __name__ == "__main__":
