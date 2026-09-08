@@ -93,6 +93,34 @@ class TestBuildRowsAndFlags(unittest.TestCase):
         self.assertEqual(len(rows), 1)  # the NaN row was skipped, not written as nulls
 
 
+class TestFetchYfHistory(unittest.TestCase):
+    """Pins down the fix for a real bug hit on the first live GitHub Actions run:
+    yfinance's period="max" is rejected outright for some tickers (e.g. ^SETHD.BK --
+    "Period 'max' is invalid, must be one of: 1d, 5d"). full_history mode must use an
+    explicit start date instead of period="max", uniformly for every ticker."""
+
+    @patch("fetch_prices.yf.download")
+    def test_full_history_uses_explicit_start_not_period_max(self, mock_download):
+        idx = pd.to_datetime(["2020-01-02"])
+        mock_download.return_value = pd.DataFrame(
+            {"Open": [1], "High": [1], "Low": [1], "Close": [1], "Adj Close": [1.0], "Volume": [100]}, index=idx
+        )
+        fetch_prices.fetch_yf_history("^SETHD.BK", start=None, full_history=True)
+        _, kwargs = mock_download.call_args
+        self.assertNotIn("period", kwargs)
+        self.assertEqual(kwargs.get("start"), fetch_prices.FULL_HISTORY_START)
+
+    @patch("fetch_prices.yf.download")
+    def test_incremental_uses_given_start(self, mock_download):
+        idx = pd.to_datetime(["2026-01-02"])
+        mock_download.return_value = pd.DataFrame(
+            {"Open": [1], "High": [1], "Low": [1], "Close": [1], "Adj Close": [1.0], "Volume": [100]}, index=idx
+        )
+        fetch_prices.fetch_yf_history("SPY", start="2026-01-01", full_history=False)
+        _, kwargs = mock_download.call_args
+        self.assertEqual(kwargs.get("start"), "2026-01-01")
+
+
 class TestUpsertChunking(unittest.TestCase):
     def test_chunks_large_batches(self):
         mock_client = MagicMock()

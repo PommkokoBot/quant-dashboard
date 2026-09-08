@@ -32,6 +32,13 @@ SANITY_MOVE_THRESHOLD = 0.50  # +-50% daily move triggers a 'flagged' fetch_log 
 RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 5
 
+# Some tickers (mostly non-US indices, e.g. ^SETHD.BK -- SET High Dividend Index) reject
+# yfinance's period="max" outright: "Period 'max' is invalid, must be one of: 1d, 5d".
+# An explicit start date sidesteps that per-ticker period whitelist entirely -- Yahoo just
+# returns whatever history actually exists from this date forward -- so full-history mode
+# uses a fixed early start date instead of period="max", uniformly for every ticker type.
+FULL_HISTORY_START = "1990-01-01"
+
 
 def get_client():
     url = os.environ.get("SUPABASE_URL")
@@ -64,12 +71,10 @@ def get_last_close(client, instrument_id):
 
 def fetch_yf_history(ticker: str, start: str | None, full_history: bool) -> pd.DataFrame:
     last_err = None
+    effective_start = FULL_HISTORY_START if full_history else start
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
-            if full_history:
-                df = yf.download(ticker, period="max", auto_adjust=False, progress=False)
-            else:
-                df = yf.download(ticker, start=start, auto_adjust=False, progress=False)
+            df = yf.download(ticker, start=effective_start, auto_adjust=False, progress=False)
             # yfinance >= 0.2 returns a MultiIndex column frame even for a single ticker
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
