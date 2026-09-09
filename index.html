@@ -252,7 +252,14 @@
         </div>
         <span id="momRiskFreeStatus" class="text-[10px] text-slate-400"></span>
       </div>
-      <p class="text-[10px] text-slate-400 mt-3">Trailing Return / SMA Trend Filter คำนวณจากราคาปิดสิ้นงวด (สัปดาห์/เดือน) — instrument ที่มีประวัติราคาไม่ครบตามที่เลือกจะถูกตัดออกจากอันดับรอบนั้นโดยอัตโนมัติ</p>
+      <div class="flex items-center gap-3 mt-4 pt-4 border-t border-slate-100">
+        <button id="momCalculateBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg px-4 py-2">
+          คำนวณ
+        </button>
+        <span id="momCalculateStatus" class="text-xs text-slate-500"></span>
+      </div>
+      <p id="momCalculateError" class="text-sm text-red-600 mt-2 hidden"></p>
+      <p class="text-[10px] text-slate-400 mt-3">Trailing Return / SMA Trend Filter คำนวณจากราคาปิดสิ้นงวด (สัปดาห์/เดือน) — instrument ที่มีประวัติราคาไม่ครบตามที่เลือกจะถูกตัดออกจากอันดับรอบนั้นโดยอัตโนมัติ · เปลี่ยน Universe/Timeframe/Benchmark แล้วต้องกด "คำนวณ" เพื่อโหลดข้อมูลใหม่ (ปุ่มนี้รันทั้ง Leaderboard, Rotation Graph และ Strategy Preview พร้อมกัน)</p>
     </section>
 
     <!-- ---------- Level 1: Leaderboard ---------- -->
@@ -284,7 +291,7 @@
     <!-- ---------- Level 2: Strategy Controls ---------- -->
     <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
       <h2 class="text-sm font-semibold text-slate-800 mb-1">Rotation Graph &amp; Strategy Preview</h2>
-      <p class="text-xs text-slate-500 mb-4">ภาพร่างแบบง่าย จำลอง Top-N strategy รายงวด ยังไม่รวมต้นทุนธุรกรรม — ต้องกด "คำนวณ" เพื่อรัน</p>
+      <p class="text-xs text-slate-500 mb-4">ภาพร่างแบบง่าย จำลอง Top-N strategy รายงวด ยังไม่รวมต้นทุนธุรกรรม — ปรับพารามิเตอร์ด้านล่างแล้วกด "คำนวณ" ที่ด้านบนสุดของหน้า</p>
       <div class="flex flex-wrap items-end gap-4 mb-4">
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Top-N</label>
@@ -316,12 +323,7 @@
             <option value="UNRATE">Unemployment Rate (UNRATE)</option>
           </select>
         </div>
-        <button id="momCalculateBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg px-4 py-2">
-          คำนวณ
-        </button>
-        <span id="momCalculateStatus" class="text-xs text-slate-500"></span>
       </div>
-      <p id="momCalculateError" class="text-sm text-red-600 mt-2 hidden"></p>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
         <div>
@@ -455,6 +457,7 @@ window.QD = (function () {
     activeTab: "seasonality",
     momentum: {
       dataLoaded: false,
+      lastFetchKey: null,       // set after a successful fetch; see computeMomentumFetchKey
       universeMode: "asset_class",
       timeframe: "month",
       lookbackPeriods: 12,
@@ -1432,15 +1435,34 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Data access
   // ---------------------------------------------------------------------
+  // PostgREST caps rows returned per request (project setting, "Max Rows" --
+  // seen in production capping a single period_end_closes() call at 1000
+  // rows total across ALL requested instruments combined, silently dropping
+  // whichever instruments/periods sorted after the cutoff -- confirmed via a
+  // real browser session against the live API, see decision log). The
+  // underlying SQL function orders deterministically
+  // (instrument_id, period_start, date desc), so paging with .range() is
+  // safe: each page is stable and we just keep asking for more until a page
+  // comes back shorter than requested.
+  const PERIOD_END_CLOSES_PAGE_SIZE = 4000;
+
   async function fetchPeriodEndCloses(instrumentIds, granularity, startDate, endDate) {
-    const { data, error } = await sb.rpc("period_end_closes", {
-      p_instrument_ids: instrumentIds,
-      p_granularity: granularity,
-      p_start_date: startDate || null,
-      p_end_date: endDate || null
-    });
-    if (error) throw error;
-    return data || [];
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("period_end_closes", {
+        p_instrument_ids: instrumentIds,
+        p_granularity: granularity,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null
+      }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
   }
 
   async function fetchMacroSeries(seriesId) {
@@ -1468,6 +1490,19 @@ window.QD = (function () {
     };
   }
 
+  // Identifies "what was fetched" (which instruments' price series are in
+  // state.momentum.seriesByInstrument, at what granularity) so the single
+  // top-level Calculate button can skip re-fetching from Supabase when only
+  // a client-side-only parameter changed (Lookback/SMA/Top-N/Weighting/etc.
+  // -- see decision log on why Universe/Timeframe/Benchmark are the only
+  // three controls that actually require new data).
+  function computeMomentumFetchKey() {
+    return `${state.momentum.universeMode}|${state.momentum.timeframe}|${state.momentum.benchmarkAssetId}`;
+  }
+
+  // Returns true on success, false if the fetch failed (error already shown
+  // in the UI) -- callers that chain further work (runMomentumCalculate)
+  // use this to stop before running Level 2 on stale/incomplete data.
   async function loadMomentumUniverseData() {
     const errEl = byId("momLeaderboardError");
     hide(errEl);
@@ -1481,9 +1516,11 @@ window.QD = (function () {
       const idList = Array.from(idSet);
       if (idList.length === 0) {
         state.momentum.seriesByInstrument = {};
+        state.momentum.dataLoaded = true;
+        state.momentum.lastFetchKey = computeMomentumFetchKey();
         renderMomentumLeaderboard();
         setText("momLeaderboardStatus", "");
-        return;
+        return true;
       }
       const rows = await fetchPeriodEndCloses(idList, state.momentum.timeframe);
       const byInst = {};
@@ -1494,11 +1531,14 @@ window.QD = (function () {
       Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
       state.momentum.seriesByInstrument = byInst;
       state.momentum.dataLoaded = true;
+      state.momentum.lastFetchKey = computeMomentumFetchKey();
       renderMomentumLeaderboard();
       setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
+      return true;
     } catch (e) {
       showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
       setText("momLeaderboardStatus", "");
+      return false;
     } finally {
       setLoading("momLeaderboardLoading", false);
     }
@@ -1674,11 +1714,25 @@ window.QD = (function () {
       <div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Benchmark Total Return</div><div class="font-semibold text-slate-700">${fmt(s.benchTotalReturnPct)}</div></div>`;
   }
 
+  // Single entry point behind the top-of-page "คำนวณ" button: covers both
+  // Level 1 (Leaderboard) and Level 2 (Rotation Graph + Strategy Preview).
+  // Only re-fetches from Supabase when Universe/Timeframe/Benchmark actually
+  // changed since the last successful load (computeMomentumFetchKey) --
+  // Lookback/SMA/Risk-Adjusted/Risk-free/Top-N/Weighting/Tail/Regime are all
+  // pure client-side recompute and never trigger a network call.
   async function runMomentumCalculate() {
     const errEl = byId("momCalculateError");
     hide(errEl);
     setText("momCalculateStatus", "กำลังคำนวณ...");
     try {
+      const needsFetch = !state.momentum.dataLoaded || computeMomentumFetchKey() !== state.momentum.lastFetchKey;
+      if (needsFetch) {
+        const ok = await loadMomentumUniverseData();
+        if (!ok) { setText("momCalculateStatus", ""); return; }
+      } else {
+        renderMomentumLeaderboard();
+      }
+
       const universe = state.momentum.universeInstruments;
       const seriesByInst = state.momentum.seriesByInstrument;
       const params = momentumRankParams();
@@ -1850,7 +1904,7 @@ window.QD = (function () {
     if (tabMomBtn) tabMomBtn.addEventListener("click", () => switchTab("momentum"));
 
     const universeEl = byId("momUniversePicker");
-    if (universeEl) universeEl.addEventListener("change", (e) => { state.momentum.universeMode = e.target.value; loadMomentumUniverseData(); });
+    if (universeEl) universeEl.addEventListener("change", (e) => { state.momentum.universeMode = e.target.value; });
 
     const tfEl = byId("momTimeframePicker");
     if (tfEl) tfEl.addEventListener("change", (e) => {
@@ -1859,7 +1913,6 @@ window.QD = (function () {
       state.momentum.lookbackPeriods = def.lookback;
       state.momentum.smaPeriods = def.sma;
       renderMomentumLookbackSmaPickers();
-      loadMomentumUniverseData();
     });
 
     const lbEl = byId("momLookbackPicker");
@@ -1869,7 +1922,7 @@ window.QD = (function () {
     if (smaEl) smaEl.addEventListener("change", (e) => { state.momentum.smaPeriods = Number(e.target.value); renderMomentumLeaderboard(); });
 
     const benchEl = byId("momBenchmarkPicker");
-    if (benchEl) benchEl.addEventListener("change", (e) => { state.momentum.benchmarkAssetId = Number(e.target.value); loadMomentumUniverseData(); });
+    if (benchEl) benchEl.addEventListener("change", (e) => { state.momentum.benchmarkAssetId = Number(e.target.value); });
 
     const riskToggle = byId("momRiskAdjustedToggle");
     if (riskToggle) riskToggle.addEventListener("change", (e) => { state.momentum.riskAdjusted = e.target.checked; renderMomentumLeaderboard(); });
@@ -2108,7 +2161,7 @@ window.QD = (function () {
     ema, sma, classifyOctant, alignTwoSeries, computeRotationGraphData,
     rankUniverseFromSeries, rankUniverseNow, buildMasterPeriodAxis, alignToAxis, rankUniverseAt,
     simulateTopNStrategy, computeEquityCurveSummary, alignMacroToPeriods,
-    buildLeaderboardChartDatasets, buildEquityChartDatasets, momentumRankParams,
+    buildLeaderboardChartDatasets, buildEquityChartDatasets, momentumRankParams, computeMomentumFetchKey,
     // Momentum & Rotation -- data + flows
     fetchPeriodEndCloses, fetchMacroSeries, fetchLatestMacroValue,
     loadMomentumUniverseData, renderMomentumLeaderboard, runMomentumCalculate, autofillRiskFreeRate,
