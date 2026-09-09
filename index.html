@@ -206,7 +206,7 @@
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Universe</label>
           <select id="momUniversePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]">
-            <option value="asset_class">Asset Class (Faber-style)</option>
+            <option value="asset_class">Asset Class</option>
             <option value="broad_market">Broad Market</option>
             <option value="thematic">Thematic</option>
           </select>
@@ -259,7 +259,7 @@
         <span id="momCalculateStatus" class="text-xs text-slate-500"></span>
       </div>
       <p id="momCalculateError" class="text-sm text-red-600 mt-2 hidden"></p>
-      <p class="text-[10px] text-slate-400 mt-3">Trailing Return / SMA Trend Filter คำนวณจากราคาปิดสิ้นงวด (สัปดาห์/เดือน) — instrument ที่มีประวัติราคาไม่ครบตามที่เลือกจะถูกตัดออกจากอันดับรอบนั้นโดยอัตโนมัติ · เปลี่ยน Universe/Timeframe/Benchmark แล้วต้องกด "คำนวณ" เพื่อโหลดข้อมูลใหม่ (ปุ่มนี้รันทั้ง Leaderboard, Rotation Graph และ Strategy Preview พร้อมกัน)</p>
+      <p class="text-[10px] text-slate-400 mt-3">Trailing Return / SMA Trend Filter คำนวณจากราคาปิดสิ้นงวด (สัปดาห์/เดือน) — instrument ที่มีประวัติราคาไม่ครบตามที่เลือกจะถูกตัดออกจากอันดับรอบนั้นโดยอัตโนมัติ · เปลี่ยน Universe/Timeframe/Benchmark แล้วต้องกด "คำนวณ" เพื่อโหลดข้อมูลใหม่ (ปุ่มนี้รันทั้ง Leaderboard และ Rotation Graph พร้อมกัน)</p>
     </section>
 
     <!-- ---------- Level 1: Leaderboard ---------- -->
@@ -288,56 +288,38 @@
       <p id="momLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
     </section>
 
-    <!-- ---------- Level 2: Strategy Controls ---------- -->
+    <!-- ---------- Level 2: Rotation Graph (RRG) ---------- -->
     <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <h2 class="text-sm font-semibold text-slate-800 mb-1">Rotation Graph &amp; Strategy Preview</h2>
-      <p class="text-xs text-slate-500 mb-4">ภาพร่างแบบง่าย จำลอง Top-N strategy รายงวด ยังไม่รวมต้นทุนธุรกรรม — ปรับพารามิเตอร์ด้านล่างแล้วกด "คำนวณ" ที่ด้านบนสุดของหน้า</p>
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Rotation Graph (RRG)</h2>
+      <p class="text-xs text-slate-500 mb-4">เปรียบเทียบความแข็งแกร่งเชิงเปรียบเทียบ (RS-Ratio) และโมเมนตัมของความแข็งแกร่งนั้น (RS-Momentum) เทียบกับ Benchmark — พื้นที่กราฟแบ่งเป็น 4 โซน (Leading/Improving/Lagging/Weakening) ปรับพารามิเตอร์ด้านล่างแล้วกด "คำนวณ" ที่ด้านบนสุดของหน้า</p>
       <div class="flex flex-wrap items-end gap-4 mb-4">
         <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Top-N</label>
-          <select id="momTopNPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <option value="3">3</option>
-            <option value="5" selected>5</option>
-            <option value="10">10</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Weighting</label>
-          <select id="momWeightingPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <option value="equal" selected>Equal Weight</option>
-            <option value="inverse_vol">Optimized Risk-adjusted (Inverse-Vol)</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Tail length (Rotation Graph)</label>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Tail length (จำนวนงวดย้อนหลังที่ลากเส้น)</label>
           <input id="momTailLengthInput" type="number" min="2" max="52" value="12"
                  class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" />
         </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Regime Overlay</label>
-          <select id="momRegimePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <option value="">ไม่แสดง</option>
-            <option value="DGS10">US 10Y Treasury (DGS10)</option>
-            <option value="FEDFUNDS">Fed Funds Rate (FEDFUNDS)</option>
-            <option value="CPIAUCSL">CPI YoY (CPIAUCSL)</option>
-            <option value="UNRATE">Unemployment Rate (UNRATE)</option>
-          </select>
-        </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-        <div>
-          <h3 class="text-xs font-semibold text-slate-600 mb-2">Rotation Graph</h3>
-          <div class="relative h-72">
-            <canvas id="momRotationChart"></canvas>
+      <div class="border border-slate-200 rounded-lg p-3 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-slate-600">เลือกตัวที่จะแสดงในกราฟ</h3>
+          <div class="flex items-center gap-3">
+            <button id="momRrgSelectAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">เลือกทั้งหมด</button>
+            <button id="momRrgClearAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">ล้างทั้งหมด</button>
           </div>
         </div>
-        <div>
-          <h3 class="text-xs font-semibold text-slate-600 mb-2">Strategy Preview — Equity Curve</h3>
-          <div class="relative h-72">
-            <canvas id="momEquityChart"></canvas>
-          </div>
-          <div id="momStrategySummary" class="grid grid-cols-3 gap-2 mt-3 text-xs"></div>
+        <div id="momRrgCheckboxPanel" class="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto text-xs"></div>
+        <p class="text-[10px] text-slate-400 mt-2">ค่าเริ่มต้น: Top 5 ตาม Trailing Return — ไม่ต้องกด "คำนวณ" ซ้ำ การติ๊ก/ล้างมีผลทันที</p>
+      </div>
+
+      <div class="relative h-[30rem]">
+        <canvas id="momRotationChart"></canvas>
+      </div>
+
+      <div class="mt-4">
+        <h3 class="text-xs font-semibold text-slate-600 mb-2">สรุปสถานะ 8 กลุ่ม (ตามตัวที่เลือกแสดงในกราฟ)</h3>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table id="momRotationSummaryTable" class="text-xs w-full"></table>
         </div>
       </div>
     </section>
@@ -351,9 +333,6 @@
         </label>
         <label class="flex items-center gap-1.5 text-xs text-slate-400">
           <input type="checkbox" id="momExportRotation" disabled /> Rotation Graph data
-        </label>
-        <label class="flex items-center gap-1.5 text-xs text-slate-400">
-          <input type="checkbox" id="momExportStrategy" disabled /> Strategy Preview data
         </label>
         <button id="momExportBtn" class="ml-auto bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-lg px-4 py-2">
           Export Excel
@@ -389,7 +368,6 @@ window.QD = (function () {
   let overviewChartInstance = null;
   let momLeaderboardChartInstance = null;
   let momRotationChartInstance = null;
-  let momEquityChartInstance = null;
 
   const MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
                   "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -465,15 +443,13 @@ window.QD = (function () {
       riskAdjusted: false,
       riskFreeAnnualPct: 2,
       benchmarkAssetId: null,
-      topN: 5,
-      weighting: "equal",
       tailLength: 12,
-      regimeSeries: "",
       seriesByInstrument: {},   // instrumentId -> [{period_end, adj_close}] ascending by period_end
       universeInstruments: [],  // resolved instrument list for the current universe mode
       leaderboardRows: [],
-      rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] }
-      strategyResult: null      // { points, masterAxis, summary, regime }
+      rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] } -- unfiltered, full rotation universe
+      rrgSelectedIds: [],       // instrumentIds currently checked in the RRG display-selection panel
+      rrgSelectionInitialized: false // reset to false on each fresh data fetch so the Top-N default re-applies
     }
   };
 
@@ -1063,6 +1039,54 @@ window.QD = (function () {
 
   const CHART_ROTATION_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
 
+  // Default number of instruments pre-checked in the RRG instrument-selection
+  // panel, ranked by Trailing Return (10.6 redesign, item 6) -- replaces the
+  // old Top-N Strategy dropdown, which no longer exists.
+  const MOMENTUM_RRG_DEFAULT_TOPN = 5;
+
+  // Short display names for the Leaderboard/RRG summary tables (item 2) --
+  // curated manually (not the full DB `name`), keyed by ticker. Tickers with
+  // overlapping themes are disambiguated with the provider name in
+  // parentheses. Unmapped tickers fall back to the bare ticker (see
+  // tickerShortName()).
+  const TICKER_SHORT_NAMES = {
+    // Bond
+    IEF: "US 7-10Y Treasury",
+    // Broad market
+    ACWI: "All Country World", DIA: "Dow Jones", EEM: "Emerging Markets", EFA: "EAFE (DM ex US/Canada)",
+    EWJ: "Japan", EWT: "Taiwan", EWU: "UK", EWY: "South Korea", INDA: "India", IWM: "Russell 2000",
+    MCHI: "China", QQQ: "Nasdaq 100", SPY: "S&P 500", THD: "Thailand (US-listed)", VGK: "Europe", VT: "Total World",
+    // Commodity
+    BNO: "Brent Oil", CPER: "Copper", DBA: "Agriculture", DBB: "Base Metals", DBC: "Commodity Index",
+    GLD: "Gold", GSG: "Commodity (GSCI)", SLV: "Silver", UNG: "Natural Gas", USO: "Crude Oil (WTI)",
+    // REIT
+    VNQ: "US Real Estate",
+    // Thai
+    "^SET.BK": "SET Index", "^SETHD.BK": "SET High Dividend", "1DIV.BK": "Thai High Dividend",
+    // Thematic
+    AIQ: "AI & Technology", ARKG: "Genomics", ARKK: "ARK Innovation", ARKQ: "Autonomous & Robotics",
+    ARKX: "Space Exploration", BATT: "Lithium & Battery (Amplify)", BLOK: "Blockchain", BOTZ: "Robotics & AI (Global X)",
+    CHAT: "Generative AI", CIBR: "Cybersecurity (First Trust)", CRBN: "Low Carbon", DRIV: "EV & Autonomous",
+    EBIZ: "E-commerce", EDUT: "Education", ESPO: "Gaming & eSports", ETHA: "Ethereum",
+    FINX: "FinTech", FIVG: "5G Connectivity", FIW: "Water (First Trust)", GRID: "Smart Grid",
+    HACK: "Cybersecurity (ETFMG)", HJEN: "Hydrogen", HRTS: "GLP-1 & Obesity Care", IBB: "Biotechnology",
+    IBIT: "Bitcoin", ICLN: "Clean Energy (iShares)", IGF: "Global Infrastructure", IRBO: "Robotics & AI (iShares)",
+    ITA: "Aerospace & Defense (iShares)", KROP: "AgTech & Food", KWEB: "China Internet", LIT: "Lithium & Battery (Global X)",
+    LNGR: "Aging Population", METV: "Metaverse", MOO: "Agribusiness", NLR: "Uranium & Nuclear",
+    PAVE: "US Infrastructure", PAWZ: "Pet Care", PBD: "Clean Energy (Invesco)", PHO: "Water Resources (Invesco)",
+    PRNT: "3D Printing", QTUM: "Quantum Computing", REMX: "Rare Earth Metals", ROBO: "Robotics & Automation",
+    SKYY: "Cloud Computing (First Trust)", SMH: "Semiconductors (VanEck)", SNSR: "Internet of Things", SOCL: "Social Media",
+    SOXX: "Semiconductors (iShares)", SRVR: "Data & Infra Real Estate", THNQ: "Artificial Intelligence", UFO: "Space (Procure)",
+    URA: "Uranium", VEGN: "Vegan Climate", WCLD: "Cloud Computing (WisdomTree)", XAR: "Aerospace & Defense (SPDR)",
+    // US Sector
+    XLB: "Materials", XLC: "Communication Svcs", XLE: "Energy", XLF: "Financials", XLI: "Industrials",
+    XLK: "Technology", XLP: "Consumer Staples", XLRE: "Real Estate", XLU: "Utilities", XLV: "Health Care", XLY: "Consumer Discretionary"
+  };
+
+  function tickerShortName(ticker) {
+    return TICKER_SHORT_NAMES[ticker] || ticker;
+  }
+
   // ---------------------------------------------------------------------
   // Universe resolution (10.2)
   // ---------------------------------------------------------------------
@@ -1152,26 +1176,8 @@ window.QD = (function () {
     return (trailingReturnPct - rfWindowPct) / windowVolPct;
   }
 
-  // Equal-Weight vs Inverse-Volatility (10.4; UI label "Optimized Risk-adjusted" --
-  // NOT full Mean-Variance Optimization, no covariance matrix -- see Glossary).
-  function computeWeights(topRows, weighting) {
-    if (!topRows || !topRows.length) return [];
-    if (weighting !== "inverse_vol") {
-      const w = 1 / topRows.length;
-      return topRows.map((r) => Object.assign({}, r, { weight: w }));
-    }
-    const invVols = topRows.map((r) => (r.periodicVolPct && r.periodicVolPct > 0) ? 1 / r.periodicVolPct : 0);
-    const sum = invVols.reduce((a, b) => a + b, 0);
-    if (sum === 0) {
-      const w = 1 / topRows.length;
-      return topRows.map((r) => Object.assign({}, r, { weight: w }));
-    }
-    return topRows.map((r, i) => Object.assign({}, r, { weight: invVols[i] / sum }));
-  }
-
   // ---------------------------------------------------------------------
-  // Ranking (10.3) -- shared core used both for the live Leaderboard (now)
-  // and, sliced per-period, inside the Strategy Preview backtest below.
+  // Ranking (10.3) -- shared core used by the live Leaderboard.
   // ---------------------------------------------------------------------
   function rankUniverseFromSeries(items, params) {
     const rows = [];
@@ -1210,131 +1216,21 @@ window.QD = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Time-axis alignment for the Strategy Preview backtest. Instruments are
-  // fetched together via period_end_closes(); some may start later than
-  // others, so each instrument's own sparse series is mapped onto a shared
-  // "master axis" (the union of every period_end seen) via a single
-  // startAxisIndex offset. This assumes each instrument's OWN series has no
-  // internal gaps once active (true given continuous daily source data) --
-  // a simplification appropriate for this preview, flagged in the doc.
-  // ---------------------------------------------------------------------
-  function buildMasterPeriodAxis(seriesByInstrumentId) {
-    const set = new Set();
-    Object.values(seriesByInstrumentId).forEach((arr) => (arr || []).forEach((p) => set.add(p.period_end)));
-    return Array.from(set).sort();
-  }
-
-  function alignToAxis(masterAxis, series) {
-    if (!series || !series.length) return { startAxisIndex: -1, series: [] };
-    return { startAxisIndex: masterAxis.indexOf(series[0].period_end), series };
-  }
-
-  function rankUniverseAt(universeInstruments, alignedById, axisIdx, params) {
-    const items = [];
-    universeInstruments.forEach((inst) => {
-      const al = alignedById[inst.id];
-      if (!al || al.startAxisIndex < 0) return;
-      const k = axisIdx - al.startAxisIndex;
-      if (k < 0) return;
-      items.push({
-        instrumentId: inst.id, ticker: inst.ticker, name: inst.name, category: inst.category,
-        series: al.series.slice(0, k + 1)
-      });
-    });
-    return rankUniverseFromSeries(items, params);
-  }
-
-  // ---------------------------------------------------------------------
-  // Strategy Preview (10.4, 10.9) -- simple Top-N momentum backtest, monthly
-  // (or weekly) rebalanced, with a risk-free cash fallback for any selected
-  // leg that fails its own SMA trend filter. Not a full backtest (no
-  // transaction costs / slippage -- that's Phase 3).
-  // ---------------------------------------------------------------------
-  function simulateTopNStrategy(universeInstruments, seriesByInstrumentId, params) {
-    const masterAxis = buildMasterPeriodAxis(seriesByInstrumentId);
-    if (masterAxis.length < 2) return null;
-    const alignedById = {};
-    Object.keys(seriesByInstrumentId).forEach((id) => {
-      alignedById[id] = alignToAxis(masterAxis, seriesByInstrumentId[id]);
-    });
-
-    const minHistory = Math.max(params.lookbackPeriods, params.smaPeriods) + 1;
-    let firstIdx = -1;
-    for (let t = minHistory; t < masterAxis.length - 1; t++) {
-      if (rankUniverseAt(universeInstruments, alignedById, t, params).length > 0) { firstIdx = t; break; }
-    }
-    if (firstIdx === -1) return null;
-
-    const rfPerPeriod = ((params.riskFreeAnnualPct || 0) / 100) / params.periodsPerYear;
-    const points = [];
-    let strategyEquity = 1, benchmarkEquity = 1;
-    const benchAligned = alignedById[params.benchmarkInstrumentId];
-
-    for (let t = firstIdx; t < masterAxis.length - 1; t++) {
-      const ranked = rankUniverseAt(universeInstruments, alignedById, t, params);
-      const weighted = computeWeights(ranked.slice(0, params.topN), params.weighting);
-
-      let periodReturn = 0;
-      weighted.forEach((r) => {
-        const al = alignedById[r.instrumentId];
-        const k = t - al.startAxisIndex;
-        let assetReturn = null;
-        if (k >= 0 && k + 1 < al.series.length) {
-          const p0 = al.series[k].adj_close, p1 = al.series[k + 1].adj_close;
-          if (p0 != null && p1 != null && p0 !== 0) assetReturn = p1 / p0 - 1;
-        }
-        const useCash = !r.smaSignal || !r.smaSignal.pass || assetReturn === null;
-        periodReturn += r.weight * (useCash ? rfPerPeriod : assetReturn);
-      });
-
-      let benchReturn = null;
-      if (benchAligned && benchAligned.startAxisIndex >= 0) {
-        const bk = t - benchAligned.startAxisIndex;
-        if (bk >= 0 && bk + 1 < benchAligned.series.length) {
-          const p0 = benchAligned.series[bk].adj_close, p1 = benchAligned.series[bk + 1].adj_close;
-          if (p0 != null && p1 != null && p0 !== 0) benchReturn = p1 / p0 - 1;
-        }
-      }
-
-      strategyEquity *= (1 + periodReturn);
-      if (benchReturn !== null) benchmarkEquity *= (1 + benchReturn);
-
-      points.push({
-        periodEnd: masterAxis[t + 1],
-        strategyReturn: periodReturn,
-        benchmarkReturn: benchReturn,
-        strategyEquity,
-        benchmarkEquity: benchReturn !== null ? benchmarkEquity : null,
-        topHoldings: weighted.map((w) => w.ticker)
-      });
-    }
-
-    return { points, masterAxis };
-  }
-
-  function computeEquityCurveSummary(points) {
-    if (!points || !points.length) return null;
-    const totalReturnPct = (points[points.length - 1].strategyEquity - 1) * 100;
-    let benchLast = null;
-    for (let i = points.length - 1; i >= 0; i--) {
-      if (points[i].benchmarkEquity != null) { benchLast = points[i].benchmarkEquity; break; }
-    }
-    const benchTotalReturnPct = benchLast != null ? (benchLast - 1) * 100 : null;
-    let peak = points[0].strategyEquity, maxDrawdownPct = 0;
-    points.forEach((p) => {
-      if (p.strategyEquity > peak) peak = p.strategyEquity;
-      const dd = (p.strategyEquity / peak - 1) * 100;
-      if (dd < maxDrawdownPct) maxDrawdownPct = dd;
-    });
-    return { totalReturnPct, benchTotalReturnPct, maxDrawdownPct };
-  }
-
-  // ---------------------------------------------------------------------
-  // Rotation Graph (10.6) -- standard self-normalizing RS-Ratio/RS-Momentum,
-  // lookback window tied to the Week/Month selector (params.m) instead of a
-  // hardcoded 14/10 period. Rendered as a plain Cartesian scatter; the
-  // 8-octant label is a tooltip/badge annotation only, computed from the
-  // same (x,y) the chart already plots -- it does not change the geometry.
+  // Rotation Graph (10.6, redesigned 2026-09) -- standard self-normalizing
+  // RS-Ratio/RS-Momentum, lookback window tied to the Week/Month selector
+  // (params.m) instead of a hardcoded 14/10 period. Rendered as a Cartesian
+  // scatter with a quadrant-background plugin (Leading/Improving/Lagging/
+  // Weakening) and an 8-octant label surfaced both in the tooltip and the
+  // summary table below the chart -- it does not change the (x,y) geometry.
+  //
+  // NOTE: the Strategy Preview backtest that used to live in this section
+  // (simulateTopNStrategy/computeEquityCurveSummary/computeWeights/
+  // buildMasterPeriodAxis/alignToAxis/rankUniverseAt) was removed per the
+  // 2026-09 decision log (item 5) -- the UI no longer offers a Top-N/
+  // Weighting/Equity-Curve preview, and true code reuse for a future
+  // strategy-performance feature was judged unlikely given Phase 3's
+  // broader planned scope, so the dead code was cut entirely rather than
+  // kept dormant.
   // ---------------------------------------------------------------------
   function ema(values, period) {
     const alpha = 2 / (period + 1);
@@ -1418,21 +1314,6 @@ window.QD = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Regime overlay (10.7) -- align a macro_series to the Strategy Preview's
-  // period-end axis by "last value on or before" each period end.
-  // ---------------------------------------------------------------------
-  function alignMacroToPeriods(macroSeries, periodEnds) {
-    if (!macroSeries || !macroSeries.length) return periodEnds.map(() => null);
-    const out = [];
-    let mi = 0;
-    for (const pe of periodEnds) {
-      while (mi + 1 < macroSeries.length && macroSeries[mi + 1].date <= pe) mi++;
-      out.push(macroSeries[mi] && macroSeries[mi].date <= pe ? macroSeries[mi].value : null);
-    }
-    return out;
-  }
-
-  // ---------------------------------------------------------------------
   // Data access
   // ---------------------------------------------------------------------
   // PostgREST caps rows returned per request (project setting, "Max Rows" --
@@ -1463,12 +1344,6 @@ window.QD = (function () {
       offset += PERIOD_END_CLOSES_PAGE_SIZE;
     }
     return allRows;
-  }
-
-  async function fetchMacroSeries(seriesId) {
-    const { data, error } = await sb.from("macro_series").select("date,value").eq("series_id", seriesId).order("date", { ascending: true });
-    if (error) throw error;
-    return (data || []).map((r) => ({ date: r.date, value: Number(r.value) }));
   }
 
   async function fetchLatestMacroValue(seriesId) {
@@ -1509,6 +1384,11 @@ window.QD = (function () {
     setLoading("momLeaderboardLoading", true);
     setText("momLeaderboardStatus", "กำลังโหลดข้อมูลราคา...");
     try {
+      // A fresh fetch means the underlying instrument set may have changed
+      // (Universe/Timeframe/Benchmark), so the RRG display-selection default
+      // (Top-N by Trailing Return) is re-applied once the new leaderboard is
+      // known -- see runMomentumCalculate.
+      state.momentum.rrgSelectionInitialized = false;
       const universe = getUniverseInstruments(state.momentum.universeMode);
       state.momentum.universeInstruments = universe;
       const idSet = new Set(universe.map((i) => i.id));
@@ -1599,10 +1479,11 @@ window.QD = (function () {
     const head = `<thead><tr>
         <th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Rank</th>
         <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Ticker</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Category</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Trailing Return</th>
         <th class="text-center px-2 py-2 bg-slate-50 border-b border-slate-200">Trend Filter</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volatility (SD)</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volatility (SD) ต่องวด</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Risk-Adj Score</th>
       </tr></thead>`;
     const body = rows.map((r) => {
@@ -1616,6 +1497,7 @@ window.QD = (function () {
       return `<tr class="border-b border-slate-100">
           <td class="sticky-col px-3 py-1.5 text-slate-700">${r.rank}</td>
           <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
+          <td class="px-2 py-1.5 text-slate-500">${tickerShortName(r.ticker)}</td>
           <td class="px-2 py-1.5 text-slate-500">${r.category}</td>
           <td class="text-right px-2 py-1.5"${style}>${r.trailingReturnPct.toFixed(2)}%</td>
           <td class="text-center px-2 py-1.5">${badge}</td>
@@ -1632,18 +1514,118 @@ window.QD = (function () {
     return `rgba(${r},${g},${b},${alpha})`;
   }
 
-  function renderRotationGraph(rotationData) {
+  // Default RRG display selection (item 6): Top N instrumentIds by
+  // Trailing Return among the rotation universe (benchmark already excluded
+  // upstream since it's never part of `rows` passed in from the caller --
+  // rows here is the full Leaderboard, so we intersect with rotationIds).
+  function computeDefaultRrgSelection(leaderboardRows, rotationInstrumentIds, topN) {
+    const idSet = new Set(rotationInstrumentIds);
+    return leaderboardRows
+      .filter((r) => idSet.has(r.instrumentId))
+      .slice(0, topN || MOMENTUM_RRG_DEFAULT_TOPN)
+      .map((r) => r.instrumentId);
+  }
+
+  // Pure builder for the RRG instrument-selection checkbox panel's items --
+  // sorted by Leaderboard rank (best Trailing Return first) so the default
+  // Top-N selection is easy to find. Instruments with no rank (excluded from
+  // the Leaderboard for insufficient history) are appended at the end,
+  // sorted by ticker.
+  function buildRrgCheckboxItems(rotationInstruments, leaderboardRows) {
+    const rankByInstId = new Map(leaderboardRows.map((r) => [r.instrumentId, r.rank]));
+    return rotationInstruments
+      .map((inst) => ({ instrumentId: inst.id, ticker: inst.ticker, rank: rankByInstId.has(inst.id) ? rankByInstId.get(inst.id) : null }))
+      .sort((a, b) => {
+        if (a.rank == null && b.rank == null) return a.ticker < b.ticker ? -1 : (a.ticker > b.ticker ? 1 : 0);
+        if (a.rank == null) return 1;
+        if (b.rank == null) return -1;
+        return a.rank - b.rank;
+      });
+  }
+
+  // Pure builder for the 8-group state-summary table rows (item 4.3) -- one
+  // row per SELECTED rotation instrument, reading Current/T-1 state straight
+  // off the already-computed (tail-trimmed) `points` array so it always
+  // matches exactly what the chart is plotting for that instrument.
+  function buildRotationSummaryRows(rotationResults, selectedIds) {
+    const idSet = new Set(selectedIds);
+    return rotationResults
+      .filter((r) => idSet.has(r.instrumentId) && r.points.length)
+      .map((r) => {
+        const last = r.points[r.points.length - 1];
+        const prev = r.points.length >= 2 ? r.points[r.points.length - 2] : null;
+        return {
+          instrumentId: r.instrumentId,
+          ticker: r.ticker,
+          shortName: tickerShortName(r.ticker),
+          currentState: last.octant,
+          t1State: prev ? prev.octant : null,
+          rsRatio: last.x,
+          rsMomentum: last.y
+        };
+      });
+  }
+
+  // Inline Chart.js v4 plugin (per-chart, not globally registered): paints
+  // the 4 RRG quadrant backgrounds + crosshair at (100,100) and labels them
+  // Leading/Improving/Lagging/Weakening, matching the reference RRG image's
+  // color scheme (item 4.2). Uses the chart's live pixel scale so it stays
+  // correct across zoom/resize; degrades to drawing nothing if x=100/y=100
+  // falls outside the current axis range (quadrant width/height becomes 0).
+  function rrgQuadrantPlugin() {
+    return {
+      id: "rrgQuadrantBackground",
+      beforeDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!ctx || !chartArea || !scales || !scales.x || !scales.y) return;
+        const xMid = Math.min(Math.max(scales.x.getPixelForValue(100), chartArea.left), chartArea.right);
+        const yMid = Math.min(Math.max(scales.y.getPixelForValue(100), chartArea.top), chartArea.bottom);
+        const quads = [
+          { x: xMid, y: chartArea.top, w: chartArea.right - xMid, h: yMid - chartArea.top, color: "rgba(5,150,105,0.08)", label: "Leading", labelColor: "#059669", align: "right", valign: "top" },
+          { x: chartArea.left, y: chartArea.top, w: xMid - chartArea.left, h: yMid - chartArea.top, color: "rgba(37,99,235,0.08)", label: "Improving", labelColor: "#2563eb", align: "left", valign: "top" },
+          { x: chartArea.left, y: yMid, w: xMid - chartArea.left, h: chartArea.bottom - yMid, color: "rgba(220,38,38,0.08)", label: "Lagging", labelColor: "#dc2626", align: "left", valign: "bottom" },
+          { x: xMid, y: yMid, w: chartArea.right - xMid, h: chartArea.bottom - yMid, color: "rgba(217,119,6,0.08)", label: "Weakening", labelColor: "#d97706", align: "right", valign: "bottom" }
+        ];
+        ctx.save();
+        quads.forEach((q) => { if (q.w > 0 && q.h > 0) { ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, q.w, q.h); } });
+        ctx.font = "11px sans-serif";
+        quads.forEach((q) => {
+          if (q.w > 24 && q.h > 14) {
+            ctx.fillStyle = q.labelColor;
+            ctx.textAlign = q.align === "right" ? "right" : "left";
+            ctx.textBaseline = q.valign === "top" ? "top" : "bottom";
+            const px = q.align === "right" ? q.x + q.w - 4 : q.x + 4;
+            const py = q.valign === "top" ? q.y + 4 : q.y + q.h - 4;
+            ctx.fillText(q.label, px, py);
+          }
+        });
+        ctx.strokeStyle = "rgba(100,116,139,0.4)";
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(xMid, chartArea.top); ctx.lineTo(xMid, chartArea.bottom); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(chartArea.left, yMid); ctx.lineTo(chartArea.right, yMid); ctx.stroke();
+        ctx.restore();
+      }
+    };
+  }
+
+  // rotationData: full { m, k, results } for the whole rotation universe
+  // (computed once per "คำนวณ" click); selectedIds: instrumentIds currently
+  // checked in the panel -- filtering happens here so toggling a checkbox
+  // never needs to recompute RS-Ratio/RS-Momentum, only re-render.
+  function renderRotationGraph(rotationData, selectedIds) {
     const canvas = byId("momRotationChart");
     if (!canvas) return;
     if (typeof Chart === "undefined") return;
     if (momRotationChartInstance) { momRotationChartInstance.destroy(); momRotationChartInstance = null; }
 
-    const datasets = (rotationData.results || []).filter((r) => r.points.length).map((r, idx) => {
+    const idSet = new Set(selectedIds || []);
+    const filtered = (rotationData.results || []).filter((r) => r.points.length && idSet.has(r.instrumentId));
+    const datasets = filtered.map((r, idx) => {
       const color = CHART_ROTATION_COLORS[idx % CHART_ROTATION_COLORS.length];
       const n = r.points.length;
       return {
         label: r.ticker,
-        data: r.points.map((p) => ({ x: p.x, y: p.y })),
+        data: r.points.map((p) => ({ x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd })),
         showLine: true,
         borderColor: color,
         pointBackgroundColor: r.points.map((p, i) => hexToRgba(color, 0.3 + 0.7 * ((i + 1) / n))),
@@ -1654,72 +1636,95 @@ window.QD = (function () {
     momRotationChartInstance = new Chart(canvas.getContext("2d"), {
       type: "scatter",
       data: { datasets },
+      plugins: [rrgQuadrantPlugin()],
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
           x: { title: { display: true, text: "RS-Ratio" } },
           y: { title: { display: true, text: "RS-Momentum" } }
         },
-        plugins: { legend: { position: "bottom" } }
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label(ctx) {
+                const p = ctx.raw || {};
+                const base = `${ctx.dataset.label}: (${p.x != null ? p.x.toFixed(1) : "—"}, ${p.y != null ? p.y.toFixed(1) : "—"})`;
+                return p.octant ? `${base} — ${p.octant}` : base;
+              }
+            }
+          }
+        }
       }
     });
   }
 
-  function buildEquityChartDatasets(strategyResult) {
-    if (!strategyResult || !strategyResult.points || !strategyResult.points.length) return null;
-    return {
-      labels: strategyResult.points.map((p) => p.periodEnd),
-      strategy: strategyResult.points.map((p) => p.strategyEquity * 100),
-      benchmark: strategyResult.points.map((p) => (p.benchmarkEquity != null ? p.benchmarkEquity * 100 : null)),
-      regime: strategyResult.regime || null
-    };
-  }
-
-  function renderEquityChart(strategyResult) {
-    const canvas = byId("momEquityChart");
-    if (!canvas) return;
-    const built = buildEquityChartDatasets(strategyResult);
-    if (typeof Chart === "undefined") return;
-    if (momEquityChartInstance) { momEquityChartInstance.destroy(); momEquityChartInstance = null; }
-    if (!built) return;
-
-    const datasets = [
-      { label: "Strategy (Top-N)", data: built.strategy, borderColor: "#2563eb", backgroundColor: "#2563eb", yAxisID: "yIdx", pointRadius: 0, tension: 0.1 },
-      { label: "Benchmark", data: built.benchmark, borderColor: "#94a3b8", backgroundColor: "#94a3b8", yAxisID: "yIdx", pointRadius: 0, tension: 0.1, borderDash: [4, 2] }
-    ];
-    const scales = {
-      yIdx: { type: "linear", position: "left", title: { display: true, text: "Index (เริ่มต้น = 100)" } },
-      x: { title: { display: true, text: "Period" } }
-    };
-    if (built.regime) {
-      datasets.push({ label: state.momentum.regimeSeries, data: built.regime, borderColor: "#f59e0b", backgroundColor: "#f59e0b", yAxisID: "yRegime", pointRadius: 0, tension: 0.1, borderDash: [2, 2] });
-      scales.yRegime = { type: "linear", position: "right", title: { display: true, text: "Regime" }, grid: { drawOnChartArea: false } };
-    }
-    momEquityChartInstance = new Chart(canvas.getContext("2d"), {
-      type: "line",
-      data: { labels: built.labels, datasets },
-      options: { responsive: true, maintainAspectRatio: false, scales, plugins: { legend: { position: "bottom" } } }
+  function renderRrgCheckboxPanel() {
+    const panel = byId("momRrgCheckboxPanel");
+    if (!panel) return;
+    const items = buildRrgCheckboxItems(state.momentum.universeInstruments.filter((i) => i.id !== state.momentum.benchmarkAssetId), state.momentum.leaderboardRows);
+    const selected = new Set(state.momentum.rrgSelectedIds);
+    panel.innerHTML = items.map((it) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${it.instrumentId}" class="mom-rrg-cb" ${selected.has(it.instrumentId) ? "checked" : ""} />
+         ${it.ticker}${it.rank != null ? ` <span class="text-slate-400">#${it.rank}</span>` : ""}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".mom-rrg-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.rrgSelectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.rrgSelectedIds = Array.from(set);
+        rerenderRotationDisplay();
+      });
     });
   }
 
-  function renderStrategySummary(strategyResult) {
-    const el = byId("momStrategySummary");
-    if (!el) return;
-    if (!strategyResult || !strategyResult.summary) { el.innerHTML = ""; return; }
-    const s = strategyResult.summary;
-    const fmt = (v) => (v == null ? "—" : `${v.toFixed(2)}%`);
-    el.innerHTML = `
-      <div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Total Return</div><div class="font-semibold text-slate-700">${fmt(s.totalReturnPct)}</div></div>
-      <div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Max Drawdown</div><div class="font-semibold text-slate-700">${fmt(s.maxDrawdownPct)}</div></div>
-      <div class="bg-slate-50 rounded-lg p-2"><div class="text-slate-400">Benchmark Total Return</div><div class="font-semibold text-slate-700">${fmt(s.benchTotalReturnPct)}</div></div>`;
+  // Re-renders the chart + summary table from the already-computed
+  // rotationData using the current checkbox selection -- no recompute, no
+  // network call. Called on every checkbox toggle and after a fresh
+  // "คำนวณ" run.
+  function rerenderRotationDisplay() {
+    if (!state.momentum.rotationData) return;
+    renderRotationGraph(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    renderRotationSummaryTable(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    updateMomExportAvailability();
+  }
+
+  function renderRotationSummaryTable(rotationData, selectedIds) {
+    const table = byId("momRotationSummaryTable");
+    if (!table) return;
+    const rows = buildRotationSummaryRows(rotationData.results || [], selectedIds || []);
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่ได้เลือกตัวแสดง หรือยังไม่มีข้อมูลเพียงพอ</td></tr></tbody>`;
+      return;
+    }
+    const head = `<thead><tr>
+        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">ETF</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Current State</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">T-1 State</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Ratio ล่าสุด</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Momentum ล่าสุด</th>
+      </tr></thead>`;
+    const body = rows.map((r) => `<tr class="border-b border-slate-100">
+        <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
+        <td class="px-2 py-1.5 text-slate-500">${r.shortName}</td>
+        <td class="px-2 py-1.5 text-slate-700">${r.currentState || "—"}</td>
+        <td class="px-2 py-1.5 text-slate-500">${r.t1State || "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.rsRatio != null ? r.rsRatio.toFixed(2) : "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.rsMomentum != null ? r.rsMomentum.toFixed(2) : "—"}</td>
+      </tr>`).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
   }
 
   // Single entry point behind the top-of-page "คำนวณ" button: covers both
-  // Level 1 (Leaderboard) and Level 2 (Rotation Graph + Strategy Preview).
-  // Only re-fetches from Supabase when Universe/Timeframe/Benchmark actually
-  // changed since the last successful load (computeMomentumFetchKey) --
-  // Lookback/SMA/Risk-Adjusted/Risk-free/Top-N/Weighting/Tail/Regime are all
-  // pure client-side recompute and never trigger a network call.
+  // Level 1 (Leaderboard) and Level 2 (Rotation Graph). Only re-fetches from
+  // Supabase when Universe/Timeframe/Benchmark actually changed since the
+  // last successful load (computeMomentumFetchKey) -- Lookback/SMA/
+  // Risk-Adjusted/Risk-free/Tail Length are all pure client-side recompute
+  // and never trigger a network call.
   async function runMomentumCalculate() {
     const errEl = byId("momCalculateError");
     hide(errEl);
@@ -1741,25 +1746,18 @@ window.QD = (function () {
       const rotationInstruments = universe.filter((i) => i.id !== state.momentum.benchmarkAssetId);
       const rotationData = computeRotationGraphData(rotationInstruments, seriesByInst, benchSeries, params.lookbackPeriods, state.momentum.tailLength);
       state.momentum.rotationData = rotationData;
-      renderRotationGraph(rotationData);
 
-      const stratParams = {
-        lookbackPeriods: params.lookbackPeriods, smaPeriods: params.smaPeriods,
-        riskAdjusted: params.riskAdjusted, riskFreeAnnualPct: params.riskFreeAnnualPct, periodsPerYear: params.periodsPerYear,
-        topN: state.momentum.topN, weighting: state.momentum.weighting,
-        benchmarkInstrumentId: state.momentum.benchmarkAssetId
-      };
-      const sim = simulateTopNStrategy(universe, seriesByInst, stratParams);
-      let regimeAligned = null;
-      if (sim && state.momentum.regimeSeries) {
-        const macro = await fetchMacroSeries(state.momentum.regimeSeries);
-        regimeAligned = alignMacroToPeriods(macro, sim.points.map((p) => p.periodEnd));
+      if (!state.momentum.rrgSelectionInitialized) {
+        state.momentum.rrgSelectedIds = computeDefaultRrgSelection(
+          state.momentum.leaderboardRows,
+          rotationInstruments.map((i) => i.id),
+          MOMENTUM_RRG_DEFAULT_TOPN
+        );
+        state.momentum.rrgSelectionInitialized = true;
       }
-      state.momentum.strategyResult = sim ? Object.assign({}, sim, { summary: computeEquityCurveSummary(sim.points), regime: regimeAligned }) : null;
-      renderEquityChart(state.momentum.strategyResult);
-      renderStrategySummary(state.momentum.strategyResult);
-      updateMomExportAvailability();
-      setText("momCalculateStatus", sim ? "คำนวณเสร็จแล้ว" : "ข้อมูลไม่พอสำหรับจำลอง strategy");
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+      setText("momCalculateStatus", "คำนวณเสร็จแล้ว");
     } catch (e) {
       showError(errEl, `คำนวณไม่สำเร็จ: ${e.message || e}`);
       setText("momCalculateStatus", "");
@@ -1788,42 +1786,29 @@ window.QD = (function () {
   function buildMomentumExportSheets(selections) {
     const sheets = {};
     if (selections.leaderboard) {
-      const header = ["Rank", "Ticker", "Category", "Trailing Return (%)", "Trend Filter", "Volatility SD (%)", "Risk-Adj Score"];
+      const header = ["Rank", "Ticker", "ชื่อย่อ", "Category", "Trailing Return (%)", "Trend Filter", "Volatility SD (%) ต่องวด", "Risk-Adj Score"];
       const rows = state.momentum.leaderboardRows.map((r) => [
-        r.rank, r.ticker, r.category, r.trailingReturnPct,
+        r.rank, r.ticker, tickerShortName(r.ticker), r.category, r.trailingReturnPct,
         r.smaSignal ? (r.smaSignal.pass ? "Pass" : "Fail") : "N/A",
         r.periodicVolPct, r.riskAdjScore
       ]);
       sheets.leaderboard = [header].concat(rows);
     }
     if (selections.rotation && state.momentum.rotationData) {
-      const header = ["Ticker", "Period End", "RS-Ratio", "RS-Momentum", "Label"];
+      const header = ["Ticker", "ชื่อย่อ", "Period End", "RS-Ratio", "RS-Momentum", "8-Group Label"];
       const rows = [];
       (state.momentum.rotationData.results || []).forEach((r) => {
-        r.points.forEach((p) => rows.push([r.ticker, p.periodEnd, p.x, p.y, p.octant]));
+        r.points.forEach((p) => rows.push([r.ticker, tickerShortName(r.ticker), p.periodEnd, p.x, p.y, p.octant]));
       });
       sheets.rotation = [header].concat(rows);
-    }
-    if (selections.strategy && state.momentum.strategyResult) {
-      const header = ["Period End", "Strategy Return (%)", "Strategy Equity (Index)", "Benchmark Return (%)", "Benchmark Equity (Index)", "Top Holdings"];
-      const rows = state.momentum.strategyResult.points.map((p) => [
-        p.periodEnd, p.strategyReturn * 100, p.strategyEquity * 100,
-        p.benchmarkReturn != null ? p.benchmarkReturn * 100 : null,
-        p.benchmarkEquity != null ? p.benchmarkEquity * 100 : null,
-        (p.topHoldings || []).join(", ")
-      ]);
-      sheets.strategy = [header].concat(rows);
     }
     return sheets;
   }
 
   function updateMomExportAvailability() {
     const anyRotation = !!(state.momentum.rotationData && (state.momentum.rotationData.results || []).some((r) => r.points.length));
-    const anyStrategy = !!(state.momentum.strategyResult && state.momentum.strategyResult.points && state.momentum.strategyResult.points.length);
     const rotationCb = byId("momExportRotation");
-    const strategyCb = byId("momExportStrategy");
     if (rotationCb) { rotationCb.disabled = !anyRotation; if (!anyRotation) rotationCb.checked = false; }
-    if (strategyCb) { strategyCb.disabled = !anyStrategy; if (!anyStrategy) strategyCb.checked = false; }
   }
 
   function exportMomentumToExcel() {
@@ -1831,10 +1816,9 @@ window.QD = (function () {
     hide(errEl);
     const selections = {
       leaderboard: !!(byId("momExportLeaderboard") && byId("momExportLeaderboard").checked),
-      rotation: !!(byId("momExportRotation") && byId("momExportRotation").checked && !byId("momExportRotation").disabled),
-      strategy: !!(byId("momExportStrategy") && byId("momExportStrategy").checked && !byId("momExportStrategy").disabled)
+      rotation: !!(byId("momExportRotation") && byId("momExportRotation").checked && !byId("momExportRotation").disabled)
     };
-    if (!selections.leaderboard && !selections.rotation && !selections.strategy) {
+    if (!selections.leaderboard && !selections.rotation) {
       showError(errEl, "กรุณาเลือกอย่างน้อย 1 ส่วนก่อน export");
       return null;
     }
@@ -1843,7 +1827,6 @@ window.QD = (function () {
     const wb = XLSX.utils.book_new();
     if (sheets.leaderboard) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.leaderboard), "Leaderboard");
     if (sheets.rotation) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rotation), "Rotation");
-    if (sheets.strategy) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.strategy), "Strategy");
     const stamp = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `momentum-${state.momentum.universeMode}-${stamp}.xlsx`);
     return sheets;
@@ -1874,8 +1857,8 @@ window.QD = (function () {
     { label: "Risk-Adjusted Score", desc: "(Trailing Return − Risk-free Rate ที่ปรับสัดส่วนตามช่วงเวลา) ÷ ความผันผวนของช่วงนั้น — ลักษณะคล้าย Sharpe Ratio แต่ไม่ได้ annualize เต็มรูปแบบ" },
     { label: "Inverse-Volatility Weighting", desc: "ให้น้ำหนักแปรผกผันกับค่าเบี่ยงเบนมาตรฐานของแต่ละตัว (ผันผวนน้อย = น้ำหนักมาก) — เรียกใน UI ว่า \"Optimized Risk-adjusted\" แต่ไม่ใช่ Mean-Variance Optimization เต็มรูปแบบ (ไม่มี covariance matrix ระหว่างสินทรัพย์)" },
     { label: "RS-Ratio / RS-Momentum", desc: "วัดความแข็งแกร่งเชิงเปรียบเทียบกับ Benchmark แบบ self-normalize ด้วย EMA และค่าเฉลี่ยเคลื่อนที่ของตัวเอง โดยผูกหน้าต่างคำนวณกับค่า Lookback ที่เลือกไว้ — ต่างจาก RRG ทั่วไปที่มักใช้คาบเวลาตายตัว (14/10 period)" },
-    { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "กราฟยังคงเป็น 4 quadrant มาตรฐาน (Leading/Weakening/Lagging/Improving) แต่มีป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด เป็นส่วนเสริม tooltip เท่านั้น ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
-    { label: "Strategy Preview", desc: "จำลอง Top-N strategy แบบ rebalance ทุกงวด ใช้ Risk-free Rate แทนสินทรัพย์ที่ไม่ผ่าน SMA Trend Filter — เป็นภาพร่างประกอบการตัดสินใจ ยังไม่รวมต้นทุนธุรกรรม/สลิปเพจ (รอ Backtest เต็มรูปแบบใน Phase 3)" }
+    { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
+    { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" }
   ];
 
   function renderMomentumGlossary() {
@@ -1933,17 +1916,25 @@ window.QD = (function () {
     const rfAutofillBtn = byId("momRiskFreeAutofillBtn");
     if (rfAutofillBtn) rfAutofillBtn.addEventListener("click", () => autofillRiskFreeRate());
 
-    const topNEl = byId("momTopNPicker");
-    if (topNEl) topNEl.addEventListener("change", (e) => { state.momentum.topN = Number(e.target.value); });
-
-    const weightingEl = byId("momWeightingPicker");
-    if (weightingEl) weightingEl.addEventListener("change", (e) => { state.momentum.weighting = e.target.value; });
-
     const tailEl = byId("momTailLengthInput");
     if (tailEl) tailEl.addEventListener("change", (e) => { state.momentum.tailLength = Math.max(2, Number(e.target.value) || 12); });
 
-    const regimeEl = byId("momRegimePicker");
-    if (regimeEl) regimeEl.addEventListener("change", (e) => { state.momentum.regimeSeries = e.target.value; });
+    const rrgSelectAllBtn = byId("momRrgSelectAllBtn");
+    if (rrgSelectAllBtn) rrgSelectAllBtn.addEventListener("click", () => {
+      const rotationInstruments = state.momentum.universeInstruments.filter((i) => i.id !== state.momentum.benchmarkAssetId);
+      state.momentum.rrgSelectedIds = rotationInstruments.map((i) => i.id);
+      state.momentum.rrgSelectionInitialized = true;
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+    });
+
+    const rrgClearAllBtn = byId("momRrgClearAllBtn");
+    if (rrgClearAllBtn) rrgClearAllBtn.addEventListener("click", () => {
+      state.momentum.rrgSelectedIds = [];
+      state.momentum.rrgSelectionInitialized = true;
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+    });
 
     const calcBtn = byId("momCalculateBtn");
     if (calcBtn) calcBtn.addEventListener("click", () => runMomentumCalculate());
@@ -2157,14 +2148,15 @@ window.QD = (function () {
     renderStatGlossary,
     // Momentum & Rotation (Phase 2) -- pure helpers (unit-testable)
     getUniverseInstruments, computeTrailingReturn, computeSMASignal, computeReturnSeries, stdevSample,
-    computePeriodicVolatility, computeWindowVolatility, computeRiskAdjustedScore, computeWeights,
+    computePeriodicVolatility, computeWindowVolatility, computeRiskAdjustedScore,
     ema, sma, classifyOctant, alignTwoSeries, computeRotationGraphData,
-    rankUniverseFromSeries, rankUniverseNow, buildMasterPeriodAxis, alignToAxis, rankUniverseAt,
-    simulateTopNStrategy, computeEquityCurveSummary, alignMacroToPeriods,
-    buildLeaderboardChartDatasets, buildEquityChartDatasets, momentumRankParams, computeMomentumFetchKey,
+    rankUniverseFromSeries, rankUniverseNow,
+    buildLeaderboardChartDatasets, momentumRankParams, computeMomentumFetchKey,
+    tickerShortName, computeDefaultRrgSelection, buildRrgCheckboxItems, buildRotationSummaryRows,
     // Momentum & Rotation -- data + flows
-    fetchPeriodEndCloses, fetchMacroSeries, fetchLatestMacroValue,
+    fetchPeriodEndCloses, fetchLatestMacroValue,
     loadMomentumUniverseData, renderMomentumLeaderboard, runMomentumCalculate, autofillRiskFreeRate,
+    renderRotationGraph, renderRrgCheckboxPanel, rerenderRotationDisplay, renderRotationSummaryTable,
     buildMomentumExportSheets, updateMomExportAvailability, exportMomentumToExcel,
     renderMomentumGlossary, renderMomentumBenchmarkPicker, renderMomentumLookbackSmaPickers, switchTab,
     init
