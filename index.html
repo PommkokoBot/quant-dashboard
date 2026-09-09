@@ -179,6 +179,12 @@
       </div>
     </section>
 
+    <!-- ---------- Stat Glossary (คำอธิบาย metric ทั้งหมด) ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">คำอธิบาย Metric</h2>
+      <div id="statGlossary" class="space-y-4"></div>
+    </section>
+
   </main>
 </div>
 
@@ -207,26 +213,26 @@ window.QD = (function () {
   // where e.g. -1% is a *larger* number than -5% and is indeed the better outcome);
   // "low" = smaller raw value is better (frequency-of-bad-things and risk metrics).
   const STAT_FIELDS = [
-    { key: "mean_pct",                   label: "Mean",                    group: "returns",  kind: "pct", direction: "high" },
-    { key: "median_pct",                 label: "Median",                  group: "returns",  kind: "pct", direction: "high" },
-    { key: "geometric_mean_pct",         label: "Geometric Mean",          group: "returns",  kind: "pct", direction: "high" },
-    { key: "win_frequency_pct",          label: "Win Frequency",           group: "upside",   kind: "pct", direction: "high" },
-    { key: "average_win_pct",            label: "Average Win",             group: "upside",   kind: "pct", direction: "high" },
-    { key: "best_observation_pct",       label: "Best Observation",        group: "upside",   kind: "pct", direction: "high" },
-    { key: "above_mean_frequency_pct",   label: "Above-Mean Frequency",    group: "upside",   kind: "pct", direction: "high" },
-    { key: "tail_win_frequency_pct",     label: "Tail-Win Frequency",      group: "upside",   kind: "pct", direction: "high" },
-    { key: "loss_frequency_pct",         label: "Loss Frequency",          group: "downside", kind: "pct", direction: "low" },
-    { key: "average_loss_pct",           label: "Average Loss",            group: "downside", kind: "pct", direction: "high" },
-    { key: "worst_observation_pct",      label: "Worst Observation",       group: "downside", kind: "pct", direction: "high" },
-    { key: "below_mean_frequency_pct",   label: "Below-Mean Frequency",    group: "downside", kind: "pct", direction: "low" },
-    { key: "tail_loss_frequency_pct",    label: "Tail-Loss Frequency",     group: "downside", kind: "pct", direction: "low" },
-    { key: "standard_deviation_pct",     label: "Standard Deviation",      group: "risk",     kind: "pct", direction: "low" },
-    { key: "downside_deviation_pct",     label: "Downside Deviation",      group: "risk",     kind: "pct", direction: "low" },
-    { key: "cvar_5pct_pct",              label: "CVaR (5%)",               group: "risk",     kind: "pct", direction: "high", countKey: "cvar_5pct_n" },
-    { key: "risk_adjusted_return_x",     label: "Risk-Adjusted Return",    group: "risk",     kind: "x", direction: "high" },
-    { key: "downside_adjusted_return_x", label: "Downside-Adjusted Return",group: "risk",     kind: "x", direction: "high" },
-    { key: "payoff_ratio_x",             label: "Payoff Ratio",            group: "risk",     kind: "x", direction: "high" },
-    { key: "gain_to_pain_ratio_x",       label: "Gain-to-Pain Ratio",      group: "risk",     kind: "x", direction: "high" }
+    { key: "mean_pct",                   label: "Mean",                    group: "returns",  kind: "pct", direction: "high", desc: "ค่าเฉลี่ยเลขคณิตของผลตอบแทนทุกงวดในช่วงที่เลือก" },
+    { key: "median_pct",                 label: "Median",                  group: "returns",  kind: "pct", direction: "high", desc: "ค่ากลางของผลตอบแทน (ครึ่งหนึ่งของงวดสูงกว่า อีกครึ่งต่ำกว่า) ไม่ถูกดึงด้วยค่าผิดปกติสุดโต่งเหมือน Mean" },
+    { key: "geometric_mean_pct",         label: "Geometric Mean",          group: "returns",  kind: "pct", direction: "high", desc: "ค่าเฉลี่ยแบบทบต้น สะท้อนผลตอบแทนจริงหากลงทุนต่อเนื่องทุกงวด (มักต่ำกว่า Mean เสมอเมื่อผลตอบแทนผันผวน)" },
+    { key: "win_frequency_pct",          label: "Win Frequency",           group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของจำนวนงวดทั้งหมดที่ผลตอบแทนเป็นบวก" },
+    { key: "average_win_pct",            label: "Average Win",             group: "upside",   kind: "pct", direction: "high", desc: "ผลตอบแทนเฉลี่ย เฉพาะงวดที่เป็นบวกเท่านั้น" },
+    { key: "best_observation_pct",       label: "Best Observation",        group: "upside",   kind: "pct", direction: "high", desc: "ผลตอบแทนสูงสุดที่เคยเกิดขึ้นจริงในช่วงที่เลือก" },
+    { key: "above_mean_frequency_pct",   label: "Above-Mean Frequency",    group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของงวดที่ผลตอบแทนสูงกว่าค่าเฉลี่ย (Mean) ของช่วงนั้น" },
+    { key: "tail_win_frequency_pct",     label: "Tail-Win Frequency",      group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของงวดที่ผลตอบแทนอยู่ในกลุ่มบวกสุดโต่ง (upside tail) เทียบกับการกระจายทั้งหมด" },
+    { key: "loss_frequency_pct",         label: "Loss Frequency",          group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของจำนวนงวดทั้งหมดที่ผลตอบแทนเป็นลบ" },
+    { key: "average_loss_pct",           label: "Average Loss",            group: "downside", kind: "pct", direction: "high", desc: "ผลตอบแทนเฉลี่ย เฉพาะงวดที่เป็นลบเท่านั้น (ตัวเลขติดลบ ยิ่งใกล้ 0 ยิ่งดี)" },
+    { key: "worst_observation_pct",      label: "Worst Observation",       group: "downside", kind: "pct", direction: "high", desc: "ผลตอบแทนต่ำสุด (ขาดทุนมากที่สุด) ที่เคยเกิดขึ้นจริงในช่วงที่เลือก" },
+    { key: "below_mean_frequency_pct",   label: "Below-Mean Frequency",    group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของงวดที่ผลตอบแทนต่ำกว่าค่าเฉลี่ย (Mean) ของช่วงนั้น" },
+    { key: "tail_loss_frequency_pct",    label: "Tail-Loss Frequency",     group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของงวดที่ผลตอบแทนอยู่ในกลุ่มลบสุดโต่ง (downside tail) เทียบกับการกระจายทั้งหมด" },
+    { key: "standard_deviation_pct",     label: "Standard Deviation",      group: "risk",     kind: "pct", direction: "low", desc: "ค่าเบี่ยงเบนมาตรฐานของผลตอบแทน วัดความผันผวนโดยรวม ยิ่งสูงยิ่งผันผวน" },
+    { key: "downside_deviation_pct",     label: "Downside Deviation",      group: "risk",     kind: "pct", direction: "low", desc: "ความผันผวนเฉพาะฝั่งขาดทุน (ไม่นับความผันผวนฝั่งกำไรเป็นความเสี่ยง)" },
+    { key: "cvar_5pct_pct",              label: "CVaR (5%)",               group: "risk",     kind: "pct", direction: "high", countKey: "cvar_5pct_n", desc: "ค่าเฉลี่ยผลตอบแทนของกลุ่ม 5% งวดที่แย่ที่สุด (Conditional Value at Risk) สะท้อนความเสียหายเฉลี่ยกรณีเลวร้าย" },
+    { key: "risk_adjusted_return_x",     label: "Risk-Adjusted Return",    group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลตอบแทนเฉลี่ยต่อความผันผวนโดยรวม (Mean ÷ Standard Deviation) ยิ่งสูงยิ่งคุ้มความเสี่ยง" },
+    { key: "downside_adjusted_return_x", label: "Downside-Adjusted Return",group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลตอบแทนเฉลี่ยต่อความผันผวนเฉพาะฝั่งขาดทุน (Mean ÷ Downside Deviation)" },
+    { key: "payoff_ratio_x",             label: "Payoff Ratio",            group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนขนาด Average Win ต่อขนาด Average Loss — มากกว่า 1 แปลว่ากำไรเฉลี่ยต่อครั้งมากกว่าขาดทุนเฉลี่ยต่อครั้ง" },
+    { key: "gain_to_pain_ratio_x",       label: "Gain-to-Pain Ratio",      group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลรวมกำไรทั้งหมดต่อผลรวมขาดทุนทั้งหมด (นับทุกงวดรวมกัน ไม่ใช่แค่ค่าเฉลี่ยต่อครั้ง)" }
   ];
 
   // 7 stats selectable on the Rolling Chart (per spec section 3.4)
@@ -893,6 +899,43 @@ window.QD = (function () {
       `<option value="${s.key}" ${s.key === state.rollingStatKey ? "selected" : ""}>${s.label}</option>`).join("");
   }
 
+  const GLOSSARY_GROUP_LABELS = {
+    returns: "ผลตอบแทน (Returns)",
+    upside: "ฝั่งบวก (Upside)",
+    downside: "ฝั่งลบ (Downside)",
+    risk: "ความเสี่ยง / อัตราส่วน (Risk & Ratios)"
+  };
+  const GLOSSARY_GROUP_ORDER = ["returns", "upside", "downside", "risk"];
+  const GLOSSARY_EXTRA_NOTES = [
+    { label: "n", desc: "จำนวนงวด (ปี) ทั้งหมดที่ใช้คำนวณสถิติของช่วงนั้น" },
+    { label: "CVaR (5%) n", desc: "จำนวนงวดที่ตกอยู่ในกลุ่ม 5% เลวร้ายสุด ซึ่งถูกนำมาเฉลี่ยเป็นค่า CVaR (5%)" }
+  ];
+
+  function renderStatGlossary() {
+    const el = byId("statGlossary");
+    if (!el) return;
+    const byGroup = {};
+    STAT_FIELDS.forEach((f) => {
+      byGroup[f.group] = byGroup[f.group] || [];
+      byGroup[f.group].push(f);
+    });
+    const groupsHtml = GLOSSARY_GROUP_ORDER.filter((g) => byGroup[g]).map((g) => {
+      const items = byGroup[g].map((f) =>
+        `<div class="text-xs"><span class="font-semibold text-slate-700">${f.label}</span>` +
+        `<span class="text-slate-500"> — ${f.desc || ""}</span></div>`
+      ).join("");
+      return `<div><h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">${GLOSSARY_GROUP_LABELS[g] || g}</h3>` +
+        `<div class="space-y-1">${items}</div></div>`;
+    }).join("");
+    const extraHtml = GLOSSARY_EXTRA_NOTES.map((n) =>
+      `<div class="text-xs"><span class="font-semibold text-slate-700">${n.label}</span>` +
+      `<span class="text-slate-500"> — ${n.desc}</span></div>`
+    ).join("");
+    el.innerHTML = groupsHtml +
+      `<div><h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">อื่นๆ</h3>` +
+      `<div class="space-y-1">${extraHtml}</div></div>`;
+  }
+
   function syncTopControlsFromState() {
     const a = byId("assetPicker"); if (a) a.value = String(state.assetId);
     const pt = byId("periodTypePicker"); if (pt) pt.value = state.periodType;
@@ -938,6 +981,7 @@ window.QD = (function () {
   async function init(overrideClient) {
     sb = overrideClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     bindStaticUIHandlers();
+    renderStatGlossary();
 
     const { data: { session } } = await sb.auth.getSession();
     state.session = session || null;
@@ -967,6 +1011,7 @@ window.QD = (function () {
     renderOverviewTable, renderOverviewChart, renderAssetPicker, renderRollingStatPicker, syncTopControlsFromState,
     login, logout, bootDashboard, renderAuthState,
     fieldHeaderLabel, buildExportColumns, buildExportSheets, updateExportAvailability, exportToExcel,
+    renderStatGlossary,
     init
   };
 })();
