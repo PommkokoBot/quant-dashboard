@@ -65,7 +65,6 @@
       <nav class="flex items-center gap-1" role="tablist">
         <button id="tabBtnSeasonality" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="seasonality">Seasonality</button>
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
-        <button id="tabBtnVolume" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="volume">Volume</button>
       </nav>
     </div>
     <button id="logoutBtn" class="text-sm text-slate-600 hover:text-red-600 border border-slate-300 rounded-lg px-3 py-1.5">
@@ -217,6 +216,7 @@
           <select id="momTimeframePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
             <option value="month" selected>รายเดือน (Month)</option>
             <option value="week">รายสัปดาห์ (Week)</option>
+            <option value="day">รายวัน (Day)</option>
           </select>
         </div>
         <div>
@@ -263,29 +263,62 @@
       <p class="text-[10px] text-slate-400 mt-3">Trailing Return / SMA Trend Filter คำนวณจากราคาปิดสิ้นงวด (สัปดาห์/เดือน) — instrument ที่มีประวัติราคาไม่ครบตามที่เลือกจะถูกตัดออกจากอันดับรอบนั้นโดยอัตโนมัติ · เปลี่ยน Universe/Timeframe/Benchmark แล้วต้องกด "คำนวณ" เพื่อโหลดข้อมูลใหม่ (ปุ่มนี้รันทั้ง Leaderboard และ Rotation Graph พร้อมกัน)</p>
     </section>
 
-    <!-- ---------- Level 1: Leaderboard ---------- -->
+    <!-- ---------- Instrument selection (drives table + both charts) ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xs font-semibold text-slate-600">เลือก instrument ที่จะรวมในตาราง/กราฟ</h2>
+        <div class="flex items-center gap-3">
+          <button id="momSelectAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">เลือกทั้งหมด</button>
+          <button id="momClearAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">ล้างทั้งหมด</button>
+        </div>
+      </div>
+      <div id="momSelectionPanel" class="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto text-xs"></div>
+      <p class="text-[10px] text-slate-400 mt-2">ติ๊ก/ล้างมีผลทันที ไม่ต้องกด "คำนวณ" ซ้ำ (กรองจากข้อมูลที่โหลดไว้แล้ว)</p>
+    </section>
+
+    <!-- ---------- Leaderboard: charts + merged table ---------- -->
     <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold text-slate-800">Leaderboard</h2>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="text-sm font-semibold text-slate-800">Leaderboard — Momentum &amp; Volume</h2>
         <span id="momLeaderboardStatus" class="text-xs text-slate-500"></span>
       </div>
+
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="text-[11px] text-slate-500">มุมมอง:</span>
+        <button class="mom-preset-btn text-[11px] border border-slate-300 rounded-lg px-2.5 py-1" data-preset="momentum">Momentum</button>
+        <button class="mom-preset-btn text-[11px] border border-slate-300 rounded-lg px-2.5 py-1" data-preset="volume">Volume</button>
+        <button class="mom-preset-btn text-[11px] border border-slate-300 rounded-lg px-2.5 py-1" data-preset="all">ทั้งหมด</button>
+        <button id="momColumnToggleBtn" class="text-[11px] text-blue-600 hover:text-blue-800 ml-2">เลือกคอลัมน์ ▾</button>
+        <button id="momLayoutResetBtn" class="text-[11px] text-slate-500 hover:text-red-600">รีเซ็ตค่าเริ่มต้น</button>
+      </div>
+      <div id="momColumnPanel" class="hidden border border-slate-200 rounded-lg p-3 mb-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs"></div>
+
       <div class="relative">
         <div id="momLeaderboardLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
           <div class="spinner"></div>
         </div>
+
+        <div class="mb-3">
+          <div class="flex items-center justify-between mb-1">
+            <h3 class="text-xs font-semibold text-slate-600">Trailing Return — 20 อันดับแรกตามลำดับที่ตารางเรียงอยู่</h3>
+            <p class="text-[10px] text-slate-400">เขียว = ผ่าน SMA Trend Filter · แดง = ไม่ผ่าน · เส้นประ = Benchmark</p>
+          </div>
+          <div class="h-56"><canvas id="momLeaderboardChart"></canvas></div>
+        </div>
+
         <div class="mb-4">
           <div class="flex items-center justify-between mb-1">
-            <h3 class="text-xs font-semibold text-slate-600">Top 15-20 by Trailing Return</h3>
-            <p class="text-[10px] text-slate-400">สีเขียว = ผ่าน SMA Trend Filter · สีแดง = ไม่ผ่าน · เส้นประ = Benchmark</p>
+            <h3 class="text-xs font-semibold text-slate-600">Volume Z-score — instrument ชุดเดียวกัน เรียงเหมือนกัน</h3>
+            <p class="text-[10px] text-slate-400">ส้ม = volume พุ่งกว่าปกติ · น้ำเงิน = แห้งกว่าปกติ</p>
           </div>
-          <div class="h-56">
-            <canvas id="momLeaderboardChart"></canvas>
-          </div>
+          <div class="h-56"><canvas id="momVolumeChart"></canvas></div>
         </div>
+
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
           <table id="momLeaderboardTable" class="text-xs w-full"></table>
         </div>
       </div>
+      <p id="momIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
       <p id="momLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
     </section>
 
@@ -323,14 +356,25 @@
         <canvas id="momRotationChart"></canvas>
       </div>
 
-      <p id="momVolIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
-
       <div class="mt-4">
         <h3 class="text-xs font-semibold text-slate-600 mb-2">สรุปสถานะ 8 กลุ่ม (ตามตัวที่เลือกแสดงในกราฟ)</h3>
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
           <table id="momRotationSummaryTable" class="text-xs w-full"></table>
         </div>
       </div>
+    </section>
+
+    <!-- ---------- Drill-down: one instrument's volume history ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 id="momDrilldownTitle" class="text-sm font-semibold text-slate-800 mb-1">กราฟย้อนหลังรายตัว</h2>
+      <p class="text-xs text-slate-500 mb-3">คลิกแถวในตารางด้านบนเพื่อดู volume ย้อนหลังของตัวนั้น เทียบกับแถบ "ช่วงปกติ" (ค่าเฉลี่ย ± 1SD และ ± 2SD แบบ rolling บนสเกล log) พร้อมเส้นราคาปิดบนแกนขวา — ข้อมูลจะถูกดึงเฉพาะตอนที่คลิก</p>
+      <div class="relative h-80">
+        <div id="momDrilldownLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+          <div class="spinner"></div>
+        </div>
+        <canvas id="momDrilldownChart"></canvas>
+      </div>
+      <p id="momDrilldownNote" class="text-[10px] text-slate-400 mt-2">คลิกแถวในตารางด้านบนเพื่อเลือก instrument</p>
     </section>
 
     <!-- ---------- Correlation Explorer ---------- -->
@@ -399,15 +443,25 @@
       <div class="flex flex-wrap items-center gap-4">
         <h2 class="text-xs font-semibold text-slate-600 mr-1">Export</h2>
         <label class="flex items-center gap-1.5 text-xs text-slate-600">
-          <input type="checkbox" id="momExportLeaderboard" checked /> Leaderboard
+          <input type="checkbox" id="momExportLeaderboard" checked /> ตารางรวม
         </label>
         <label class="flex items-center gap-1.5 text-xs text-slate-400">
-          <input type="checkbox" id="momExportRotation" disabled /> Rotation Graph data
+          <input type="checkbox" id="momExportRotation" disabled /> Rotation Graph
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-400">
+          <input type="checkbox" id="momExportCorrMatrix" disabled /> Correlation matrix
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-400">
+          <input type="checkbox" id="momExportCorrAvg" disabled /> Correlation ค่าเฉลี่ยตามเวลา
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-400">
+          <input type="checkbox" id="momExportDrilldown" disabled /> ประวัติ volume (ตัวที่เปิดอยู่)
         </label>
         <button id="momExportBtn" class="ml-auto bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-lg px-4 py-2">
           Export Excel
         </button>
       </div>
+      <p class="text-[10px] text-slate-400 mt-2">ชีทตารางรวม export <span class="font-medium">ทุกคอลัมน์เสมอ</span> ไม่ว่าจะซ่อนคอลัมน์ไหนไว้บนจอก็ตาม (จะได้ไม่หายไปจากไฟล์โดยไม่รู้ตัว)</p>
       <p id="momExportError" class="text-xs text-red-600 mt-2 hidden"></p>
     </section>
 
@@ -420,105 +474,6 @@
   </div>
   <!-- /#tabMomentum -->
 
-  <div id="tabVolume" class="hidden space-y-6">
-
-    <!-- ---------- Volume Controls ---------- -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div class="flex flex-wrap items-end gap-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Universe</label>
-          <select id="volUniversePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]">
-            <option value="asset_class">Asset Class</option>
-            <option value="broad_market">Broad Market</option>
-            <option value="thematic">Thematic</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Granularity</label>
-          <select id="volGranularityPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <option value="day" selected>รายวัน (Day)</option>
-            <option value="week">รายสัปดาห์ (Week)</option>
-            <option value="month">รายเดือน (Month)</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Baseline (งวดย้อนหลังที่ใช้เทียบ)</label>
-          <select id="volBaselinePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">เรียง/ลงสีตาม</label>
-          <select id="volMetricPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
-            <option value="zscore" selected>Volume Z-score</option>
-            <option value="rvol">RVOL (เท่าของค่าเฉลี่ย)</option>
-          </select>
-        </div>
-        <button id="volCalculateBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg px-4 py-2">
-          คำนวณ
-        </button>
-        <span id="volCalculateStatus" class="text-xs text-slate-500"></span>
-      </div>
-      <p id="volCalculateError" class="text-sm text-red-600 mt-2 hidden"></p>
-      <p class="text-[10px] text-slate-400 mt-3">Z-score = (volume งวดล่าสุด − ค่าเฉลี่ยของ baseline) ÷ SD ของ baseline · RVOL = volume งวดล่าสุด ÷ ค่าเฉลี่ยของ baseline — ทั้งคู่คำนวณจากฐานของแต่ละ instrument เอง จึงเทียบข้าม ETF ที่ขนาดกองต่างกันได้โดยตรง · หน้านี้ไม่ auto-run ต้องกด "คำนวณ" ทุกครั้งที่เปลี่ยน Universe/Granularity</p>
-    </section>
-
-    <!-- ---------- Instrument selection ---------- -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-xs font-semibold text-slate-600">เลือกตัวที่จะแสดงในตาราง/กราฟ</h2>
-        <div class="flex items-center gap-3">
-          <button id="volSelectAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">เลือกทั้งหมด</button>
-          <button id="volClearAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">ล้างทั้งหมด</button>
-        </div>
-      </div>
-      <div id="volCheckboxPanel" class="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto text-xs"></div>
-      <p class="text-[10px] text-slate-400 mt-2">ค่าเริ่มต้น: ทุกตัวใน Universe — การติ๊ก/ล้างมีผลทันที ไม่ต้องกด "คำนวณ" ซ้ำ (กรองจากข้อมูลที่โหลดไว้แล้ว)</p>
-    </section>
-
-    <!-- ---------- Leaderboard ---------- -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold text-slate-800">Volume Anomaly Leaderboard</h2>
-        <span id="volLeaderboardStatus" class="text-xs text-slate-500"></span>
-      </div>
-      <div class="relative">
-        <div id="volLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
-          <div class="spinner"></div>
-        </div>
-        <div class="mb-4">
-          <div class="flex items-center justify-between mb-1">
-            <h3 class="text-xs font-semibold text-slate-600">Top 20 ตามระดับความผิดปกติ</h3>
-            <p class="text-[10px] text-slate-400">แท่งขึ้น/สีส้ม = volume พุ่งกว่าปกติ · แท่งลง/สีน้ำเงิน = แห้งกว่าปกติ</p>
-          </div>
-          <div class="h-56">
-            <canvas id="volLeaderboardChart"></canvas>
-          </div>
-        </div>
-        <div class="overflow-x-auto border border-slate-200 rounded-lg">
-          <table id="volLeaderboardTable" class="text-xs w-full"></table>
-        </div>
-      </div>
-      <p id="volIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
-      <p id="volLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
-    </section>
-
-    <!-- ---------- Drill-down ---------- -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <h2 id="volDrilldownTitle" class="text-sm font-semibold text-slate-800 mb-1">กราฟย้อนหลังรายตัว</h2>
-      <p class="text-xs text-slate-500 mb-3">คลิกแถวในตารางด้านบนเพื่อดู volume ย้อนหลังของตัวนั้น เทียบกับแถบ "ช่วงปกติ" (ค่าเฉลี่ย ± 1SD และ ± 2SD ที่คำนวณแบบ rolling) พร้อมเส้นราคาปิดบนแกนขวา</p>
-      <div class="relative h-80">
-        <canvas id="volDrilldownChart"></canvas>
-      </div>
-      <p id="volDrilldownNote" class="text-[10px] text-slate-400 mt-2"></p>
-    </section>
-
-    <!-- ---------- Volume Glossary ---------- -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <h2 class="text-sm font-semibold text-slate-800 mb-3">คำอธิบาย Volume Anomaly</h2>
-      <div id="volGlossary" class="space-y-2"></div>
-    </section>
-
-  </div>
-  <!-- /#tabVolume -->
 
   </main>
 </div>
@@ -538,8 +493,8 @@ window.QD = (function () {
   let overviewChartInstance = null;
   let momLeaderboardChartInstance = null;
   let momRotationChartInstance = null;
-  let volLeaderboardChartInstance = null;
-  let volDrilldownChartInstance = null;
+  let momVolumeChartInstance = null;
+  let momDrilldownChartInstance = null;
   let corrPairChartInstance = null;
   let corrAvgChartInstance = null;
 
@@ -620,15 +575,31 @@ window.QD = (function () {
       tailLength: 12,
       seriesByInstrument: {},   // instrumentId -> [{period_end, adj_close}] ascending by period_end
       universeInstruments: [],  // resolved instrument list for the current universe mode
-      leaderboardRows: [],
       rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] } -- unfiltered, full rotation universe
       rrgSelectedIds: [],       // instrumentIds currently checked in the RRG display-selection panel
       rrgSelectionInitialized: false, // reset to false on each fresh data fetch so the Top-N default re-applies
 
-      // ---- Volume overlay on the RRG (2026-09 addition) ----
-      volBaselinePeriods: 12,   // trailing periods used as the "normal volume" baseline for the halo
-      volumeSeriesByInstrument: {}, // instrumentId -> [{period_end, volume, adj_close}] (short window, halo only)
-      volumeAnomalyById: {},    // instrumentId -> { zScore, rvol, current, mean, sd, periodEnd }
+      // ---- Volume (merged into this tab, 2026-09) ----
+      volBaselinePeriods: 12,   // trailing periods used as the "normal volume" baseline
+      volumeSeriesByInstrument: {}, // instrumentId -> [{period_end, volume, adj_close}] at the active timeframe
+      volumeAnomalyById: {},    // instrumentId -> { zScore, rvol, current, mean, periodEnd }
+      volumeMeta: null,         // month-to-date aggregation info (cutoffTradingDays / partial)
+
+      // ---- Merged Leaderboard table ----
+      selectedIds: [],          // instruments included in the table + both charts
+      selectionInitialized: false,
+      rows: [],                 // merged (union) rows for the current selection
+      table: {
+        sortColumn: "trailingReturnPct",
+        sortDir: "desc",
+        order: [],              // column ids, left to right (filled from the registry at init)
+        visible: {},            // column id -> bool
+        preset: "all"
+      },
+      drilldownInstrumentId: null,
+      drilldownCacheKey: null,  // `${instrumentId}|${timeframe}` of what is in drilldownSeries
+      drilldownSeries: [],
+      drilldownPoints: [],
 
       // ---- Correlation Explorer sub-section (2026-09 addition) ----
       corr: {
@@ -644,22 +615,6 @@ window.QD = (function () {
         selectedPair: null,     // { aId, bId, aTicker, bTicker }
         pairSeries: []          // [{periodEnd, corr}]
       }
-    },
-
-    // ---- Volume Anomaly tab (2026-09 addition) ----
-    volume: {
-      dataLoaded: false,
-      lastFetchKey: null,
-      universeMode: "asset_class",
-      granularity: "day",
-      baselinePeriods: 20,
-      metric: "zscore",         // 'zscore' | 'rvol' -- drives sort order + heatmap coloring only (both columns always shown)
-      universeInstruments: [],
-      seriesByInstrument: {},   // instrumentId -> [{period_end, volume, adj_close}]
-      rows: [],                 // ranked anomaly rows for the CURRENT selection
-      selectedIds: [],
-      selectionInitialized: false,
-      drilldownInstrumentId: null
     }
   };
 
@@ -1232,15 +1187,30 @@ window.QD = (function () {
 
   // Week/Month lookback + SMA option sets (10.5) -- selectable, tied together
   // by the Timeframe picker.
+  // Day was added in the 2026-09 merge round. Its lookback set deliberately
+  // starts at 21 trading days (~1 month): the momentum literature finds
+  // continuation at 3-12 month horizons but *reversal* below ~1 month, so
+  // offering 5/10-day "momentum" ranking would be a signal the statistics do
+  // not support. The SMA set uses the conventional 50/100/150/200-day levels
+  // (200d ~ Faber's 10-month filter).
   const MOMENTUM_TIMEFRAME_OPTIONS = {
-    week:  { lookbacks: [4, 8, 13, 26, 52], smas: [10, 20, 30, 40, 52] },
-    month: { lookbacks: [3, 6, 12],         smas: [6, 8, 10, 12] }
+    day:   { lookbacks: [21, 63, 126, 252],  smas: [50, 100, 150, 200] },
+    week:  { lookbacks: [4, 8, 13, 26, 52],  smas: [10, 20, 30, 40, 52] },
+    month: { lookbacks: [3, 6, 12],          smas: [6, 8, 10, 12] }
   };
   const MOMENTUM_TIMEFRAME_DEFAULTS = {
+    day:   { lookback: 63, sma: 200 },
     week:  { lookback: 52, sma: 40 },
     month: { lookback: 12, sma: 10 }
   };
-  const MOMENTUM_PERIODS_PER_YEAR = { week: 52, month: 12 };
+  const MOMENTUM_PERIODS_PER_YEAR = { day: 252, week: 52, month: 12 };
+  const MOMENTUM_UNIT_LABEL = { day: "วัน", week: "สัปดาห์", month: "เดือน" };
+  // Daily RS-Momentum is far noisier than the weekly convention, so the tail
+  // default stretches to keep the rotation readable at day granularity.
+  const MOMENTUM_TAIL_DEFAULTS = { day: 30, week: 12, month: 12 };
+  // How many bars the two Leaderboard charts show, taken off the top of the
+  // table's CURRENT sort order.
+  const MOMENTUM_CHART_TOP_N = 20;
 
   const OCTANT_LABELS = [
     "Leading – Accelerating", "Leading – Strong", "Improving – Strong", "Improving – Early",
@@ -1575,19 +1545,31 @@ window.QD = (function () {
     };
   }
 
-  // Identifies "what was fetched" (which instruments' price series are in
-  // state.momentum.seriesByInstrument, at what granularity) so the single
-  // top-level Calculate button can skip re-fetching from Supabase when only
-  // a client-side-only parameter changed (Lookback/SMA/Top-N/Weighting/etc.
-  // -- see decision log on why Universe/Timeframe/Benchmark are the only
-  // three controls that actually require new data).
+  // Identifies "what was fetched": which instruments, at what granularity,
+  // and (since the volume side now needs daily rows for month-to-date) with
+  // what baseline length. Anything NOT in this key -- Lookback, SMA,
+  // Risk-Adjusted, Risk-free, Tail length, column layout -- is a pure
+  // client-side recompute and never triggers a network call.
   function computeMomentumFetchKey() {
-    return `${state.momentum.universeMode}|${state.momentum.timeframe}|${state.momentum.benchmarkAssetId}`;
+    const m = state.momentum;
+    return `${m.universeMode}|${m.timeframe}|${m.benchmarkAssetId}|${m.volBaselinePeriods}`;
+  }
+
+  // How much price history this parameter set actually needs. Previously the
+  // price fetch pulled FULL history every time, which at Day granularity on
+  // the 56-name Thematic universe is 162,898 rows (41 paged requests);
+  // bounding it to what the longest window touches brings that to ~4.
+  function momentumPriceLookbackPeriods() {
+    const m = state.momentum;
+    return Math.max(m.lookbackPeriods || 0, m.smaPeriods || 0) + (m.tailLength || 12) + 5;
   }
 
   // Returns true on success, false if the fetch failed (error already shown
   // in the UI) -- callers that chain further work (runMomentumCalculate)
   // use this to stop before running Level 2 on stale/incomplete data.
+  //
+  // Prices and volumes are requested in PARALLEL and the table is rendered as
+  // soon as prices land, so the volume round-trip is not dead waiting time.
   async function loadMomentumUniverseData() {
     const errEl = byId("momLeaderboardError");
     hide(errEl);
@@ -1599,10 +1581,15 @@ window.QD = (function () {
       // (Top-N by Trailing Return) is re-applied once the new leaderboard is
       // known -- see runMomentumCalculate.
       state.momentum.rrgSelectionInitialized = false;
+      state.momentum.selectionInitialized = false;
       // A different universe also invalidates the Correlation sub-section's
-      // cached series + default selection (it shares this Universe picker).
+      // cached series + default selection (it shares this Universe picker),
+      // and the drill-down cache (different granularity/instrument set).
       state.momentum.corr.selectionInitialized = false;
       state.momentum.corr.seriesCacheKey = null;
+      state.momentum.drilldownCacheKey = null;
+      state.momentum.drilldownSeries = [];
+
       const universe = getUniverseInstruments(state.momentum.universeMode);
       state.momentum.universeInstruments = universe;
       const idSet = new Set(universe.map((i) => i.id));
@@ -1610,15 +1597,31 @@ window.QD = (function () {
       const idList = Array.from(idSet);
       if (idList.length === 0) {
         state.momentum.seriesByInstrument = {};
+        state.momentum.volumeSeriesByInstrument = {};
+        state.momentum.selectedIds = [];
+        state.momentum.selectionInitialized = true;
         state.momentum.dataLoaded = true;
         state.momentum.lastFetchKey = computeMomentumFetchKey();
+        recomputeMomentumRows();
         renderMomentumLeaderboard();
         setText("momLeaderboardStatus", "");
         return true;
       }
-      const rows = await fetchPeriodEndCloses(idList, state.momentum.timeframe);
+
+      const tf = state.momentum.timeframe;
+      const priceStart = approxStartDateForPeriods(tf, momentumPriceLookbackPeriods());
+      const volPlan = volumeFetchPlan(tf, state.momentum.volBaselinePeriods + 2);
+
+      const pricePromise = fetchPeriodEndCloses(idList, tf, priceStart);
+      // Volume failures degrade gracefully: the momentum half of the table
+      // still renders, the volume columns just stay empty.
+      const volumePromise = fetchPeriodVolumes(idList, volPlan.granularity, volPlan.startDate)
+        .then((rows) => ({ ok: true, rows }))
+        .catch((e) => ({ ok: false, error: e }));
+
+      const priceRows = await pricePromise;
       const byInst = {};
-      rows.forEach((r) => {
+      priceRows.forEach((r) => {
         byInst[r.instrument_id] = byInst[r.instrument_id] || [];
         byInst[r.instrument_id].push({ period_end: r.period_end, adj_close: Number(r.adj_close) });
       });
@@ -1627,25 +1630,31 @@ window.QD = (function () {
       state.momentum.dataLoaded = true;
       state.momentum.lastFetchKey = computeMomentumFetchKey();
 
-      // Volume overlay for the RRG halo: a second, deliberately SHORT fetch
-      // (only ~baseline+buffer periods, via p_start_date) so adding it costs
-      // a fraction of the price payload. Failures here degrade gracefully --
-      // the halo simply doesn't render -- rather than taking the whole
-      // Leaderboard/RRG run down with them.
-      try {
-        const volRows = await fetchPeriodVolumes(
-          idList,
-          state.momentum.timeframe,
-          approxStartDateForPeriods(state.momentum.timeframe, state.momentum.volBaselinePeriods + 2)
-        );
-        state.momentum.volumeSeriesByInstrument = groupVolumeRows(volRows);
-      } catch (volErr) {
-        state.momentum.volumeSeriesByInstrument = {};
-        setText("momRiskFreeStatus", `หมายเหตุ: โหลดข้อมูล volume สำหรับ RRG ไม่สำเร็จ (${volErr.message || volErr})`);
+      if (!state.momentum.selectionInitialized) {
+        state.momentum.selectedIds = universe.map((i) => i.id);
+        state.momentum.selectionInitialized = true;
       }
-
+      // Progressive render #1: momentum columns are ready, show them now.
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
       renderMomentumLeaderboard();
-      setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
+      setText("momLeaderboardStatus", `ราคาโหลดแล้ว (${idList.length} instruments) · กำลังรอ volume...`);
+
+      const volResult = await volumePromise;
+      if (volResult.ok) {
+        const grouped = groupVolumeRows(volResult.rows);
+        const applied = applyVolumeAggregation(grouped, volPlan);
+        state.momentum.volumeSeriesByInstrument = applied.series;
+        state.momentum.volumeMeta = applied.meta;
+        setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
+      } else {
+        state.momentum.volumeSeriesByInstrument = {};
+        state.momentum.volumeMeta = null;
+        setText("momLeaderboardStatus", `โหลดราคาแล้ว แต่ข้อมูล volume ไม่สำเร็จ (${volResult.error && volResult.error.message ? volResult.error.message : volResult.error})`);
+      }
+      // Progressive render #2: fill in the volume half.
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
       return true;
     } catch (e) {
       showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
@@ -1656,17 +1665,432 @@ window.QD = (function () {
     }
   }
 
+  // =======================================================================
+  // Merged Leaderboard table (2026-09) -- momentum and volume in ONE
+  // config-driven table. Every consumer (the two charts, the Excel export,
+  // the column picker, the presets) reads the same registry below, so adding
+  // a column later cannot leave one of them behind.
+  // =======================================================================
+  const num2 = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2));
+  const pct2 = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2) + "%");
+  const x2   = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2) + "x");
+
+  function trendBadgeHtml(smaSignal) {
+    if (!smaSignal) return `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">N/A</span>`;
+    return smaSignal.pass
+      ? `<span class="qd-badge-pass text-[10px] px-2 py-0.5 rounded-full">ผ่าน</span>`
+      : `<span class="qd-badge-fail text-[10px] px-2 py-0.5 rounded-full">ไม่ผ่าน</span>`;
+  }
+
+  function volStatusHtml(row) {
+    if (row.volZScore == null) return `<span class="text-slate-300">—</span>`;
+    if (!row.isAnomaly) return `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">ปกติ</span>`;
+    return row.volZScore > 0
+      ? `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#ffedd5;color:#9a3412;">พุ่งผิดปกติ</span>`
+      : `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1e40af;">แห้งผิดปกติ</span>`;
+  }
+
+  // heat: "high" = larger is better (green end), "diverging" = two-sided
+  // orange/blue scale centred on 0, undefined = no colour.
+  const MOMENTUM_TABLE_COLUMNS = [
+    { id: "row",              label: "#",                        exportLabel: "#",                          group: "id",  align: "left",   sortable: false, fixed: true,
+      value: () => null,                          text: (r, i) => String(i + 1) },
+    { id: "ticker",           label: "Ticker",                   exportLabel: "Ticker",                     group: "id",  align: "left",   fixed: true,
+      value: (r) => r.ticker,                     text: (r) => r.ticker,               cls: "font-medium text-slate-700" },
+    { id: "shortName",        label: "ชื่อย่อ",                   exportLabel: "ชื่อย่อ",                    group: "id",  align: "left",
+      value: (r) => r.shortName,                  text: (r) => r.shortName,            cls: "text-slate-500" },
+    { id: "category",         label: "Category",                 exportLabel: "Category",                   group: "id",  align: "left",
+      value: (r) => r.category,                   text: (r) => r.category || "—",      cls: "text-slate-500" },
+    { id: "momRank",          label: "อันดับ Momentum",           exportLabel: "อันดับ Momentum",             group: "mom", align: "right",
+      value: (r) => r.momRank,                    text: (r) => (r.momRank == null ? "—" : String(r.momRank)), cls: "text-slate-500" },
+    { id: "trailingReturnPct",label: "Trailing Return",          exportLabel: "Trailing Return (%)",        group: "mom", align: "right", heat: "high",
+      value: (r) => r.trailingReturnPct,          text: (r) => pct2(r.trailingReturnPct) },
+    { id: "trendFilter",      label: "Trend Filter",             exportLabel: "Trend Filter",               group: "mom", align: "center",
+      value: (r) => (r.smaSignal ? (r.smaSignal.pass ? 1 : 0) : null),
+      text: (r) => trendBadgeHtml(r.smaSignal),   raw: (r) => (r.smaSignal ? (r.smaSignal.pass ? "Pass" : "Fail") : "N/A"), html: true },
+    { id: "periodicVolPct",   label: "Volatility (SD) ต่องวด",    exportLabel: "Volatility SD ต่องวด (%)",   group: "mom", align: "right",
+      value: (r) => r.periodicVolPct,             text: (r) => pct2(r.periodicVolPct), cls: "text-slate-500" },
+    { id: "riskAdjScore",     label: "Risk-Adj Score",           exportLabel: "Risk-Adj Score",             group: "mom", align: "right",
+      value: (r) => r.riskAdjScore,               text: (r) => num2(r.riskAdjScore),   cls: "text-slate-500" },
+    { id: "volRank",          label: "อันดับ Volume",             exportLabel: "อันดับ Volume",               group: "vol", align: "right",
+      value: (r) => r.volRank,                    text: (r) => (r.volRank == null ? "—" : String(r.volRank)), cls: "text-slate-500" },
+    { id: "currentVolume",    label: "Volume ล่าสุด",             exportLabel: "Volume ล่าสุด",               group: "vol", align: "right",
+      value: (r) => r.currentVolume,              text: (r) => formatVolumeNumber(r.currentVolume), cls: "text-slate-600" },
+    { id: "meanVolume",       label: "ค่าเฉลี่ย baseline",         exportLabel: "ค่าเฉลี่ย baseline (geometric)", group: "vol", align: "right",
+      value: (r) => r.meanVolume,                 text: (r) => formatVolumeNumber(r.meanVolume), cls: "text-slate-500" },
+    { id: "volZScore",        label: "Volume Z-score",           exportLabel: "Volume Z-score (log)",       group: "vol", align: "right", heat: "diverging",
+      value: (r) => r.volZScore,                  text: (r) => num2(r.volZScore) },
+    { id: "rvol",             label: "RVOL",                     exportLabel: "RVOL (x)",                   group: "vol", align: "right",
+      value: (r) => r.rvol,                       text: (r) => x2(r.rvol) },
+    { id: "volStatus",        label: "สถานะ Volume",              exportLabel: "สถานะ Volume",                group: "vol", align: "center",
+      value: (r) => volumeAnomalyMagnitude({ zScore: r.volZScore }),
+      text: (r) => volStatusHtml(r),              raw: (r) => (r.volZScore == null ? "N/A" : (!r.isAnomaly ? "Normal" : (r.volZScore > 0 ? "Spike" : "Dry-up"))), html: true }
+  ];
+
+  const MOMENTUM_COLUMN_IDS = MOMENTUM_TABLE_COLUMNS.map((c) => c.id);
+  function momentumColumnById(id) { return MOMENTUM_TABLE_COLUMNS.find((c) => c.id === id) || null; }
+
+  const MOMENTUM_TABLE_PRESETS = {
+    momentum: {
+      label: "Momentum",
+      columns: ["row", "ticker", "shortName", "category", "trailingReturnPct", "trendFilter", "periodicVolPct", "riskAdjScore", "volRank"],
+      sort: { column: "trailingReturnPct", dir: "desc" }
+    },
+    volume: {
+      label: "Volume",
+      // sorted by the Volume RANK (distance from normal in EITHER direction)
+      // rather than the signed z, so a dry-up ranks alongside a spike.
+      columns: ["row", "ticker", "shortName", "category", "currentVolume", "meanVolume", "volZScore", "rvol", "volStatus", "momRank"],
+      sort: { column: "volRank", dir: "asc" }
+    },
+    all: {
+      label: "ทั้งหมด",
+      columns: MOMENTUM_COLUMN_IDS.slice(),
+      sort: { column: "trailingReturnPct", dir: "desc" }
+    }
+  };
+
+  // ---------------------------------------------------------------------
+  // Row assembly (union) + sorting
+  // ---------------------------------------------------------------------
+  // UNION, not intersection: an instrument with enough price history but not
+  // enough volume history (or the reverse) still gets a row, with "—" in the
+  // columns it cannot fill. Dropping it silently is how data quietly goes
+  // missing.
+  function buildMergedRows(instruments, priceSeriesById, volumeSeriesById, params, baselinePeriods) {
+    const momRows = rankUniverseNow(instruments, priceSeriesById, params);
+    const momById = new Map(momRows.map((r) => [r.instrumentId, r]));
+
+    const anomalyMap = computeVolumeAnomalyMap(instruments, volumeSeriesById, baselinePeriods);
+    const volRanked = Object.keys(anomalyMap)
+      .map((k) => ({ instrumentId: Number(k), a: anomalyMap[k] }))
+      .sort((x, y) => {
+        const xv = volumeAnomalyMagnitude(x.a), yv = volumeAnomalyMagnitude(y.a);
+        if (xv == null && yv == null) return 0;
+        if (xv == null) return 1;
+        if (yv == null) return -1;
+        return yv - xv;
+      });
+    const volRankById = new Map(volRanked.map((e, i) => [e.instrumentId, i + 1]));
+
+    return instruments
+      .filter((inst) => momById.has(inst.id) || anomalyMap[inst.id])
+      .map((inst) => {
+        const m = momById.get(inst.id) || null;
+        const a = anomalyMap[inst.id] || null;
+        return {
+          instrumentId: inst.id,
+          ticker: inst.ticker,
+          shortName: tickerShortName(inst.ticker),
+          category: inst.category,
+          momRank: m ? m.rank : null,
+          trailingReturnPct: m ? m.trailingReturnPct : null,
+          smaSignal: m ? m.smaSignal : null,
+          periodicVolPct: m ? m.periodicVolPct : null,
+          windowVolPct: m ? m.windowVolPct : null,
+          riskAdjScore: m ? m.riskAdjScore : null,
+          volRank: volRankById.has(inst.id) ? volRankById.get(inst.id) : null,
+          currentVolume: a ? a.current : null,
+          meanVolume: a ? a.mean : null,
+          volZScore: a ? a.zScore : null,
+          rvol: a ? a.rvol : null,
+          volPeriodEnd: a ? a.periodEnd : null,
+          isAnomaly: !!(a && a.zScore != null && Math.abs(a.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD)
+        };
+      });
+  }
+
+  // Nulls always sink to the bottom, whichever direction is active -- an
+  // instrument with no data should never outrank one that has data.
+  function sortMergedRows(rows, columnId, dir) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.sortable === false) return rows.slice();
+    const mult = dir === "asc" ? 1 : -1;
+    return rows.slice().sort((a, b) => {
+      const av = col.value(a), bv = col.value(b);
+      const an = av == null || (typeof av === "number" && Number.isNaN(av));
+      const bn = bv == null || (typeof bv === "number" && Number.isNaN(bv));
+      if (an && bn) return 0;
+      if (an) return 1;
+      if (bn) return -1;
+      if (typeof av === "string" || typeof bv === "string") {
+        return String(av).localeCompare(String(bv)) * mult;
+      }
+      return (av - bv) * mult;
+    });
+  }
+
+  function visibleOrderedColumns() {
+    const t = state.momentum.table;
+    return t.order
+      .map((id) => momentumColumnById(id))
+      .filter((c) => c && (c.fixed || t.visible[c.id]));
+  }
+
+  // ---------------------------------------------------------------------
+  // Layout persistence (column order / visibility / sort)
+  // ---------------------------------------------------------------------
+  const MOMENTUM_LAYOUT_KEY = "qd.momentum.layout.v1";
+
+  function currentLayout() {
+    const t = state.momentum.table;
+    return { order: t.order.slice(), visible: Object.assign({}, t.visible), sortColumn: t.sortColumn, sortDir: t.sortDir, preset: t.preset };
+  }
+
+  function saveLayout() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return false;
+      localStorage.setItem(MOMENTUM_LAYOUT_KEY, JSON.stringify(currentLayout()));
+      return true;
+    } catch (e) { return false; } // private mode / blocked storage -- never fatal
+  }
+
+  // Validated against the live registry: a column id saved by an older build
+  // that no longer exists is dropped, and a column added since is appended,
+  // so an update can never leave the table in a broken state.
+  function sanitizeLayout(saved) {
+    if (!saved || typeof saved !== "object") return null;
+    const known = new Set(MOMENTUM_COLUMN_IDS);
+    const order = Array.isArray(saved.order) ? saved.order.filter((id) => known.has(id)) : [];
+    MOMENTUM_COLUMN_IDS.forEach((id) => { if (!order.includes(id)) order.push(id); });
+    const visible = {};
+    MOMENTUM_COLUMN_IDS.forEach((id) => {
+      visible[id] = saved.visible && Object.prototype.hasOwnProperty.call(saved.visible, id)
+        ? !!saved.visible[id]
+        : true;
+    });
+    const sortColumn = known.has(saved.sortColumn) ? saved.sortColumn : "trailingReturnPct";
+    const sortDir = saved.sortDir === "asc" ? "asc" : "desc";
+    return { order, visible, sortColumn, sortDir, preset: typeof saved.preset === "string" ? saved.preset : null };
+  }
+
+  function loadLayout() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return null;
+      const raw = localStorage.getItem(MOMENTUM_LAYOUT_KEY);
+      if (!raw) return null;
+      return sanitizeLayout(JSON.parse(raw));
+    } catch (e) { return null; }
+  }
+
+  function applyLayout(layout) {
+    if (!layout) return;
+    const t = state.momentum.table;
+    t.order = layout.order;
+    t.visible = layout.visible;
+    t.sortColumn = layout.sortColumn;
+    t.sortDir = layout.sortDir;
+    t.preset = layout.preset || null;
+  }
+
+  // Registry defaults first, then whatever the browser remembered (already
+  // validated against the current registry by sanitizeLayout).
+  function initTableLayout() {
+    const t = state.momentum.table;
+    t.order = MOMENTUM_COLUMN_IDS.slice();
+    t.visible = {};
+    MOMENTUM_COLUMN_IDS.forEach((id) => { t.visible[id] = true; });
+    t.sortColumn = "trailingReturnPct";
+    t.sortDir = "desc";
+    t.preset = "all";
+    const saved = loadLayout();
+    if (saved) applyLayout(saved);
+    renderMomColumnPanel();
+    renderPresetButtons();
+  }
+
+  function applyTablePreset(name) {
+    const preset = MOMENTUM_TABLE_PRESETS[name];
+    if (!preset) return;
+    const t = state.momentum.table;
+    const on = new Set(preset.columns);
+    MOMENTUM_COLUMN_IDS.forEach((id) => { t.visible[id] = on.has(id); });
+    t.order = MOMENTUM_COLUMN_IDS.slice();
+    t.sortColumn = preset.sort.column;
+    t.sortDir = preset.sort.dir;
+    t.preset = name;
+    saveLayout();
+  }
+
+  function resetTableLayout() {
+    applyTablePreset("all");
+    try { if (typeof localStorage !== "undefined" && localStorage) localStorage.removeItem(MOMENTUM_LAYOUT_KEY); } catch (e) { /* ignore */ }
+  }
+
+  function moveColumn(columnId, delta) {
+    const t = state.momentum.table;
+    const from = t.order.indexOf(columnId);
+    if (from === -1) return false;
+    const to = from + delta;
+    if (to < 0 || to >= t.order.length) return false;
+    const next = t.order.slice();
+    next.splice(from, 1);
+    next.splice(to, 0, columnId);
+    t.order = next;
+    t.preset = null; // hand-tuned layouts are no longer "a preset"
+    saveLayout();
+    return true;
+  }
+
+  function toggleColumn(columnId, on) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.fixed) return false;
+    state.momentum.table.visible[columnId] = !!on;
+    state.momentum.table.preset = null;
+    saveLayout();
+    return true;
+  }
+
+  function setSort(columnId) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.sortable === false) return;
+    const t = state.momentum.table;
+    if (t.sortColumn === columnId) t.sortDir = t.sortDir === "desc" ? "asc" : "desc";
+    else { t.sortColumn = columnId; t.sortDir = (col.group === "id") ? "asc" : "desc"; }
+    t.preset = null;
+    saveLayout();
+  }
+
+  // ---------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------
+  function recomputeMomentumRows() {
+    const selected = new Set(state.momentum.selectedIds);
+    const insts = state.momentum.universeInstruments.filter((i) => selected.has(i.id));
+    state.momentum.rows = buildMergedRows(
+      insts, state.momentum.seriesByInstrument, state.momentum.volumeSeriesByInstrument,
+      momentumRankParams(), state.momentum.volBaselinePeriods
+    );
+    // The RRG halo/summary read from the same anomaly numbers as the table.
+    state.momentum.volumeAnomalyById = computeVolumeAnomalyMap(
+      insts.filter((i) => i.id !== state.momentum.benchmarkAssetId),
+      state.momentum.volumeSeriesByInstrument, state.momentum.volBaselinePeriods
+    );
+    return state.momentum.rows;
+  }
+
+  function sortedMomentumRows() {
+    const t = state.momentum.table;
+    return sortMergedRows(state.momentum.rows, t.sortColumn, t.sortDir);
+  }
+
   function renderMomentumLeaderboard() {
-    const params = momentumRankParams();
-    const rows = rankUniverseNow(state.momentum.universeInstruments, state.momentum.seriesByInstrument, params);
-    state.momentum.leaderboardRows = rows;
+    const rows = sortedMomentumRows();
+    renderMomentumTable(rows);
     renderMomLeaderboardChart(rows);
-    renderMomLeaderboardTable(rows);
+    renderMomVolumeChart(rows);
+    renderMomColumnPanel();
+    renderPresetButtons();
+    const anyPeriodEnd = rows.find((r) => r.volPeriodEnd);
+    renderIncompleteNote("momIncompleteNote", anyPeriodEnd ? anyPeriodEnd.volPeriodEnd : null, state.momentum.timeframe, state.momentum.volumeMeta);
     updateMomExportAvailability();
   }
 
+  function renderPresetButtons() {
+    const active = state.momentum.table.preset;
+    document.querySelectorAll(".mom-preset-btn").forEach((btn) => {
+      const on = btn.getAttribute("data-preset") === active;
+      btn.classList.toggle("bg-slate-800", on);
+      btn.classList.toggle("text-white", on);
+      btn.classList.toggle("text-slate-600", !on);
+    });
+  }
+
+  function renderMomColumnPanel() {
+    const panel = byId("momColumnPanel");
+    if (!panel) return;
+    const t = state.momentum.table;
+    panel.innerHTML = t.order.map((id) => {
+      const col = momentumColumnById(id);
+      if (!col) return "";
+      if (col.fixed) return `<label class="flex items-center gap-1 text-slate-300"><input type="checkbox" checked disabled /> ${col.label}</label>`;
+      return `<label class="flex items-center gap-1 text-slate-600">
+          <input type="checkbox" class="mom-col-cb" data-col="${col.id}" ${t.visible[col.id] ? "checked" : ""} /> ${col.label}
+        </label>`;
+    }).join("");
+    panel.querySelectorAll(".mom-col-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        toggleColumn(e.target.getAttribute("data-col"), e.target.checked);
+        renderMomentumLeaderboard();
+      });
+    });
+  }
+
+  function renderMomentumTable(rows) {
+    const table = byId("momLeaderboardTable");
+    if (!table) return;
+    const cols = visibleOrderedColumns();
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือก Universe แล้วกด "คำนวณ" (หรือประวัติราคา/volume ไม่พอสำหรับพารามิเตอร์ที่เลือก)</td></tr></tbody>`;
+      return;
+    }
+    const t = state.momentum.table;
+    const heatRanges = {};
+    cols.forEach((c) => {
+      if (c.heat === "high") heatRanges[c.id] = computeColumnRange({ key: c.id }, rows.map((r) => ({ stats: { [c.id]: c.value(r) } })));
+      if (c.heat === "diverging") heatRanges[c.id] = computeSymmetricRange(rows.map((r) => c.value(r)), 0);
+    });
+
+    const head = `<thead><tr>${cols.map((c, ci) => {
+      const arrow = t.sortColumn === c.id ? (t.sortDir === "asc" ? " ▲" : " ▼") : "";
+      const alignCls = c.align === "right" ? "text-right" : (c.align === "center" ? "text-center" : "text-left");
+      const stickyCls = ci === 0 ? "sticky-col " : "";
+      const sortAttr = c.sortable === false ? "" : ` data-sort-col="${c.id}"`;
+      const cursor = c.sortable === false ? "" : " cursor-pointer hover:bg-slate-100";
+      const left = `<button class="mom-col-move text-slate-300 hover:text-blue-600" data-col="${c.id}" data-delta="-1" title="ย้ายไปทางซ้าย">◀</button>`;
+      const right = `<button class="mom-col-move text-slate-300 hover:text-blue-600" data-col="${c.id}" data-delta="1" title="ย้ายไปทางขวา">▶</button>`;
+      return `<th class="${stickyCls}${alignCls} px-2 py-2 bg-slate-50 border-b border-slate-200 whitespace-nowrap">
+          <span class="inline-flex items-center gap-1">
+            ${left}
+            <span class="mom-col-sort${cursor}"${sortAttr}>${c.label}${arrow}</span>
+            ${right}
+          </span>
+        </th>`;
+    }).join("")}</tr></thead>`;
+
+    const body = rows.map((r, i) => {
+      const cells = cols.map((c, ci) => {
+        let style = "";
+        if (c.heat === "high") {
+          const bg = heatmapColor(c.value(r), heatRanges[c.id], "high");
+          if (bg) style = ` style="background-color:${bg};"`;
+        } else if (c.heat === "diverging") {
+          const bg = volumeDivergingColor(c.value(r), heatRanges[c.id]);
+          if (bg) style = ` style="background-color:${bg};"`;
+        }
+        const alignCls = c.align === "right" ? "text-right" : (c.align === "center" ? "text-center" : "");
+        const stickyCls = ci === 0 ? "sticky-col " : "";
+        return `<td class="${stickyCls}${alignCls} px-2 py-1.5 ${c.cls || ""}"${style}>${c.text(r, i)}</td>`;
+      }).join("");
+      const selectedCls = state.momentum.drilldownInstrumentId === r.instrumentId ? " bg-blue-50" : "";
+      return `<tr class="border-b border-slate-100 cursor-pointer hover:bg-slate-50 mom-row${selectedCls}" data-inst-id="${r.instrumentId}">${cells}</tr>`;
+    }).join("");
+
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+
+    table.querySelectorAll(".mom-col-sort[data-sort-col]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setSort(el.getAttribute("data-sort-col"));
+        renderMomentumLeaderboard();
+      });
+    });
+    table.querySelectorAll(".mom-col-move").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (moveColumn(el.getAttribute("data-col"), Number(el.getAttribute("data-delta")))) renderMomentumLeaderboard();
+      });
+    });
+    table.querySelectorAll(".mom-row").forEach((tr) => {
+      tr.addEventListener("click", () => openDrilldown(Number(tr.getAttribute("data-inst-id"))));
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // The two Leaderboard charts -- both driven by the table's current sort
+  // ---------------------------------------------------------------------
   function buildLeaderboardChartDatasets(rows, benchmarkTicker, maxN) {
-    const top = rows.slice(0, maxN || 20);
+    const top = rows.slice(0, maxN || MOMENTUM_CHART_TOP_N);
     const bench = rows.find((r) => r.ticker === benchmarkTicker);
     return {
       labels: top.map((r) => r.ticker),
@@ -1676,15 +2100,22 @@ window.QD = (function () {
     };
   }
 
+  function buildVolumeChartDatasets(rows, maxN) {
+    const top = rows.slice(0, maxN || MOMENTUM_CHART_TOP_N);
+    return {
+      labels: top.map((r) => r.ticker),
+      values: top.map((r) => r.volZScore),
+      colors: top.map((r) => (r.volZScore == null ? "#cbd5e1" : (r.volZScore >= 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR)))
+    };
+  }
+
   function renderMomLeaderboardChart(rows) {
     const canvas = byId("momLeaderboardChart");
     if (!canvas) return;
     const benchInst = state.instruments.find((i) => i.id === state.momentum.benchmarkAssetId);
-    const built = buildLeaderboardChartDatasets(rows, benchInst ? benchInst.ticker : null, 20);
-
+    const built = buildLeaderboardChartDatasets(rows, benchInst ? benchInst.ticker : null, MOMENTUM_CHART_TOP_N);
     if (typeof Chart === "undefined") return;
     if (momLeaderboardChartInstance) { momLeaderboardChartInstance.destroy(); momLeaderboardChartInstance = null; }
-
     const datasets = [{ label: "Trailing Return (%)", data: built.values, backgroundColor: built.colors }];
     if (built.benchmarkValue != null) {
       datasets.push({
@@ -1700,44 +2131,138 @@ window.QD = (function () {
     });
   }
 
-  function renderMomLeaderboardTable(rows) {
-    const table = byId("momLeaderboardTable");
-    if (!table) return;
-    if (!rows.length) {
-      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ไม่มีข้อมูลเพียงพอสำหรับพารามิเตอร์ที่เลือก (หรือยังไม่ได้โหลดข้อมูล)</td></tr></tbody>`;
+  function renderMomVolumeChart(rows) {
+    const canvas = byId("momVolumeChart");
+    if (!canvas) return;
+    const built = buildVolumeChartDatasets(rows, MOMENTUM_CHART_TOP_N);
+    if (typeof Chart === "undefined") return;
+    if (momVolumeChartInstance) { momVolumeChartInstance.destroy(); momVolumeChartInstance = null; }
+    momVolumeChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: { labels: built.labels, datasets: [{ label: "Volume Z-score", data: built.values, backgroundColor: built.colors }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { title: { display: true, text: "Volume Z-score (log)" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Instrument selection panel (drives table + both charts)
+  // ---------------------------------------------------------------------
+  function renderMomSelectionPanel() {
+    const panel = byId("momSelectionPanel");
+    if (!panel) return;
+    const selected = new Set(state.momentum.selectedIds);
+    panel.innerHTML = state.momentum.universeInstruments.map((inst) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${inst.id}" class="mom-sel-cb" ${selected.has(inst.id) ? "checked" : ""} />
+         ${inst.ticker}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".mom-sel-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.selectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.selectedIds = Array.from(set);
+        recomputeMomentumRows();
+        renderMomentumLeaderboard();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Drill-down (lazy: history for ONE instrument, fetched on click)
+  // ---------------------------------------------------------------------
+  function buildVolumeDrilldownData(series, baselinePeriods, maxPoints) {
+    const band = computeVolumeBandSeries(series, baselinePeriods);
+    return maxPoints && band.length > maxPoints ? band.slice(band.length - maxPoints) : band;
+  }
+
+  async function openDrilldown(instrumentId) {
+    state.momentum.drilldownInstrumentId = instrumentId;
+    const inst = state.instruments.find((i) => i.id === instrumentId);
+    const titleEl = byId("momDrilldownTitle");
+    if (titleEl && inst) titleEl.textContent = `กราฟย้อนหลังรายตัว — ${inst.ticker} (${tickerShortName(inst.ticker)})`;
+    const cacheKey = `${instrumentId}|${state.momentum.timeframe}`;
+    if (state.momentum.drilldownCacheKey !== cacheKey) {
+      setLoading("momDrilldownLoading", true);
+      setText("momDrilldownNote", "กำลังโหลดประวัติ...");
+      try {
+        const tf = state.momentum.timeframe;
+        const periods = VOLUME_DRILLDOWN_PERIODS[tf] || 120;
+        const plan = volumeFetchPlan(tf, Math.max(periods, state.momentum.volBaselinePeriods + 2));
+        const rows = await fetchPeriodVolumes([instrumentId], plan.granularity, plan.startDate);
+        const grouped = groupVolumeRows(rows);
+        const applied = applyVolumeAggregation(grouped, plan);
+        state.momentum.drilldownSeries = applied.series[instrumentId] || [];
+        state.momentum.drilldownCacheKey = cacheKey;
+      } catch (e) {
+        state.momentum.drilldownSeries = [];
+        state.momentum.drilldownCacheKey = null;
+        setText("momDrilldownNote", `โหลดประวัติไม่สำเร็จ: ${e.message || e}`);
+        setLoading("momDrilldownLoading", false);
+        return;
+      }
+      setLoading("momDrilldownLoading", false);
+    }
+    renderMomDrilldown();
+    renderMomentumTable(sortedMomentumRows()); // refresh the row highlight
+    updateMomExportAvailability();
+  }
+
+  function renderMomDrilldown() {
+    const noteEl = byId("momDrilldownNote");
+    const canvas = byId("momDrilldownChart");
+    const inst = state.instruments.find((i) => i.id === state.momentum.drilldownInstrumentId);
+    const series = state.momentum.drilldownSeries || [];
+    if (!inst || !series.length) {
+      if (noteEl) noteEl.textContent = inst ? "ข้อมูลไม่พอสำหรับวาดกราฟ" : "คลิกแถวในตารางด้านบนเพื่อเลือก instrument";
+      if (momDrilldownChartInstance) { momDrilldownChartInstance.destroy(); momDrilldownChartInstance = null; }
       return;
     }
-    const range = computeColumnRange({ key: "trailingReturnPct" }, rows.map((r) => ({ stats: r })));
-    const head = `<thead><tr>
-        <th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Rank</th>
-        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Ticker</th>
-        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
-        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Category</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Trailing Return</th>
-        <th class="text-center px-2 py-2 bg-slate-50 border-b border-slate-200">Trend Filter</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volatility (SD) ต่องวด</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Risk-Adj Score</th>
-      </tr></thead>`;
-    const body = rows.map((r) => {
-      const bg = heatmapColor(r.trailingReturnPct, range, "high");
-      const style = bg ? ` style="background-color:${bg};"` : "";
-      const badge = !r.smaSignal
-        ? `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">N/A</span>`
-        : (r.smaSignal.pass
-            ? `<span class="qd-badge-pass text-[10px] px-2 py-0.5 rounded-full">ผ่าน</span>`
-            : `<span class="qd-badge-fail text-[10px] px-2 py-0.5 rounded-full">ไม่ผ่าน</span>`);
-      return `<tr class="border-b border-slate-100">
-          <td class="sticky-col px-3 py-1.5 text-slate-700">${r.rank}</td>
-          <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
-          <td class="px-2 py-1.5 text-slate-500">${tickerShortName(r.ticker)}</td>
-          <td class="px-2 py-1.5 text-slate-500">${r.category}</td>
-          <td class="text-right px-2 py-1.5"${style}>${r.trailingReturnPct.toFixed(2)}%</td>
-          <td class="text-center px-2 py-1.5">${badge}</td>
-          <td class="text-right px-2 py-1.5 text-slate-500">${r.periodicVolPct != null ? r.periodicVolPct.toFixed(2) + "%" : "—"}</td>
-          <td class="text-right px-2 py-1.5 text-slate-500">${r.riskAdjScore != null ? r.riskAdjScore.toFixed(2) : "—"}</td>
-        </tr>`;
-    }).join("");
-    table.innerHTML = head + `<tbody>${body}</tbody>`;
+    const tf = state.momentum.timeframe;
+    const points = buildVolumeDrilldownData(series, state.momentum.volBaselinePeriods, VOLUME_DRILLDOWN_PERIODS[tf]);
+    state.momentum.drilldownPoints = points;
+    if (noteEl) {
+      noteEl.textContent = `แสดง ${points.length} งวดล่าสุด · baseline ${state.momentum.volBaselinePeriods} ${MOMENTUM_UNIT_LABEL[tf]}` +
+        ` (แถบเงา = ค่าเฉลี่ยเรขาคณิต × / ÷ 1SD และ 2SD บนสเกล log)`;
+    }
+    if (!canvas || typeof Chart === "undefined") return;
+    if (momDrilldownChartInstance) { momDrilldownChartInstance.destroy(); momDrilldownChartInstance = null; }
+    const labels = points.map((p) => p.periodEnd);
+    momDrilldownChartInstance = new Chart(canvas.getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "bar", label: "Volume", data: points.map((p) => p.volume), yAxisID: "y",
+            backgroundColor: points.map((p) => (p.zScore != null && Math.abs(p.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
+              ? (p.zScore > 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR) : "#cbd5e1")) },
+          { type: "line", label: "ค่าเฉลี่ย baseline", data: points.map((p) => p.mean), yAxisID: "y",
+            borderColor: "#475569", pointRadius: 0, borderWidth: 1.5, fill: false },
+          { type: "line", label: "×2SD", data: points.map((p) => p.upper2), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "×1SD", data: points.map((p) => p.upper1), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "÷1SD", data: points.map((p) => p.lower1), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "÷2SD", data: points.map((p) => p.lower2), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "ราคาปิด", data: points.map((p) => p.adjClose), yAxisID: "y1",
+            borderColor: "#7c3aed", pointRadius: 0, borderWidth: 1.5, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          y: { position: "left", title: { display: true, text: "Volume" } },
+          y1: { position: "right", title: { display: true, text: "ราคาปิด" }, grid: { drawOnChartArea: false } }
+        },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
   }
 
   function hexToRgba(hex, alpha) {
@@ -1764,7 +2289,7 @@ window.QD = (function () {
   // the Leaderboard for insufficient history) are appended at the end,
   // sorted by ticker.
   function buildRrgCheckboxItems(rotationInstruments, leaderboardRows) {
-    const rankByInstId = new Map(leaderboardRows.map((r) => [r.instrumentId, r.rank]));
+    const rankByInstId = new Map(leaderboardRows.map((r) => [r.instrumentId, r.rank != null ? r.rank : r.momRank]));
     return rotationInstruments
       .map((inst) => ({ instrumentId: inst.id, ticker: inst.ticker, rank: rankByInstId.has(inst.id) ? rankByInstId.get(inst.id) : null }))
       .sort((a, b) => {
@@ -1944,7 +2469,11 @@ window.QD = (function () {
   function renderRrgCheckboxPanel() {
     const panel = byId("momRrgCheckboxPanel");
     if (!panel) return;
-    const items = buildRrgCheckboxItems(state.momentum.universeInstruments.filter((i) => i.id !== state.momentum.benchmarkAssetId), state.momentum.leaderboardRows);
+    const inTable = new Set(state.momentum.selectedIds);
+    const items = buildRrgCheckboxItems(
+      state.momentum.universeInstruments.filter((i) => inTable.has(i.id) && i.id !== state.momentum.benchmarkAssetId),
+      state.momentum.rows
+    );
     const selected = new Set(state.momentum.rrgSelectedIds);
     panel.innerHTML = items.map((it) =>
       `<label class="flex items-center gap-1 text-slate-600">
@@ -2032,26 +2561,25 @@ window.QD = (function () {
         const ok = await loadMomentumUniverseData();
         if (!ok) { setText("momCalculateStatus", ""); return; }
       } else {
+        recomputeMomentumRows();
         renderMomentumLeaderboard();
       }
 
-      const universe = state.momentum.universeInstruments;
       const seriesByInst = state.momentum.seriesByInstrument;
       const params = momentumRankParams();
       const benchSeries = seriesByInst[state.momentum.benchmarkAssetId];
 
-      const rotationInstruments = universe.filter((i) => i.id !== state.momentum.benchmarkAssetId);
+      // The RRG plots what the table covers: the current instrument
+      // selection, minus the benchmark it is measured against.
+      const selected = new Set(state.momentum.selectedIds);
+      const rotationInstruments = state.momentum.universeInstruments
+        .filter((i) => selected.has(i.id) && i.id !== state.momentum.benchmarkAssetId);
       const rotationData = computeRotationGraphData(rotationInstruments, seriesByInst, benchSeries, params.lookbackPeriods, state.momentum.tailLength);
       state.momentum.rotationData = rotationData;
 
-      // Volume anomaly for the RRG overlay (halo + summary columns + tooltip).
-      state.momentum.volumeAnomalyById = computeVolumeAnomalyMap(
-        rotationInstruments, state.momentum.volumeSeriesByInstrument, state.momentum.volBaselinePeriods
-      );
-
       if (!state.momentum.rrgSelectionInitialized) {
         state.momentum.rrgSelectedIds = computeDefaultRrgSelection(
-          state.momentum.leaderboardRows,
+          sortedMomentumRows(),
           rotationInstruments.map((i) => i.id),
           MOMENTUM_RRG_DEFAULT_TOPN
         );
@@ -2076,6 +2604,7 @@ window.QD = (function () {
       const rfInput = byId("momRiskFreeRate");
       if (rfInput) rfInput.value = latest.value;
       setText("momRiskFreeStatus", `อัปเดตจาก ${source} (${latest.date})`);
+      recomputeMomentumRows();
       renderMomentumLeaderboard();
     } catch (e) {
       setText("momRiskFreeStatus", `ดึงข้อมูลไม่สำเร็จ: ${e.message || e}`);
@@ -2083,17 +2612,22 @@ window.QD = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Export to Excel (Momentum) -- same pattern as the Seasonal tab (9.4).
+  // Export to Excel (Momentum) -- 5 sheets, all shaped from the SAME column
+  // registry the table uses, so a column added later cannot silently go
+  // missing from the file.
   // ---------------------------------------------------------------------
+  // The merged-table sheet deliberately exports EVERY column regardless of
+  // what is hidden on screen: hiding a column is a reading preference, and a
+  // file that quietly drops data is worse than a wide one (Excel can hide
+  // columns itself).
   function buildMomentumExportSheets(selections) {
     const sheets = {};
     if (selections.leaderboard) {
-      const header = ["Rank", "Ticker", "ชื่อย่อ", "Category", "Trailing Return (%)", "Trend Filter", "Volatility SD (%) ต่องวด", "Risk-Adj Score"];
-      const rows = state.momentum.leaderboardRows.map((r) => [
-        r.rank, r.ticker, tickerShortName(r.ticker), r.category, r.trailingReturnPct,
-        r.smaSignal ? (r.smaSignal.pass ? "Pass" : "Fail") : "N/A",
-        r.periodicVolPct, r.riskAdjScore
-      ]);
+      const cols = state.momentum.table.order.map(momentumColumnById).filter(Boolean);
+      const header = cols.map((c) => c.exportLabel || c.label);
+      const rows = sortedMomentumRows().map((r, i) =>
+        cols.map((c) => (c.raw ? c.raw(r, i) : (c.id === "row" ? i + 1 : c.value(r, i))))
+      );
       sheets.leaderboard = [header].concat(rows);
     }
     if (selections.rotation && state.momentum.rotationData) {
@@ -2104,6 +2638,24 @@ window.QD = (function () {
       });
       sheets.rotation = [header].concat(rows);
     }
+    const corr = state.momentum.corr;
+    if (selections.corrMatrix && corr.matrix) {
+      const header = [""].concat(corr.matrix.tickers);
+      const rows = corr.matrix.tickers.map((t, i) => [t].concat(corr.matrix.values[i]));
+      sheets.corrMatrix = [header].concat(rows);
+    }
+    if (selections.corrAvg && corr.avgSeries && corr.avgSeries.length) {
+      const header = ["Period End", "ค่าเฉลี่ย Correlation", "จำนวนคู่"];
+      sheets.corrAvg = [header].concat(corr.avgSeries.map((p) => [p.periodEnd, p.avgCorr, p.pairCount]));
+    }
+    if (selections.drilldown && state.momentum.drilldownPoints && state.momentum.drilldownPoints.length) {
+      const inst = state.instruments.find((i) => i.id === state.momentum.drilldownInstrumentId);
+      const header = ["Ticker", "Period End", "Volume", "ค่าเฉลี่ย baseline (geometric)", "×1SD", "÷1SD", "×2SD", "÷2SD", "Volume Z-score (log)", "ราคาปิด"];
+      const rows = state.momentum.drilldownPoints.map((p) => [
+        inst ? inst.ticker : "", p.periodEnd, p.volume, p.mean, p.upper1, p.lower1, p.upper2, p.lower2, p.zScore, p.adjClose
+      ]);
+      sheets.drilldown = [header].concat(rows);
+    }
     return sheets;
   }
 
@@ -2111,16 +2663,40 @@ window.QD = (function () {
     const anyRotation = !!(state.momentum.rotationData && (state.momentum.rotationData.results || []).some((r) => r.points.length));
     const rotationCb = byId("momExportRotation");
     if (rotationCb) { rotationCb.disabled = !anyRotation; if (!anyRotation) rotationCb.checked = false; }
+
+    const corr = state.momentum.corr;
+    const matrixCb = byId("momExportCorrMatrix");
+    if (matrixCb) { matrixCb.disabled = !corr.matrix; if (!corr.matrix) matrixCb.checked = false; }
+    const avgCb = byId("momExportCorrAvg");
+    if (avgCb) { const on = !!(corr.avgSeries && corr.avgSeries.length); avgCb.disabled = !on; if (!on) avgCb.checked = false; }
+
+    const drillCb = byId("momExportDrilldown");
+    if (drillCb) {
+      const on = !!(state.momentum.drilldownPoints && state.momentum.drilldownPoints.length);
+      drillCb.disabled = !on;
+      if (!on) drillCb.checked = false;
+    }
+  }
+
+  function momentumExportSelections() {
+    const on = (id) => {
+      const el = byId(id);
+      return !!(el && el.checked && !el.disabled);
+    };
+    return {
+      leaderboard: !!(byId("momExportLeaderboard") && byId("momExportLeaderboard").checked),
+      rotation: on("momExportRotation"),
+      corrMatrix: on("momExportCorrMatrix"),
+      corrAvg: on("momExportCorrAvg"),
+      drilldown: on("momExportDrilldown")
+    };
   }
 
   function exportMomentumToExcel() {
     const errEl = byId("momExportError");
     hide(errEl);
-    const selections = {
-      leaderboard: !!(byId("momExportLeaderboard") && byId("momExportLeaderboard").checked),
-      rotation: !!(byId("momExportRotation") && byId("momExportRotation").checked && !byId("momExportRotation").disabled)
-    };
-    if (!selections.leaderboard && !selections.rotation) {
+    const selections = momentumExportSelections();
+    if (!Object.keys(selections).some((k) => selections[k])) {
       showError(errEl, "กรุณาเลือกอย่างน้อย 1 ส่วนก่อน export");
       return null;
     }
@@ -2129,8 +2705,11 @@ window.QD = (function () {
     const wb = XLSX.utils.book_new();
     if (sheets.leaderboard) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.leaderboard), "Leaderboard");
     if (sheets.rotation) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rotation), "Rotation");
+    if (sheets.corrMatrix) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrMatrix), "Correlation Matrix");
+    if (sheets.corrAvg) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrAvg), "Correlation Avg");
+    if (sheets.drilldown) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.drilldown), "Volume History");
     const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `momentum-${state.momentum.universeMode}-${stamp}.xlsx`);
+    XLSX.writeFile(wb, `momentum-${state.momentum.universeMode}-${state.momentum.timeframe}-${stamp}.xlsx`);
     return sheets;
   }
 
@@ -2140,7 +2719,7 @@ window.QD = (function () {
   function renderMomentumLookbackSmaPickers() {
     const tf = state.momentum.timeframe;
     const opts = MOMENTUM_TIMEFRAME_OPTIONS[tf];
-    const unit = tf === "week" ? "สัปดาห์" : "เดือน";
+    const unit = MOMENTUM_UNIT_LABEL[tf] || "งวด";
     const lbEl = byId("momLookbackPicker");
     if (lbEl) lbEl.innerHTML = opts.lookbacks.map((v) => `<option value="${v}" ${v === state.momentum.lookbackPeriods ? "selected" : ""}>${v} ${unit}</option>`).join("");
     const smaEl = byId("momSmaPicker");
@@ -2163,7 +2742,13 @@ window.QD = (function () {
     { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
     { label: "วงแหวน Volume บนกราฟ RRG", desc: "จุดล่าสุดของแต่ละเส้นจะมีวงแหวนสีเมื่อ volume งวดล่าสุดผิดปกติเทียบกับฐานของตัวเอง (ส้ม = พุ่ง Z ≥ 2, น้ำเงิน = แห้ง Z ≤ −2) ใช้เป็นสัญญาณยืนยันว่าการหมุนของ RS เกิดขึ้นพร้อมกับปริมาณซื้อขายที่ผิดปกติหรือไม่ — ขนาดจุดยังคงหมายถึงความเก่า-ใหม่ของ tail เหมือนเดิม ไม่ได้แปลว่า volume" },
     { label: "Correlation Matrix", desc: "ค่าสหสัมพันธ์ของผลตอบแทนระหว่างคู่สินทรัพย์ในหน้าต่างล่าสุดที่กำหนด (แดง = เคลื่อนไหวไปด้วยกัน, น้ำเงิน = สวนทางกัน) คลิกช่องใดก็ได้เพื่อดูกราฟ rolling correlation ย้อนหลังของคู่นั้น" },
-    { label: "ค่าเฉลี่ย Correlation ของทั้งกลุ่ม", desc: "เฉลี่ยค่าสหสัมพันธ์ของทุกคู่ในกลุ่มที่เลือก ณ แต่ละช่วงเวลา — ใช้ดูภาพ market regime (ค่าสูง = ตลาดเคลื่อนไหวไปทางเดียวกันหมด ผลของการกระจายความเสี่ยงลดลง) จุดบนกราฟถูกสุ่มเลือกช่วงเวลาไม่เกิน 100 จุดเพื่อความเร็ว" }
+    { label: "ค่าเฉลี่ย Correlation ของทั้งกลุ่ม", desc: "เฉลี่ยค่าสหสัมพันธ์ของทุกคู่ในกลุ่มที่เลือก ณ แต่ละช่วงเวลา — ใช้ดูภาพ market regime (ค่าสูง = ตลาดเคลื่อนไหวไปทางเดียวกันหมด ผลของการกระจายความเสี่ยงลดลง) จุดบนกราฟถูกสุ่มเลือกช่วงเวลาไม่เกิน 100 จุดเพื่อความเร็ว" },
+    { label: "Volume Z-score", desc: "วัดว่า volume งวดล่าสุดห่างจากฐานปกติของ instrument ตัวเองกี่ SD โดยคำนวณบนสเกล log — ใช้ log เพราะ volume เบ้ขวารุนแรง (มีขอบล่างที่ศูนย์แต่ไม่มีขอบบน) ถ้าคิดบนตัวเลขดิบ ฝั่ง \"แห้งผิดปกติ\" จะไม่มีทางแตะเกณฑ์ −2 ได้เลย · เกณฑ์ที่ถือว่าผิดปกติคือ |Z| ≥ 2" },
+    { label: "RVOL (x)", desc: "volume งวดล่าสุดเป็นกี่เท่าของค่าเฉลี่ยฐาน — ใช้ค่าเฉลี่ยเรขาคณิต (geometric mean) เป็นตัวหาร ซึ่งเป็นตัวเดียวกับที่ Z-score อ้างอิง ทั้ง 2 คอลัมน์จึงเล่าเรื่องเดียวกัน" },
+    { label: "ค่าเฉลี่ย baseline", desc: "ค่าเฉลี่ยเรขาคณิตของ volume ในช่วงย้อนหลังที่กำหนด โดย**ไม่นับงวดปัจจุบัน**เข้าไปในฐาน (กันไม่ให้ค่าที่ผิดปกติไปดันค่าเฉลี่ยที่ตัวเองถูกเทียบ)" },
+    { label: "อันดับ Momentum / อันดับ Volume", desc: "อันดับคงที่ตาม Trailing Return และตามระดับความผิดปกติของ volume (|Z| ไม่ว่าจะพุ่งหรือแห้ง) — ไม่เปลี่ยนตามการ sort ตาราง จึงใช้เทียบข้ามมิติได้ เช่น \"volume อันดับ 1 แต่ momentum อันดับ 45\" คือ volume เข้าผิดปกติทั้งที่ราคายังไม่ไปไหน" },
+    { label: "โหมดรายเดือน = เทียบแบบ month-to-date", desc: "เดือนที่ยังไม่จบมี volume น้อยกว่าปกติโดยธรรมชาติ ระบบจึงตัดทุกเดือนย้อนหลังให้เหลือ \"จำนวนวันทำการเท่ากับที่ผ่านไปแล้วในเดือนปัจจุบัน\" เพื่อเทียบแบบจริงต่อจริง (ไม่ได้ประมาณค่าขยายให้เต็มเดือน) พอเดือนจบเต็มก็จะเท่ากับยอดรวมทั้งเดือนเอง" },
+    { label: "สีในตาราง", desc: "คอลัมน์ Trailing Return ไล่สีทิศทางเดียว (เขียว = ดีกว่า) ส่วนคอลัมน์ Volume Z-score ไล่สี 2 ทาง (ส้ม = พุ่งผิดปกติ, น้ำเงิน = แห้งผิดปกติ) — ทั้งคู่เป็นสีแบบ relative เทียบกับแถวที่แสดงอยู่ ไม่ใช่ threshold ตายตัว" }
   ];
 
   function renderMomentumGlossary() {
@@ -2175,30 +2760,45 @@ window.QD = (function () {
   }
 
   // =======================================================================
-  // Volume Anomaly (2026-09) -- pure math shared by the standalone Volume
-  // tab and the RRG halo overlay in the Momentum tab.
+  // Volume Anomaly (2026-09, revised) -- ONE implementation shared by the
+  // merged Leaderboard table, the Volume chart, the RRG halo and the
+  // drill-down chart. There is deliberately no second copy of this maths
+  // anywhere else in the file (project rule #3).
   //
-  // Both metrics normalise each instrument against ITS OWN trailing history,
-  // so the resulting numbers are unitless and directly comparable across
-  // ETFs of very different size -- which is why no AUM / shares-outstanding
-  // data is needed (we don't have any) to answer "unusual vs its peers".
+  // Two revisions vs the first cut, both forced by validation against real
+  // production data:
+  //
+  // 1. Z-SCORES ARE COMPUTED ON log(volume), NOT RAW VOLUME.
+  //    Traded volume is multiplicative and hard-bounded at zero, so its raw
+  //    distribution is strongly right-skewed (measured over 500 real trading
+  //    days: skew SPY +2.13, GLD +4.07, ARKK +1.66). On raw volume the low
+  //    tail is unreachable -- the most negative z across those same 500 days
+  //    was only -1.45, so the "unusually quiet" flag (z <= -2) could never
+  //    fire, not once, for any instrument. Taking logs makes "twice normal"
+  //    and "half normal" equal distances (+/-0.69), pulls the skew down to
+  //    ~0.0-0.6, and makes both tails detectable (log-z reached -2.2 to -2.6
+  //    on the same sample).
+  // 2. THE BASELINE CENTRE IS THE GEOMETRIC MEAN (exp of the mean log), so
+  //    the baseline shown in the table, the RVOL ratio and the z-score all
+  //    describe the same reference point. The drill-down bands are therefore
+  //    multiplicative as well -- asymmetric in raw units, which is the
+  //    correct shape for volume.
   // =======================================================================
   const VOLUME_BASELINE_OPTIONS = {
-    day:   [10, 20, 50, 100],
+    day:   [20, 50, 100],
     week:  [10, 20, 26, 52],
     month: [6, 12, 24]
   };
   const VOLUME_BASELINE_DEFAULTS = { day: 20, week: 20, month: 12 };
 
-  // |Z-score| at or beyond this counts as "ผิดปกติ" for the table badge and
-  // the RRG halo. It is a *display* threshold only -- the heatmap itself
-  // stays relative (min/max across the rows actually shown), same principle
-  // as the Seasonal tab's F11 heatmap.
+  // |Z| at or beyond this earns the "ผิดปกติ" badge and the RRG halo. A
+  // display threshold only -- the heatmap itself stays relative to whatever
+  // rows are on screen, same principle as the Seasonal tab's F11 heatmap.
   const VOLUME_ANOMALY_Z_THRESHOLD = 2;
 
   const VOLUME_DRILLDOWN_PERIODS = { day: 250, week: 156, month: 60 };
-  // Fetched on top of what is strictly needed, so the rolling baseline is
-  // already populated at the left edge of the drill-down window.
+  // Fetched on top of what is strictly needed so the rolling baseline is
+  // already populated at the left edge of whatever window we plot.
   const VOLUME_FETCH_BUFFER_PERIODS = 10;
   const APPROX_DAYS_PER_PERIOD = { day: 1.6, week: 7.6, month: 31.5 };
 
@@ -2207,75 +2807,77 @@ window.QD = (function () {
   const VOLUME_POS_COLOR = "#ea580c";
   const VOLUME_NEG_COLOR = "#2563eb";
 
-  // Mean + sample SD of the `baselinePeriods` values ending just BEFORE
-  // index `endExclusive`. The observation being judged is deliberately left
-  // out of its own baseline, so a spike cannot inflate the very average it
-  // is measured against.
-  function volumeBaselineStats(volumes, endExclusive, baselinePeriods) {
-    if (!Array.isArray(volumes) || !baselinePeriods || baselinePeriods < 2) return null;
-    const start = endExclusive - baselinePeriods;
-    if (start < 0 || endExclusive > volumes.length) return null;
-    const win = volumes.slice(start, endExclusive);
-    if (win.some((v) => v == null || Number.isNaN(v))) return null;
-    const mean = win.reduce((a, b) => a + b, 0) / win.length;
-    const sd = stdevSample(win);
-    return { mean, sd };
+  // log() of a volume figure, or null when the value cannot be logged
+  // (zero-volume days -- holidays, halted sessions -- are excluded from the
+  // baseline rather than treated as "extremely quiet").
+  function logVolume(v) {
+    const n = v == null ? null : Number(v);
+    if (n == null || Number.isNaN(n) || n <= 0) return null;
+    return Math.log(n);
   }
 
-  // series: ascending [{period_end, volume}]. Judges the LAST element.
+  // Mean + sample SD of the log volumes in the `baselinePeriods` slots ending
+  // just BEFORE index `endExclusive`. The observation being judged is left
+  // out of its own baseline so a spike cannot inflate the very average it is
+  // measured against. Returns the geometric mean alongside, for display.
+  function volumeBaselineStats(logs, endExclusive, baselinePeriods) {
+    if (!Array.isArray(logs) || !baselinePeriods || baselinePeriods < 2) return null;
+    const start = endExclusive - baselinePeriods;
+    if (start < 0 || endExclusive > logs.length) return null;
+    const win = logs.slice(start, endExclusive);
+    if (win.some((v) => v == null || Number.isNaN(v))) return null;
+    const meanLog = win.reduce((a, b) => a + b, 0) / win.length;
+    const sdLog = stdevSample(win);
+    return { meanLog, sdLog, geoMean: Math.exp(meanLog) };
+  }
+
+  // series: ascending [{period_end, volume, adj_close}]. Judges the LAST element.
   function computeVolumeAnomaly(series, baselinePeriods) {
     if (!series || series.length < baselinePeriods + 1) return null;
-    const volumes = series.map((p) => (p.volume == null ? null : Number(p.volume)));
-    const idx = volumes.length - 1;
-    const base = volumeBaselineStats(volumes, idx, baselinePeriods);
-    const current = volumes[idx];
-    if (!base || current == null) return null;
+    const logs = series.map((p) => logVolume(p.volume));
+    const idx = logs.length - 1;
+    const base = volumeBaselineStats(logs, idx, baselinePeriods);
+    const currentLog = logs[idx];
+    if (!base || currentLog == null) return null;
+    const current = Number(series[idx].volume);
     return {
       periodEnd: series[idx].period_end,
       current,
-      mean: base.mean,
-      sd: base.sd,
-      zScore: (base.sd != null && base.sd > 0) ? (current - base.mean) / base.sd : null,
-      rvol: base.mean > 0 ? current / base.mean : null
+      mean: base.geoMean,          // geometric mean, the reference for BOTH z and rvol
+      sdLog: base.sdLog,
+      zScore: (base.sdLog != null && base.sdLog > 0) ? (currentLog - base.meanLog) / base.sdLog : null,
+      rvol: base.geoMean > 0 ? current / base.geoMean : null
     };
   }
 
-  // Rolling mean ± 1SD / ± 2SD "normal band" for the drill-down chart. Bands
-  // are clipped at 0 because traded volume cannot be negative.
+  // Rolling baseline + multiplicative bands for the drill-down chart. Bands
+  // are exp(meanLog ± k·sdLog), so they are naturally wider above than below
+  // and can never go negative.
   function computeVolumeBandSeries(series, baselinePeriods) {
     if (!series || !series.length) return [];
-    const volumes = series.map((p) => (p.volume == null ? null : Number(p.volume)));
+    const logs = series.map((p) => logVolume(p.volume));
     const out = [];
     for (let i = 0; i < series.length; i++) {
-      const base = volumeBaselineStats(volumes, i, baselinePeriods);
-      const v = volumes[i];
-      const sd = base && base.sd != null ? base.sd : null;
+      const base = volumeBaselineStats(logs, i, baselinePeriods);
+      const v = series[i].volume == null ? null : Number(series[i].volume);
+      const sd = base && base.sdLog != null ? base.sdLog : null;
       out.push({
         periodEnd: series[i].period_end,
         volume: v,
         adjClose: series[i].adj_close == null ? null : Number(series[i].adj_close),
-        mean: base ? base.mean : null,
-        sd,
-        upper1: base && sd != null ? base.mean + sd : null,
-        lower1: base && sd != null ? Math.max(0, base.mean - sd) : null,
-        upper2: base && sd != null ? base.mean + 2 * sd : null,
-        lower2: base && sd != null ? Math.max(0, base.mean - 2 * sd) : null,
-        zScore: (base && sd != null && sd > 0 && v != null) ? (v - base.mean) / sd : null
+        mean: base ? base.geoMean : null,
+        sdLog: sd,
+        upper1: base && sd != null ? Math.exp(base.meanLog + sd) : null,
+        lower1: base && sd != null ? Math.exp(base.meanLog - sd) : null,
+        upper2: base && sd != null ? Math.exp(base.meanLog + 2 * sd) : null,
+        lower2: base && sd != null ? Math.exp(base.meanLog - 2 * sd) : null,
+        zScore: (base && sd != null && sd > 0 && logs[i] != null) ? (logs[i] - base.meanLog) / sd : null
       });
     }
     return out;
   }
 
-  // "How unusual", regardless of direction -- a quiet-volume outlier is as
-  // much an anomaly as a spike, so ranking uses distance from normal
-  // (0 for Z-score, 1x for RVOL) rather than the raw signed value.
-  function volumeAnomalyMagnitude(row, metric) {
-    if (metric === "rvol") return row.rvol == null ? null : Math.abs(row.rvol - 1);
-    return row.zScore == null ? null : Math.abs(row.zScore);
-  }
-
-  // instrumentId -> anomaly (or absent when history is too short). Used by
-  // the RRG halo / summary table / tooltip in the Momentum tab.
+  // instrumentId -> anomaly (absent when history is too short).
   function computeVolumeAnomalyMap(instruments, seriesByInstrumentId, baselinePeriods) {
     const out = {};
     instruments.forEach((inst) => {
@@ -2285,34 +2887,16 @@ window.QD = (function () {
     return out;
   }
 
-  function rankVolumeAnomalies(instruments, seriesByInstrumentId, baselinePeriods, metric) {
-    const rows = [];
-    instruments.forEach((inst) => {
-      const series = seriesByInstrumentId[inst.id];
-      const anomaly = computeVolumeAnomaly(series, baselinePeriods);
-      if (!anomaly) return; // insufficient history -> excluded (same convention as the momentum Leaderboard)
-      rows.push({
-        instrumentId: inst.id, ticker: inst.ticker, name: inst.name, category: inst.category,
-        periodEnd: anomaly.periodEnd, currentVolume: anomaly.current,
-        meanVolume: anomaly.mean, sdVolume: anomaly.sd,
-        zScore: anomaly.zScore, rvol: anomaly.rvol,
-        isAnomaly: anomaly.zScore != null && Math.abs(anomaly.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
-      });
-    });
-    rows.sort((a, b) => {
-      const av = volumeAnomalyMagnitude(a, metric), bv = volumeAnomalyMagnitude(b, metric);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      return bv - av;
-    });
-    rows.forEach((r, i) => { r.rank = i + 1; });
-    return rows;
+  // "How unusual", regardless of direction -- an unusually quiet instrument
+  // is as much an anomaly as a spike, so the Volume rank uses distance from
+  // normal rather than the signed value.
+  function volumeAnomalyMagnitude(row) {
+    return row && row.zScore != null ? Math.abs(row.zScore) : null;
   }
 
-  // Symmetric (diverging) scale around `center` -- unlike the Seasonal
-  // heatmap, volume anomalies are meaningful in BOTH directions, so the
-  // colour scale must be two-sided rather than a single good->bad ramp.
+  // Symmetric (diverging) scale around `center`: unlike the Seasonal
+  // heatmap, volume anomalies matter in BOTH directions, so the colour scale
+  // has to be two-sided rather than a single good->bad ramp.
   function computeSymmetricRange(values, center) {
     let maxAbs = 0;
     values.forEach((v) => {
@@ -2333,39 +2917,6 @@ window.QD = (function () {
     return `hsl(${hue}, 80%, ${light.toFixed(0)}%)`;
   }
 
-  // The newest week/month is normally still IN PROGRESS (e.g. a month with
-  // only a handful of trading days so far), so its summed volume is low by
-  // construction and every instrument reads as a "dry-up". The numbers are
-  // deliberately left exactly as the data says -- no silent dropping of the
-  // period -- but the UI states the caveat plainly wherever they are shown.
-  function isLikelyIncompletePeriod(periodEnd, granularity, now) {
-    if (!periodEnd || granularity === "day") return false;
-    const d = new Date(`${periodEnd}T00:00:00Z`);
-    if (Number.isNaN(d.getTime())) return false;
-    const ref = now ? new Date(now.getTime()) : new Date();
-    if (granularity === "month") {
-      return d.getUTCFullYear() === ref.getUTCFullYear() && d.getUTCMonth() === ref.getUTCMonth();
-    }
-    if (granularity === "week") {
-      return (ref.getTime() - d.getTime()) < 7 * 24 * 3600 * 1000;
-    }
-    return false;
-  }
-
-  function incompletePeriodMessage(periodEnd, granularity) {
-    const unit = granularity === "month" ? "เดือน" : "สัปดาห์";
-    return `หมายเหตุ: งวดล่าสุด (${periodEnd}) ยังไม่จบ${unit} — volume ที่รวมได้จึงยังไม่เต็มงวด ทำให้ทุกตัวมีแนวโน้มอ่านค่าเป็น "แห้งผิดปกติ" ตัวเลขนี้เป็นค่าตามข้อมูลจริง ไม่ได้ปรับแต่ง`;
-  }
-
-  function renderIncompleteNote(elId, periodEnd, granularity) {
-    const el = byId(elId);
-    if (!el) return false;
-    const incomplete = isLikelyIncompletePeriod(periodEnd, granularity);
-    if (incomplete) { el.textContent = incompletePeriodMessage(periodEnd, granularity); show(el); }
-    else { el.textContent = ""; hide(el); }
-    return incomplete;
-  }
-
   function formatVolumeNumber(v) {
     if (v == null || Number.isNaN(v)) return "—";
     const abs = Math.abs(v);
@@ -2375,14 +2926,92 @@ window.QD = (function () {
     return String(Math.round(v));
   }
 
-  // p_start_date for a volume/price fetch that only needs `periods` recent
-  // periods -- keeps payloads small (and well clear of PostgREST row caps)
-  // instead of pulling full history every time.
+  // p_start_date for a fetch that only needs `periods` recent periods -- keeps
+  // payloads small (and well clear of PostgREST row caps) instead of pulling
+  // full history every time.
   function approxStartDateForPeriods(granularity, periods, now) {
     const days = Math.ceil((periods + VOLUME_FETCH_BUFFER_PERIODS) * (APPROX_DAYS_PER_PERIOD[granularity] || 1.6)) + 14;
     const base = now ? new Date(now.getTime()) : new Date();
     base.setUTCDate(base.getUTCDate() - days);
     return base.toISOString().slice(0, 10);
+  }
+
+  // ---------------------------------------------------------------------
+  // Month-to-date aggregation (trading-day matched)
+  // ---------------------------------------------------------------------
+  // The newest calendar month is normally still in progress, so its summed
+  // volume is low purely because fewer days have traded -- on real data that
+  // made SPY read as a -2.87 "dry-up" on 2026-09-11 when the month was only
+  // ~8 sessions old. Rather than extrapolating (pro-rating) the partial month
+  // up to a full one, which invents data, every month is truncated to the
+  // SAME NUMBER OF TRADING DAYS as the current one, so the comparison is
+  // like-for-like: "first 8 sessions of this month vs the first 8 sessions of
+  // each prior month".
+  //
+  // Trading days are counted, not calendar dates, because 1-11 September and
+  // 1-11 March contain different numbers of sessions.
+  //
+  // When the current month is complete this degenerates to plain monthly
+  // totals, so no special-casing is needed once the month closes.
+  function monthKeyOf(dateStr) {
+    return typeof dateStr === "string" ? dateStr.slice(0, 7) : null;
+  }
+
+  function aggregateVolumeMonthToDate(dailyRows) {
+    if (!dailyRows || !dailyRows.length) return { series: [], cutoffTradingDays: 0, partial: false };
+    const sorted = dailyRows.slice().sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0)));
+    const byMonth = new Map();
+    sorted.forEach((r) => {
+      const k = monthKeyOf(r.period_end);
+      if (!k) return;
+      if (!byMonth.has(k)) byMonth.set(k, []);
+      byMonth.get(k).push(r);
+    });
+    const keys = Array.from(byMonth.keys()).sort();
+    if (!keys.length) return { series: [], cutoffTradingDays: 0, partial: false };
+    const cutoff = byMonth.get(keys[keys.length - 1]).length; // sessions elapsed in the newest month
+    const series = keys.map((k) => {
+      const rows = byMonth.get(k);
+      const used = rows.slice(0, Math.min(cutoff, rows.length));
+      let sum = 0;
+      let anyVolume = false;
+      used.forEach((r) => {
+        if (r.volume == null) return;
+        sum += Number(r.volume);
+        anyVolume = true;
+      });
+      const last = used[used.length - 1];
+      return {
+        period_end: last.period_end,
+        volume: anyVolume ? sum : null,
+        adj_close: last.adj_close == null ? null : Number(last.adj_close),
+        tradingDays: used.length,
+        monthKey: k
+      };
+    });
+    // A prior month with fewer sessions than the cutoff is summed over all of
+    // its own days; flagged so the UI can explain the (rare) mismatch.
+    const shortMonths = series.filter((s) => s.tradingDays < cutoff).length;
+    return { series, cutoffTradingDays: cutoff, partial: cutoff < 15, shortMonths };
+  }
+
+  // What to fetch for the volume side, given the momentum timeframe:
+  //   month -> DAILY rows (month-to-date needs session-level detail)
+  //   week  -> weekly aggregates straight from the RPC (no week-to-date, by decision)
+  //   day   -> daily rows as-is
+  function volumeFetchPlan(timeframe, periodsNeeded, now) {
+    if (timeframe === "month") {
+      const months = periodsNeeded + 1;
+      const days = Math.ceil(months * APPROX_DAYS_PER_PERIOD.month) + 21;
+      const base = now ? new Date(now.getTime()) : new Date();
+      base.setUTCDate(base.getUTCDate() - days);
+      return { granularity: "day", startDate: base.toISOString().slice(0, 10), aggregate: "mtd" };
+    }
+    return {
+      granularity: timeframe,
+      startDate: approxStartDateForPeriods(timeframe, periodsNeeded, now),
+      aggregate: "none"
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -2421,272 +3050,51 @@ window.QD = (function () {
     return byInst;
   }
 
-  function computeVolumeFetchKey() {
-    return `${state.volume.universeMode}|${state.volume.granularity}|${state.volume.baselinePeriods}`;
-  }
-
-  async function loadVolumeUniverseData() {
-    const errEl = byId("volLeaderboardError");
-    hide(errEl);
-    setLoading("volLoading", true);
-    setText("volLeaderboardStatus", "กำลังโหลดข้อมูล volume...");
-    try {
-      state.volume.selectionInitialized = false;
-      const universe = getUniverseInstruments(state.volume.universeMode);
-      state.volume.universeInstruments = universe;
-      if (!universe.length) {
-        state.volume.seriesByInstrument = {};
-        state.volume.dataLoaded = true;
-        state.volume.lastFetchKey = computeVolumeFetchKey();
-        setText("volLeaderboardStatus", "");
-        return true;
-      }
-      const g = state.volume.granularity;
-      const needed = Math.max(VOLUME_DRILLDOWN_PERIODS[g] || 120, state.volume.baselinePeriods + 2);
-      const rows = await fetchPeriodVolumes(universe.map((i) => i.id), g, approxStartDateForPeriods(g, needed));
-      state.volume.seriesByInstrument = groupVolumeRows(rows);
-      state.volume.dataLoaded = true;
-      state.volume.lastFetchKey = computeVolumeFetchKey();
-      setText("volLeaderboardStatus", `โหลดข้อมูลแล้ว (${universe.length} instruments)`);
-      return true;
-    } catch (e) {
-      showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
-      setText("volLeaderboardStatus", "");
-      return false;
-    } finally {
-      setLoading("volLoading", false);
-    }
-  }
-
-  async function runVolumeCalculate() {
-    const errEl = byId("volCalculateError");
-    hide(errEl);
-    setText("volCalculateStatus", "กำลังคำนวณ...");
-    try {
-      const needsFetch = !state.volume.dataLoaded || computeVolumeFetchKey() !== state.volume.lastFetchKey;
-      if (needsFetch) {
-        const ok = await loadVolumeUniverseData();
-        if (!ok) { setText("volCalculateStatus", ""); return; }
-      }
-      if (!state.volume.selectionInitialized) {
-        state.volume.selectedIds = state.volume.universeInstruments.map((i) => i.id);
-        state.volume.selectionInitialized = true;
-        state.volume.drilldownInstrumentId = null;
-      }
-      renderVolumeCheckboxPanel();
-      rerenderVolumeDisplay();
-      setText("volCalculateStatus", "คำนวณเสร็จแล้ว");
-    } catch (e) {
-      showError(errEl, `คำนวณไม่สำเร็จ: ${e.message || e}`);
-      setText("volCalculateStatus", "");
-    }
-  }
-
-  // Recomputes + redraws from data already in memory (no network) -- used by
-  // the checkbox panel and the metric/baseline pickers.
-  function rerenderVolumeDisplay() {
-    const selected = new Set(state.volume.selectedIds);
-    const insts = state.volume.universeInstruments.filter((i) => selected.has(i.id));
-    state.volume.rows = rankVolumeAnomalies(insts, state.volume.seriesByInstrument, state.volume.baselinePeriods, state.volume.metric);
-    renderVolumeLeaderboardChart(state.volume.rows);
-    renderVolumeLeaderboardTable(state.volume.rows);
-    renderVolumeDrilldown();
-    renderIncompleteNote("volIncompleteNote", state.volume.rows.length ? state.volume.rows[0].periodEnd : null, state.volume.granularity);
-  }
-
-  function volumeMetricMeta() {
-    return state.volume.metric === "rvol"
-      ? { key: "rvol", label: "RVOL (x)", center: 1 }
-      : { key: "zScore", label: "Volume Z-score", center: 0 };
-  }
-
-  function buildVolumeChartDatasets(rows, metric, maxN) {
-    const meta = metric === "rvol" ? { key: "rvol", center: 1 } : { key: "zScore", center: 0 };
-    const top = rows.slice(0, maxN || 20);
-    return {
-      labels: top.map((r) => r.ticker),
-      values: top.map((r) => (r[meta.key] == null ? null : r[meta.key] - meta.center)),
-      colors: top.map((r) => {
-        const v = r[meta.key];
-        if (v == null) return "#cbd5e1";
-        return v >= meta.center ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR;
-      })
-    };
-  }
-
-  function renderVolumeLeaderboardChart(rows) {
-    const canvas = byId("volLeaderboardChart");
-    if (!canvas) return;
-    const built = buildVolumeChartDatasets(rows, state.volume.metric, 20);
-    if (typeof Chart === "undefined") return;
-    if (volLeaderboardChartInstance) { volLeaderboardChartInstance.destroy(); volLeaderboardChartInstance = null; }
-    const meta = volumeMetricMeta();
-    const axisLabel = meta.key === "rvol" ? "RVOL − 1 (เท่า)" : "Volume Z-score";
-    volLeaderboardChartInstance = new Chart(canvas.getContext("2d"), {
-      type: "bar",
-      data: { labels: built.labels, datasets: [{ label: axisLabel, data: built.values, backgroundColor: built.colors }] },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        scales: { y: { title: { display: true, text: axisLabel } } },
-        plugins: { legend: { display: false } }
-      }
+  // Applies the fetch plan's aggregation to every instrument's raw rows.
+  function applyVolumeAggregation(byInstrument, plan) {
+    if (!plan || plan.aggregate !== "mtd") return { series: byInstrument, meta: null };
+    const out = {};
+    let meta = null;
+    Object.keys(byInstrument).forEach((k) => {
+      const agg = aggregateVolumeMonthToDate(byInstrument[k]);
+      out[k] = agg.series;
+      if (!meta || agg.cutoffTradingDays > meta.cutoffTradingDays) meta = agg;
     });
+    return { series: out, meta };
   }
 
-  function renderVolumeLeaderboardTable(rows) {
-    const table = byId("volLeaderboardTable");
-    if (!table) return;
-    if (!rows.length) {
-      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือก Universe แล้วกด "คำนวณ" (หรือประวัติ volume ไม่พอสำหรับ baseline ที่เลือก)</td></tr></tbody>`;
-      return;
-    }
-    const meta = volumeMetricMeta();
-    const range = computeSymmetricRange(rows.map((r) => r[meta.key]), meta.center);
-    const head = `<thead><tr>
-        <th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Rank</th>
-        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Ticker</th>
-        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
-        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Category</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volume ล่าสุด</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">ค่าเฉลี่ย baseline</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Z-score</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RVOL (x)</th>
-        <th class="text-center px-2 py-2 bg-slate-50 border-b border-slate-200">สถานะ</th>
-      </tr></thead>`;
-    const body = rows.map((r) => {
-      const bg = volumeDivergingColor(r[meta.key], range);
-      const style = bg ? ` style="background-color:${bg};"` : "";
-      const zStyle = meta.key === "zScore" ? style : "";
-      const rStyle = meta.key === "rvol" ? style : "";
-      let badge = `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">ปกติ</span>`;
-      if (r.isAnomaly) {
-        badge = r.zScore > 0
-          ? `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#ffedd5;color:#9a3412;">พุ่งผิดปกติ</span>`
-          : `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1e40af;">แห้งผิดปกติ</span>`;
-      }
-      return `<tr class="border-b border-slate-100 cursor-pointer hover:bg-slate-50 vol-row" data-inst-id="${r.instrumentId}">
-          <td class="sticky-col px-3 py-1.5 text-slate-700">${r.rank}</td>
-          <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
-          <td class="px-2 py-1.5 text-slate-500">${tickerShortName(r.ticker)}</td>
-          <td class="px-2 py-1.5 text-slate-500">${r.category}</td>
-          <td class="text-right px-2 py-1.5 text-slate-600">${formatVolumeNumber(r.currentVolume)}</td>
-          <td class="text-right px-2 py-1.5 text-slate-500">${formatVolumeNumber(r.meanVolume)}</td>
-          <td class="text-right px-2 py-1.5"${zStyle}>${r.zScore != null ? r.zScore.toFixed(2) : "—"}</td>
-          <td class="text-right px-2 py-1.5"${rStyle}>${r.rvol != null ? r.rvol.toFixed(2) + "x" : "—"}</td>
-          <td class="text-center px-2 py-1.5">${badge}</td>
-        </tr>`;
-    }).join("");
-    table.innerHTML = head + `<tbody>${body}</tbody>`;
-    table.querySelectorAll(".vol-row").forEach((tr) => {
-      tr.addEventListener("click", () => {
-        state.volume.drilldownInstrumentId = Number(tr.getAttribute("data-inst-id"));
-        renderVolumeDrilldown();
-      });
-    });
+  // ---------------------------------------------------------------------
+  // "Period still in progress" note
+  // ---------------------------------------------------------------------
+  // Month is handled properly by the month-to-date aggregation above, so the
+  // note is only needed for the weekly view (week-to-date was explicitly out
+  // of scope) -- daily bars are complete by construction because prices only
+  // land after the close.
+  function isLikelyIncompletePeriod(periodEnd, granularity, now) {
+    if (!periodEnd || granularity !== "week") return false;
+    const d = new Date(`${periodEnd}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return false;
+    const ref = now ? new Date(now.getTime()) : new Date();
+    return (ref.getTime() - d.getTime()) < 7 * 24 * 3600 * 1000;
   }
 
-  function renderVolumeCheckboxPanel() {
-    const panel = byId("volCheckboxPanel");
-    if (!panel) return;
-    const selected = new Set(state.volume.selectedIds);
-    panel.innerHTML = state.volume.universeInstruments.map((inst) =>
-      `<label class="flex items-center gap-1 text-slate-600">
-         <input type="checkbox" data-inst-id="${inst.id}" class="vol-cb" ${selected.has(inst.id) ? "checked" : ""} />
-         ${inst.ticker}
-       </label>`
-    ).join("");
-    panel.querySelectorAll(".vol-cb").forEach((cb) => {
-      cb.addEventListener("change", (e) => {
-        const id = Number(e.target.getAttribute("data-inst-id"));
-        const set = new Set(state.volume.selectedIds);
-        if (e.target.checked) set.add(id); else set.delete(id);
-        state.volume.selectedIds = Array.from(set);
-        rerenderVolumeDisplay();
-      });
-    });
+  function incompletePeriodMessage(periodEnd) {
+    return `หมายเหตุ: งวดล่าสุด (${periodEnd}) ยังไม่จบสัปดาห์ — volume ที่รวมได้จึงยังไม่เต็มงวด ทำให้ทุกตัวมีแนวโน้มอ่านค่าเป็น "แห้งผิดปกติ" ตัวเลขนี้เป็นค่าตามข้อมูลจริง ไม่ได้ปรับแต่ง (โหมดรายเดือนไม่มีปัญหานี้ เพราะเทียบแบบนับวันทำการเท่ากันอยู่แล้ว)`;
   }
 
-  function buildVolumeDrilldownData(series, baselinePeriods, maxPoints) {
-    const band = computeVolumeBandSeries(series, baselinePeriods);
-    return maxPoints && band.length > maxPoints ? band.slice(band.length - maxPoints) : band;
+  function mtdNoteMessage(meta) {
+    if (!meta || !meta.cutoffTradingDays) return "";
+    return `หมายเหตุ: เดือนล่าสุดยังไม่จบ — เทียบแบบ month-to-date โดยตัดทุกเดือนให้เหลือ ${meta.cutoffTradingDays} วันทำการแรกเท่ากันหมด (ไม่ได้ประมาณค่าขยายให้เต็มเดือน)`;
   }
 
-  function renderVolumeDrilldown() {
-    const titleEl = byId("volDrilldownTitle");
-    const noteEl = byId("volDrilldownNote");
-    const canvas = byId("volDrilldownChart");
-    const instId = state.volume.drilldownInstrumentId;
-    const inst = state.volume.universeInstruments.find((i) => i.id === instId);
-    if (!inst) {
-      if (titleEl) titleEl.textContent = "กราฟย้อนหลังรายตัว";
-      if (noteEl) noteEl.textContent = "คลิกแถวในตารางด้านบนเพื่อเลือก instrument";
-      if (volDrilldownChartInstance) { volDrilldownChartInstance.destroy(); volDrilldownChartInstance = null; }
-      return;
-    }
-    const series = state.volume.seriesByInstrument[instId] || [];
-    const points = buildVolumeDrilldownData(series, state.volume.baselinePeriods, VOLUME_DRILLDOWN_PERIODS[state.volume.granularity]);
-    if (titleEl) titleEl.textContent = `กราฟย้อนหลังรายตัว — ${inst.ticker} (${tickerShortName(inst.ticker)})`;
-    if (noteEl) noteEl.textContent = points.length
-      ? `แสดง ${points.length} งวดล่าสุด · baseline ${state.volume.baselinePeriods} งวด (แถบเงา = ค่าเฉลี่ย ± 1SD และ ± 2SD แบบ rolling)`
-      : "ข้อมูลไม่พอสำหรับวาดกราฟ";
-    if (!canvas || typeof Chart === "undefined") return;
-    if (volDrilldownChartInstance) { volDrilldownChartInstance.destroy(); volDrilldownChartInstance = null; }
-    const labels = points.map((p) => p.periodEnd);
-    volDrilldownChartInstance = new Chart(canvas.getContext("2d"), {
-      data: {
-        labels,
-        datasets: [
-          { type: "bar", label: "Volume", data: points.map((p) => p.volume), yAxisID: "y",
-            backgroundColor: points.map((p) => (p.zScore != null && Math.abs(p.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
-              ? (p.zScore > 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR) : "#cbd5e1")) },
-          { type: "line", label: "ค่าเฉลี่ย baseline", data: points.map((p) => p.mean), yAxisID: "y",
-            borderColor: "#475569", pointRadius: 0, borderWidth: 1.5, fill: false },
-          { type: "line", label: "+2SD", data: points.map((p) => p.upper2), yAxisID: "y",
-            borderColor: "rgba(234,88,12,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
-          { type: "line", label: "+1SD", data: points.map((p) => p.upper1), yAxisID: "y",
-            borderColor: "rgba(234,88,12,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
-          { type: "line", label: "−1SD", data: points.map((p) => p.lower1), yAxisID: "y",
-            borderColor: "rgba(37,99,235,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
-          { type: "line", label: "−2SD", data: points.map((p) => p.lower2), yAxisID: "y",
-            borderColor: "rgba(37,99,235,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
-          { type: "line", label: "ราคาปิด", data: points.map((p) => p.adjClose), yAxisID: "y1",
-            borderColor: "#7c3aed", pointRadius: 0, borderWidth: 1.5, fill: false }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        scales: {
-          y: { position: "left", title: { display: true, text: "Volume" } },
-          y1: { position: "right", title: { display: true, text: "ราคาปิด" }, grid: { drawOnChartArea: false } }
-        },
-        plugins: { legend: { position: "bottom" } }
-      }
-    });
-  }
-
-  function renderVolumeBaselinePicker() {
-    const el = byId("volBaselinePicker");
-    if (!el) return;
-    const g = state.volume.granularity;
-    const unit = g === "day" ? "วัน" : (g === "week" ? "สัปดาห์" : "เดือน");
-    el.innerHTML = (VOLUME_BASELINE_OPTIONS[g] || []).map((v) =>
-      `<option value="${v}" ${v === state.volume.baselinePeriods ? "selected" : ""}>${v} ${unit}</option>`).join("");
-  }
-
-  const VOLUME_GLOSSARY_ITEMS = [
-    { label: "Volume Z-score", desc: "volume ของงวดล่าสุดห่างจากค่าเฉลี่ยย้อนหลังของ instrument ตัวเองกี่ SD — ค่าบวกมากคือพุ่งผิดปกติ ค่าลบมากคือแห้งผิดปกติ (ค่าที่ใช้เป็นเกณฑ์ \"ผิดปกติ\" คือ |Z| ≥ 2)" },
-    { label: "RVOL (x)", desc: "volume งวดล่าสุดเป็นกี่เท่าของค่าเฉลี่ยย้อนหลัง — อ่านง่ายกว่า Z-score แต่ไม่ได้ปรับตามว่าปกติ instrument ตัวนั้นผันผวนแค่ไหน" },
-    { label: "Baseline", desc: "จำนวนงวดย้อนหลังที่ใช้เป็นฐาน \"ปกติ\" โดยไม่นับงวดปัจจุบันเข้าไปในฐานด้วย (กันไม่ให้ค่าที่ผิดปกติไปดันค่าเฉลี่ยที่ตัวเองถูกเทียบ)" },
-    { label: "เทียบข้าม ETF ได้อย่างไร", desc: "ทั้ง Z-score และ RVOL เป็นอัตราส่วนเทียบกับฐานของตัวเอง จึงไม่มีหน่วยและไม่ขึ้นกับขนาดกอง — การเรียงอันดับในตารางจึงตอบทั้ง \"ผิดปกติเทียบตัวเอง\" และ \"ผิดปกติเทียบเพื่อนในกลุ่ม ณ ตอนนี้\" พร้อมกัน (ไม่ต้องใช้ข้อมูล AUM ซึ่งฐานข้อมูลนี้ไม่มี)" },
-    { label: "สีในตาราง", desc: "ไล่สีสองทางแบบ relative: ส้มเข้ม = พุ่งผิดปกติมากที่สุดในกลุ่มที่แสดงอยู่, น้ำเงินเข้ม = แห้งผิดปกติมากที่สุด, สีจางกลางๆ = ใกล้ปกติ (ไม่ใช่ threshold ตายตัว)" }
-  ];
-
-  function renderVolumeGlossary() {
-    const el = byId("volGlossary");
-    if (!el) return;
-    el.innerHTML = VOLUME_GLOSSARY_ITEMS.map((it) =>
-      `<div class="text-xs"><span class="font-semibold text-slate-700">${it.label}</span><span class="text-slate-500"> — ${it.desc}</span></div>`
-    ).join("");
+  function renderIncompleteNote(elId, periodEnd, granularity, mtdMeta) {
+    const el = byId(elId);
+    if (!el) return false;
+    let msg = "";
+    if (granularity === "month" && mtdMeta && mtdMeta.partial) msg = mtdNoteMessage(mtdMeta);
+    else if (isLikelyIncompletePeriod(periodEnd, granularity)) msg = incompletePeriodMessage(periodEnd);
+    if (msg) { el.textContent = msg; show(el); } else { el.textContent = ""; hide(el); }
+    return !!msg;
   }
 
   // =======================================================================
@@ -2876,7 +3284,7 @@ window.QD = (function () {
     try {
       await ensureCorrelationSeries();
       if (!corr.selectionInitialized) {
-        const ranked = state.momentum.leaderboardRows.map((r) => r.instrumentId);
+        const ranked = sortedMomentumRows().map((r) => r.instrumentId);
         const ordered = corr.instruments.slice().sort((a, b) => {
           const ai = ranked.indexOf(a.id), bi = ranked.indexOf(b.id);
           return (ai === -1 ? 1e9 : ai) - (bi === -1 ? 1e9 : bi);
@@ -3038,17 +3446,13 @@ window.QD = (function () {
 
   function switchTab(tab) {
     state.activeTab = tab;
-    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), volEl = byId("tabVolume");
-    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), volBtn = byId("tabBtnVolume");
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum");
     if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
     if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
-    if (volEl) volEl.classList.toggle("hidden", tab !== "volume");
     if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
     if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
-    if (volBtn) volBtn.classList.toggle("qd-tab-active", tab === "volume");
     if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
-    // The Volume tab deliberately does NOT auto-load: its fetch is heavier
-    // (daily grain) and the agreed UX is an explicit "คำนวณ" click.
   }
 
   function bindMomentumUIHandlers() {
@@ -3056,8 +3460,6 @@ window.QD = (function () {
     if (tabSeasBtn) tabSeasBtn.addEventListener("click", () => switchTab("seasonality"));
     const tabMomBtn = byId("tabBtnMomentum");
     if (tabMomBtn) tabMomBtn.addEventListener("click", () => switchTab("momentum"));
-    const tabVolBtn = byId("tabBtnVolume");
-    if (tabVolBtn) tabVolBtn.addEventListener("click", () => switchTab("volume"));
 
     const universeEl = byId("momUniversePicker");
     if (universeEl) universeEl.addEventListener("change", (e) => { state.momentum.universeMode = e.target.value; });
@@ -3073,28 +3475,35 @@ window.QD = (function () {
       state.momentum.volBaselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || state.momentum.volBaselinePeriods;
       const volBaseEl = byId("momVolBaselineInput");
       if (volBaseEl) volBaseEl.value = state.momentum.volBaselinePeriods;
+      // Daily rotation is much noisier than weekly/monthly, so the tail
+      // default stretches with the timeframe.
+      state.momentum.tailLength = MOMENTUM_TAIL_DEFAULTS[e.target.value] || state.momentum.tailLength;
+      const tailInput = byId("momTailLengthInput");
+      if (tailInput) tailInput.value = state.momentum.tailLength;
       renderMomentumLookbackSmaPickers();
     });
 
     const volBaselineEl = byId("momVolBaselineInput");
     if (volBaselineEl) volBaselineEl.addEventListener("change", (e) => {
+      // Part of the fetch key: a longer baseline may need more history than
+      // what is currently loaded, so "คำนวณ" decides whether to re-fetch.
       state.momentum.volBaselinePeriods = Math.max(3, Number(e.target.value) || 12);
     });
 
     const lbEl = byId("momLookbackPicker");
-    if (lbEl) lbEl.addEventListener("change", (e) => { state.momentum.lookbackPeriods = Number(e.target.value); renderMomentumLeaderboard(); });
+    if (lbEl) lbEl.addEventListener("change", (e) => { state.momentum.lookbackPeriods = Number(e.target.value); recomputeMomentumRows(); renderMomentumLeaderboard(); });
 
     const smaEl = byId("momSmaPicker");
-    if (smaEl) smaEl.addEventListener("change", (e) => { state.momentum.smaPeriods = Number(e.target.value); renderMomentumLeaderboard(); });
+    if (smaEl) smaEl.addEventListener("change", (e) => { state.momentum.smaPeriods = Number(e.target.value); recomputeMomentumRows(); renderMomentumLeaderboard(); });
 
     const benchEl = byId("momBenchmarkPicker");
     if (benchEl) benchEl.addEventListener("change", (e) => { state.momentum.benchmarkAssetId = Number(e.target.value); });
 
     const riskToggle = byId("momRiskAdjustedToggle");
-    if (riskToggle) riskToggle.addEventListener("change", (e) => { state.momentum.riskAdjusted = e.target.checked; renderMomentumLeaderboard(); });
+    if (riskToggle) riskToggle.addEventListener("change", (e) => { state.momentum.riskAdjusted = e.target.checked; recomputeMomentumRows(); renderMomentumLeaderboard(); });
 
     const rfInput = byId("momRiskFreeRate");
-    if (rfInput) rfInput.addEventListener("change", (e) => { state.momentum.riskFreeAnnualPct = Number(e.target.value) || 0; renderMomentumLeaderboard(); });
+    if (rfInput) rfInput.addEventListener("change", (e) => { state.momentum.riskFreeAnnualPct = Number(e.target.value) || 0; recomputeMomentumRows(); renderMomentumLeaderboard(); });
 
     const rfAutofillBtn = byId("momRiskFreeAutofillBtn");
     if (rfAutofillBtn) rfAutofillBtn.addEventListener("click", () => autofillRiskFreeRate());
@@ -3104,7 +3513,8 @@ window.QD = (function () {
 
     const rrgSelectAllBtn = byId("momRrgSelectAllBtn");
     if (rrgSelectAllBtn) rrgSelectAllBtn.addEventListener("click", () => {
-      const rotationInstruments = state.momentum.universeInstruments.filter((i) => i.id !== state.momentum.benchmarkAssetId);
+      const sel = new Set(state.momentum.selectedIds);
+      const rotationInstruments = state.momentum.universeInstruments.filter((i) => sel.has(i.id) && i.id !== state.momentum.benchmarkAssetId);
       state.momentum.rrgSelectedIds = rotationInstruments.map((i) => i.id);
       state.momentum.rrgSelectionInitialized = true;
       renderRrgCheckboxPanel();
@@ -3126,49 +3536,42 @@ window.QD = (function () {
     if (exportBtn) exportBtn.addEventListener("click", () => exportMomentumToExcel());
   }
 
-  function bindVolumeUIHandlers() {
-    const uEl = byId("volUniversePicker");
-    if (uEl) uEl.addEventListener("change", (e) => { state.volume.universeMode = e.target.value; });
-
-    const gEl = byId("volGranularityPicker");
-    if (gEl) gEl.addEventListener("change", (e) => {
-      state.volume.granularity = e.target.value;
-      state.volume.baselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || 20;
-      renderVolumeBaselinePicker();
-    });
-
-    const bEl = byId("volBaselinePicker");
-    if (bEl) bEl.addEventListener("change", (e) => {
-      state.volume.baselinePeriods = Number(e.target.value) || 20;
-      // Baseline length changes the numbers but not the data we hold, so the
-      // fetch key moves with it and "คำนวณ" decides whether a refetch is
-      // actually needed (a longer baseline may need more history).
-      if (state.volume.dataLoaded) rerenderVolumeDisplay();
-    });
-
-    const mEl = byId("volMetricPicker");
-    if (mEl) mEl.addEventListener("change", (e) => {
-      state.volume.metric = e.target.value;
-      if (state.volume.dataLoaded) rerenderVolumeDisplay();
-    });
-
-    const calcBtn = byId("volCalculateBtn");
-    if (calcBtn) calcBtn.addEventListener("click", () => runVolumeCalculate());
-
-    const selectAll = byId("volSelectAllBtn");
+  function bindMergedTableUIHandlers() {
+    const selectAll = byId("momSelectAllBtn");
     if (selectAll) selectAll.addEventListener("click", () => {
-      state.volume.selectedIds = state.volume.universeInstruments.map((i) => i.id);
-      state.volume.selectionInitialized = true;
-      renderVolumeCheckboxPanel();
-      rerenderVolumeDisplay();
+      state.momentum.selectedIds = state.momentum.universeInstruments.map((i) => i.id);
+      state.momentum.selectionInitialized = true;
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
     });
 
-    const clearAll = byId("volClearAllBtn");
+    const clearAll = byId("momClearAllBtn");
     if (clearAll) clearAll.addEventListener("click", () => {
-      state.volume.selectedIds = [];
-      state.volume.selectionInitialized = true;
-      renderVolumeCheckboxPanel();
-      rerenderVolumeDisplay();
+      state.momentum.selectedIds = [];
+      state.momentum.selectionInitialized = true;
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+    });
+
+    document.querySelectorAll(".mom-preset-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyTablePreset(btn.getAttribute("data-preset"));
+        renderMomentumLeaderboard();
+      });
+    });
+
+    const colToggle = byId("momColumnToggleBtn");
+    if (colToggle) colToggle.addEventListener("click", () => {
+      const panel = byId("momColumnPanel");
+      if (panel) panel.classList.toggle("hidden");
+    });
+
+    const resetBtn = byId("momLayoutResetBtn");
+    if (resetBtn) resetBtn.addEventListener("click", () => {
+      resetTableLayout();
+      renderMomentumLeaderboard();
     });
   }
 
@@ -3376,12 +3779,11 @@ window.QD = (function () {
     sb = overrideClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     bindStaticUIHandlers();
     bindMomentumUIHandlers();
-    bindVolumeUIHandlers();
+    bindMergedTableUIHandlers();
     bindCorrelationUIHandlers();
     renderStatGlossary();
     renderMomentumGlossary();
-    renderVolumeGlossary();
-    renderVolumeBaselinePicker();
+    initTableLayout();
     switchTab(state.activeTab);
 
     const { data: { session } } = await sb.auth.getSession();
@@ -3427,16 +3829,25 @@ window.QD = (function () {
     buildMomentumExportSheets, updateMomExportAvailability, exportMomentumToExcel,
     renderMomentumGlossary, renderMomentumBenchmarkPicker, renderMomentumLookbackSmaPickers, switchTab,
     volumeHaloColor, buildRotationPointStyles, buildRotationDatasets, formatRotationTooltip,
-    // Volume Anomaly tab (2026-09) -- pure helpers
+    // Volume anomaly (log-based) -- pure helpers
     VOLUME_BASELINE_OPTIONS, VOLUME_BASELINE_DEFAULTS, VOLUME_ANOMALY_Z_THRESHOLD,
-    volumeBaselineStats, computeVolumeAnomaly, computeVolumeBandSeries, computeVolumeAnomalyMap,
-    volumeAnomalyMagnitude, rankVolumeAnomalies, computeSymmetricRange, volumeDivergingColor,
-    formatVolumeNumber, approxStartDateForPeriods, buildVolumeChartDatasets, buildVolumeDrilldownData,
-    isLikelyIncompletePeriod, incompletePeriodMessage, renderIncompleteNote,
-    // Volume Anomaly tab -- data + flows
-    fetchPeriodVolumes, groupVolumeRows, computeVolumeFetchKey, loadVolumeUniverseData, runVolumeCalculate,
-    rerenderVolumeDisplay, renderVolumeLeaderboardChart, renderVolumeLeaderboardTable,
-    renderVolumeCheckboxPanel, renderVolumeDrilldown, renderVolumeBaselinePicker, renderVolumeGlossary,
+    MOMENTUM_TIMEFRAME_OPTIONS, MOMENTUM_TIMEFRAME_DEFAULTS, MOMENTUM_TAIL_DEFAULTS,
+    logVolume, volumeBaselineStats, computeVolumeAnomaly, computeVolumeBandSeries, computeVolumeAnomalyMap,
+    volumeAnomalyMagnitude, computeSymmetricRange, volumeDivergingColor, formatVolumeNumber,
+    approxStartDateForPeriods, aggregateVolumeMonthToDate, volumeFetchPlan, applyVolumeAggregation,
+    isLikelyIncompletePeriod, incompletePeriodMessage, mtdNoteMessage, renderIncompleteNote,
+    // Volume data access
+    fetchPeriodVolumes, groupVolumeRows,
+    // Merged Leaderboard table
+    MOMENTUM_TABLE_COLUMNS, MOMENTUM_COLUMN_IDS, MOMENTUM_TABLE_PRESETS, MOMENTUM_CHART_TOP_N,
+    momentumColumnById, buildMergedRows, sortMergedRows, visibleOrderedColumns,
+    buildVolumeChartDatasets, buildVolumeDrilldownData,
+    recomputeMomentumRows, sortedMomentumRows, renderMomentumTable, renderMomColumnPanel,
+    renderMomSelectionPanel, renderMomVolumeChart, renderMomDrilldown, openDrilldown,
+    momentumPriceLookbackPeriods,
+    // Table layout (order / visibility / sort / persistence)
+    initTableLayout, applyTablePreset, resetTableLayout, moveColumn, toggleColumn, setSort,
+    currentLayout, sanitizeLayout, saveLayout, loadLayout, applyLayout, MOMENTUM_LAYOUT_KEY,
     // Correlation Explorer (2026-09) -- pure helpers
     CORR_DEFAULT_WINDOW, pearson, buildAlignedReturns, correlationForWindow, computeCorrelationMatrix,
     computeRollingPairCorrelation, computeAverageCorrelationSeries, correlationColor,
