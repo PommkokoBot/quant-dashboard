@@ -65,6 +65,7 @@
       <nav class="flex items-center gap-1" role="tablist">
         <button id="tabBtnSeasonality" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="seasonality">Seasonality</button>
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
+        <button id="tabBtnVolume" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="volume">Volume</button>
       </nav>
     </div>
     <button id="logoutBtn" class="text-sm text-slate-600 hover:text-red-600 border border-slate-300 rounded-lg px-3 py-1.5">
@@ -298,6 +299,12 @@
           <input id="momTailLengthInput" type="number" min="2" max="52" value="12"
                  class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" />
         </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Volume baseline (งวดย้อนหลังที่ใช้เทียบ)</label>
+          <input id="momVolBaselineInput" type="number" min="3" max="120" value="12"
+                 class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" />
+        </div>
+        <p class="text-[10px] text-slate-400 max-w-md">จุดล่าสุดของแต่ละเส้นจะมี <span class="font-semibold" style="color:#ea580c;">วงแหวนส้ม</span> เมื่อ volume งวดล่าสุดพุ่งผิดปกติ (Z-score ≥ 2) และ <span class="font-semibold" style="color:#2563eb;">วงแหวนน้ำเงิน</span> เมื่อแห้งผิดปกติ (Z-score ≤ −2) — ขนาดจุดยังไล่ตามความเก่า-ใหม่ของ tail เหมือนเดิม</p>
       </div>
 
       <div class="border border-slate-200 rounded-lg p-3 mb-4">
@@ -316,10 +323,73 @@
         <canvas id="momRotationChart"></canvas>
       </div>
 
+      <p id="momVolIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
+
       <div class="mt-4">
         <h3 class="text-xs font-semibold text-slate-600 mb-2">สรุปสถานะ 8 กลุ่ม (ตามตัวที่เลือกแสดงในกราฟ)</h3>
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
           <table id="momRotationSummaryTable" class="text-xs w-full"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Correlation Explorer ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Correlation Explorer</h2>
+      <p class="text-xs text-slate-500 mb-4">ใช้ Universe เดียวกับด้านบนของหน้า แต่มี Timeframe ของตัวเองแยกต่างหาก — ตั้งค่าแล้วกด "คำนวณ Correlation" ค่าเดียวกันนี้จะใช้กับทั้ง 3 ส่วน (Matrix, กราฟรายคู่, ค่าเฉลี่ยรวม)</p>
+
+      <div class="flex flex-wrap items-end gap-4 mb-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ความถี่ผลตอบแทน</label>
+          <select id="corrFrequencyPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="day">รายวัน (Day)</option>
+            <option value="week">รายสัปดาห์ (Week)</option>
+            <option value="month" selected>รายเดือน (Month)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Rolling window (จำนวนงวด)</label>
+          <input id="corrWindowInput" type="number" min="5" max="500" value="12"
+                 class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-28" />
+        </div>
+        <button id="corrCalculateBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg px-4 py-2">
+          คำนวณ Correlation
+        </button>
+        <span id="corrStatus" class="text-xs text-slate-500"></span>
+      </div>
+      <p id="corrError" class="text-sm text-red-600 mb-2 hidden"></p>
+
+      <div class="border border-slate-200 rounded-lg p-3 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-slate-600">เลือกตัวที่จะอยู่ใน Matrix</h3>
+          <div class="flex items-center gap-3">
+            <button id="corrSelectAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">เลือกทั้งหมด</button>
+            <button id="corrClearAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">ล้างทั้งหมด</button>
+          </div>
+        </div>
+        <div id="corrCheckboxPanel" class="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto text-xs"></div>
+        <p id="corrSelectionNote" class="text-[10px] text-slate-400 mt-2"></p>
+      </div>
+
+      <div class="relative">
+        <div id="corrLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+          <div class="spinner"></div>
+        </div>
+
+        <h3 class="text-xs font-semibold text-slate-600 mb-2">Correlation Matrix (ล่าสุด) — คลิกช่องไหนก็ได้เพื่อดูกราฟย้อนหลังของคู่นั้น</h3>
+        <div class="overflow-auto border border-slate-200 rounded-lg max-h-[28rem] mb-4">
+          <table id="corrMatrixTable" class="text-[10px]"></table>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <h3 id="corrPairTitle" class="text-xs font-semibold text-slate-600 mb-2">Rolling Correlation รายคู่ (ยังไม่ได้เลือกคู่)</h3>
+            <div class="h-64"><canvas id="corrPairChart"></canvas></div>
+          </div>
+          <div>
+            <h3 class="text-xs font-semibold text-slate-600 mb-2">ค่าเฉลี่ย Correlation ของทั้งกลุ่ม (Market Regime)</h3>
+            <div class="h-64"><canvas id="corrAvgChart"></canvas></div>
+          </div>
         </div>
       </div>
     </section>
@@ -350,6 +420,106 @@
   </div>
   <!-- /#tabMomentum -->
 
+  <div id="tabVolume" class="hidden space-y-6">
+
+    <!-- ---------- Volume Controls ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-end gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Universe</label>
+          <select id="volUniversePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]">
+            <option value="asset_class">Asset Class</option>
+            <option value="broad_market">Broad Market</option>
+            <option value="thematic">Thematic</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Granularity</label>
+          <select id="volGranularityPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="day" selected>รายวัน (Day)</option>
+            <option value="week">รายสัปดาห์ (Week)</option>
+            <option value="month">รายเดือน (Month)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Baseline (งวดย้อนหลังที่ใช้เทียบ)</label>
+          <select id="volBaselinePicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">เรียง/ลงสีตาม</label>
+          <select id="volMetricPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="zscore" selected>Volume Z-score</option>
+            <option value="rvol">RVOL (เท่าของค่าเฉลี่ย)</option>
+          </select>
+        </div>
+        <button id="volCalculateBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg px-4 py-2">
+          คำนวณ
+        </button>
+        <span id="volCalculateStatus" class="text-xs text-slate-500"></span>
+      </div>
+      <p id="volCalculateError" class="text-sm text-red-600 mt-2 hidden"></p>
+      <p class="text-[10px] text-slate-400 mt-3">Z-score = (volume งวดล่าสุด − ค่าเฉลี่ยของ baseline) ÷ SD ของ baseline · RVOL = volume งวดล่าสุด ÷ ค่าเฉลี่ยของ baseline — ทั้งคู่คำนวณจากฐานของแต่ละ instrument เอง จึงเทียบข้าม ETF ที่ขนาดกองต่างกันได้โดยตรง · หน้านี้ไม่ auto-run ต้องกด "คำนวณ" ทุกครั้งที่เปลี่ยน Universe/Granularity</p>
+    </section>
+
+    <!-- ---------- Instrument selection ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xs font-semibold text-slate-600">เลือกตัวที่จะแสดงในตาราง/กราฟ</h2>
+        <div class="flex items-center gap-3">
+          <button id="volSelectAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">เลือกทั้งหมด</button>
+          <button id="volClearAllBtn" class="text-[11px] text-blue-600 hover:text-blue-800">ล้างทั้งหมด</button>
+        </div>
+      </div>
+      <div id="volCheckboxPanel" class="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto text-xs"></div>
+      <p class="text-[10px] text-slate-400 mt-2">ค่าเริ่มต้น: ทุกตัวใน Universe — การติ๊ก/ล้างมีผลทันที ไม่ต้องกด "คำนวณ" ซ้ำ (กรองจากข้อมูลที่โหลดไว้แล้ว)</p>
+    </section>
+
+    <!-- ---------- Leaderboard ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-slate-800">Volume Anomaly Leaderboard</h2>
+        <span id="volLeaderboardStatus" class="text-xs text-slate-500"></span>
+      </div>
+      <div class="relative">
+        <div id="volLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+          <div class="spinner"></div>
+        </div>
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-1">
+            <h3 class="text-xs font-semibold text-slate-600">Top 20 ตามระดับความผิดปกติ</h3>
+            <p class="text-[10px] text-slate-400">แท่งขึ้น/สีส้ม = volume พุ่งกว่าปกติ · แท่งลง/สีน้ำเงิน = แห้งกว่าปกติ</p>
+          </div>
+          <div class="h-56">
+            <canvas id="volLeaderboardChart"></canvas>
+          </div>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table id="volLeaderboardTable" class="text-xs w-full"></table>
+        </div>
+      </div>
+      <p id="volIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
+      <p id="volLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
+    </section>
+
+    <!-- ---------- Drill-down ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 id="volDrilldownTitle" class="text-sm font-semibold text-slate-800 mb-1">กราฟย้อนหลังรายตัว</h2>
+      <p class="text-xs text-slate-500 mb-3">คลิกแถวในตารางด้านบนเพื่อดู volume ย้อนหลังของตัวนั้น เทียบกับแถบ "ช่วงปกติ" (ค่าเฉลี่ย ± 1SD และ ± 2SD ที่คำนวณแบบ rolling) พร้อมเส้นราคาปิดบนแกนขวา</p>
+      <div class="relative h-80">
+        <canvas id="volDrilldownChart"></canvas>
+      </div>
+      <p id="volDrilldownNote" class="text-[10px] text-slate-400 mt-2"></p>
+    </section>
+
+    <!-- ---------- Volume Glossary ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">คำอธิบาย Volume Anomaly</h2>
+      <div id="volGlossary" class="space-y-2"></div>
+    </section>
+
+  </div>
+  <!-- /#tabVolume -->
+
   </main>
 </div>
 
@@ -368,6 +538,10 @@ window.QD = (function () {
   let overviewChartInstance = null;
   let momLeaderboardChartInstance = null;
   let momRotationChartInstance = null;
+  let volLeaderboardChartInstance = null;
+  let volDrilldownChartInstance = null;
+  let corrPairChartInstance = null;
+  let corrAvgChartInstance = null;
 
   const MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
                   "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -449,7 +623,43 @@ window.QD = (function () {
       leaderboardRows: [],
       rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] } -- unfiltered, full rotation universe
       rrgSelectedIds: [],       // instrumentIds currently checked in the RRG display-selection panel
-      rrgSelectionInitialized: false // reset to false on each fresh data fetch so the Top-N default re-applies
+      rrgSelectionInitialized: false, // reset to false on each fresh data fetch so the Top-N default re-applies
+
+      // ---- Volume overlay on the RRG (2026-09 addition) ----
+      volBaselinePeriods: 12,   // trailing periods used as the "normal volume" baseline for the halo
+      volumeSeriesByInstrument: {}, // instrumentId -> [{period_end, volume, adj_close}] (short window, halo only)
+      volumeAnomalyById: {},    // instrumentId -> { zScore, rvol, current, mean, sd, periodEnd }
+
+      // ---- Correlation Explorer sub-section (2026-09 addition) ----
+      corr: {
+        frequency: "month",     // independent of the momentum timeframe above
+        windowPeriods: 12,
+        seriesCacheKey: null,   // `${universeMode}|${frequency}` of whatever is in seriesByInstrument below
+        seriesByInstrument: {}, // instrumentId -> [{period_end, adj_close}] at corr.frequency
+        instruments: [],
+        selectedIds: [],
+        selectionInitialized: false,
+        matrix: null,           // { ids, tickers, values: number|null[][], windowPeriods }
+        avgSeries: [],          // [{periodEnd, avgCorr, pairCount}]
+        selectedPair: null,     // { aId, bId, aTicker, bTicker }
+        pairSeries: []          // [{periodEnd, corr}]
+      }
+    },
+
+    // ---- Volume Anomaly tab (2026-09 addition) ----
+    volume: {
+      dataLoaded: false,
+      lastFetchKey: null,
+      universeMode: "asset_class",
+      granularity: "day",
+      baselinePeriods: 20,
+      metric: "zscore",         // 'zscore' | 'rvol' -- drives sort order + heatmap coloring only (both columns always shown)
+      universeInstruments: [],
+      seriesByInstrument: {},   // instrumentId -> [{period_end, volume, adj_close}]
+      rows: [],                 // ranked anomaly rows for the CURRENT selection
+      selectedIds: [],
+      selectionInitialized: false,
+      drilldownInstrumentId: null
     }
   };
 
@@ -1389,6 +1599,10 @@ window.QD = (function () {
       // (Top-N by Trailing Return) is re-applied once the new leaderboard is
       // known -- see runMomentumCalculate.
       state.momentum.rrgSelectionInitialized = false;
+      // A different universe also invalidates the Correlation sub-section's
+      // cached series + default selection (it shares this Universe picker).
+      state.momentum.corr.selectionInitialized = false;
+      state.momentum.corr.seriesCacheKey = null;
       const universe = getUniverseInstruments(state.momentum.universeMode);
       state.momentum.universeInstruments = universe;
       const idSet = new Set(universe.map((i) => i.id));
@@ -1412,6 +1626,24 @@ window.QD = (function () {
       state.momentum.seriesByInstrument = byInst;
       state.momentum.dataLoaded = true;
       state.momentum.lastFetchKey = computeMomentumFetchKey();
+
+      // Volume overlay for the RRG halo: a second, deliberately SHORT fetch
+      // (only ~baseline+buffer periods, via p_start_date) so adding it costs
+      // a fraction of the price payload. Failures here degrade gracefully --
+      // the halo simply doesn't render -- rather than taking the whole
+      // Leaderboard/RRG run down with them.
+      try {
+        const volRows = await fetchPeriodVolumes(
+          idList,
+          state.momentum.timeframe,
+          approxStartDateForPeriods(state.momentum.timeframe, state.momentum.volBaselinePeriods + 2)
+        );
+        state.momentum.volumeSeriesByInstrument = groupVolumeRows(volRows);
+      } catch (volErr) {
+        state.momentum.volumeSeriesByInstrument = {};
+        setText("momRiskFreeStatus", `หมายเหตุ: โหลดข้อมูล volume สำหรับ RRG ไม่สำเร็จ (${volErr.message || volErr})`);
+      }
+
       renderMomentumLeaderboard();
       setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
       return true;
@@ -1547,13 +1779,15 @@ window.QD = (function () {
   // row per SELECTED rotation instrument, reading Current/T-1 state straight
   // off the already-computed (tail-trimmed) `points` array so it always
   // matches exactly what the chart is plotting for that instrument.
-  function buildRotationSummaryRows(rotationResults, selectedIds) {
+  function buildRotationSummaryRows(rotationResults, selectedIds, anomalyById) {
     const idSet = new Set(selectedIds);
+    const anomalies = anomalyById || {};
     return rotationResults
       .filter((r) => idSet.has(r.instrumentId) && r.points.length)
       .map((r) => {
         const last = r.points[r.points.length - 1];
         const prev = r.points.length >= 2 ? r.points[r.points.length - 2] : null;
+        const anomaly = anomalies[r.instrumentId] || null;
         return {
           instrumentId: r.instrumentId,
           ticker: r.ticker,
@@ -1561,7 +1795,9 @@ window.QD = (function () {
           currentState: last.octant,
           t1State: prev ? prev.octant : null,
           rsRatio: last.x,
-          rsMomentum: last.y
+          rsMomentum: last.y,
+          volZScore: anomaly ? anomaly.zScore : null,
+          volRvol: anomaly ? anomaly.rvol : null
         };
       });
   }
@@ -1608,31 +1844,81 @@ window.QD = (function () {
     };
   }
 
+  // Halo ring around the LATEST point of an RRG tail (2026-09 volume
+  // overlay): orange when the most recent volume is unusually high for that
+  // instrument, blue when unusually quiet, none when it is inside its own
+  // normal band or unknown. Point SIZE is left alone -- it already encodes
+  // tail recency -- so the two signals never fight for the same channel.
+  function volumeHaloColor(anomaly) {
+    if (!anomaly || anomaly.zScore == null) return null;
+    if (anomaly.zScore >= VOLUME_ANOMALY_Z_THRESHOLD) return VOLUME_POS_COLOR;
+    if (anomaly.zScore <= -VOLUME_ANOMALY_Z_THRESHOLD) return VOLUME_NEG_COLOR;
+    return null;
+  }
+
+  function buildRotationPointStyles(points, baseColor, anomaly) {
+    const n = points.length;
+    const halo = volumeHaloColor(anomaly);
+    return {
+      pointBackgroundColor: points.map((p, i) => hexToRgba(baseColor, 0.3 + 0.7 * ((i + 1) / n))),
+      pointRadius: points.map((p, i) => 2 + 5 * ((i + 1) / n)),
+      pointBorderColor: points.map((p, i) => (i === n - 1 && halo ? halo : "rgba(0,0,0,0)")),
+      pointBorderWidth: points.map((p, i) => (i === n - 1 && halo ? 3 : 0))
+    };
+  }
+
   // rotationData: full { m, k, results } for the whole rotation universe
   // (computed once per "คำนวณ" click); selectedIds: instrumentIds currently
   // checked in the panel -- filtering happens here so toggling a checkbox
   // never needs to recompute RS-Ratio/RS-Momentum, only re-render.
+  // Pure dataset builder (extracted so the volume-overlay wiring -- halo
+  // ring on the last point, volZ/volRvol riding on that point for the
+  // tooltip -- is testable without a real Chart.js canvas).
+  function buildRotationDatasets(rotationData, selectedIds, anomalyByIdArg) {
+    const idSet = new Set(selectedIds || []);
+    const filtered = ((rotationData && rotationData.results) || []).filter((r) => r.points.length && idSet.has(r.instrumentId));
+    const anomalyById = anomalyByIdArg || {};
+    return filtered.map((r, idx) => {
+      const color = CHART_ROTATION_COLORS[idx % CHART_ROTATION_COLORS.length];
+      const n = r.points.length;
+      const anomaly = anomalyById[r.instrumentId] || null;
+      const styles = buildRotationPointStyles(r.points, color, anomaly);
+      return {
+        label: r.ticker,
+        // Volume figures ride on the LAST point only: the anomaly is measured
+        // "as of now", not per historical tail point.
+        data: r.points.map((p, i) => (i === n - 1 && anomaly
+          ? { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd, volZ: anomaly.zScore, volRvol: anomaly.rvol }
+          : { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd })),
+        showLine: true,
+        borderColor: color,
+        pointBackgroundColor: styles.pointBackgroundColor,
+        pointRadius: styles.pointRadius,
+        pointBorderColor: styles.pointBorderColor,
+        pointBorderWidth: styles.pointBorderWidth,
+        tension: 0
+      };
+    });
+  }
+
+  // Tooltip text for one RRG point: quadrant/octant label plus, on the
+  // latest point only, the volume-anomaly reading.
+  function formatRotationTooltip(datasetLabel, p) {
+    const point = p || {};
+    const base = `${datasetLabel}: (${point.x != null ? point.x.toFixed(1) : "—"}, ${point.y != null ? point.y.toFixed(1) : "—"})`;
+    const withOctant = point.octant ? `${base} — ${point.octant}` : base;
+    if (point.volZ == null) return withOctant;
+    const sign = point.volZ >= 0 ? "+" : "";
+    return [withOctant, `Volume Z: ${sign}${point.volZ.toFixed(2)}${point.volRvol != null ? ` (RVOL ${point.volRvol.toFixed(2)}x)` : ""}`];
+  }
+
   function renderRotationGraph(rotationData, selectedIds) {
     const canvas = byId("momRotationChart");
     if (!canvas) return;
     if (typeof Chart === "undefined") return;
     if (momRotationChartInstance) { momRotationChartInstance.destroy(); momRotationChartInstance = null; }
 
-    const idSet = new Set(selectedIds || []);
-    const filtered = (rotationData.results || []).filter((r) => r.points.length && idSet.has(r.instrumentId));
-    const datasets = filtered.map((r, idx) => {
-      const color = CHART_ROTATION_COLORS[idx % CHART_ROTATION_COLORS.length];
-      const n = r.points.length;
-      return {
-        label: r.ticker,
-        data: r.points.map((p) => ({ x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd })),
-        showLine: true,
-        borderColor: color,
-        pointBackgroundColor: r.points.map((p, i) => hexToRgba(color, 0.3 + 0.7 * ((i + 1) / n))),
-        pointRadius: r.points.map((p, i) => 2 + 5 * ((i + 1) / n)),
-        tension: 0
-      };
-    });
+    const datasets = buildRotationDatasets(rotationData, selectedIds, state.momentum.volumeAnomalyById);
     momRotationChartInstance = new Chart(canvas.getContext("2d"), {
       type: "scatter",
       data: { datasets },
@@ -1647,11 +1933,7 @@ window.QD = (function () {
           legend: { position: "bottom" },
           tooltip: {
             callbacks: {
-              label(ctx) {
-                const p = ctx.raw || {};
-                const base = `${ctx.dataset.label}: (${p.x != null ? p.x.toFixed(1) : "—"}, ${p.y != null ? p.y.toFixed(1) : "—"})`;
-                return p.octant ? `${base} — ${p.octant}` : base;
-              }
+              label(ctx) { return formatRotationTooltip(ctx.dataset.label, ctx.raw); }
             }
           }
         }
@@ -1689,17 +1971,24 @@ window.QD = (function () {
     if (!state.momentum.rotationData) return;
     renderRotationGraph(state.momentum.rotationData, state.momentum.rrgSelectedIds);
     renderRotationSummaryTable(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    const anyAnomaly = Object.keys(state.momentum.volumeAnomalyById || {})[0];
+    renderIncompleteNote(
+      "momVolIncompleteNote",
+      anyAnomaly ? state.momentum.volumeAnomalyById[anyAnomaly].periodEnd : null,
+      state.momentum.timeframe
+    );
     updateMomExportAvailability();
   }
 
   function renderRotationSummaryTable(rotationData, selectedIds) {
     const table = byId("momRotationSummaryTable");
     if (!table) return;
-    const rows = buildRotationSummaryRows(rotationData.results || [], selectedIds || []);
+    const rows = buildRotationSummaryRows(rotationData.results || [], selectedIds || [], state.momentum.volumeAnomalyById);
     if (!rows.length) {
       table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่ได้เลือกตัวแสดง หรือยังไม่มีข้อมูลเพียงพอ</td></tr></tbody>`;
       return;
     }
+    const volRange = computeSymmetricRange(rows.map((r) => r.volZScore), 0);
     const head = `<thead><tr>
         <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">ETF</th>
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
@@ -1707,15 +1996,23 @@ window.QD = (function () {
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">T-1 State</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Ratio ล่าสุด</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Momentum ล่าสุด</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volume Z-score</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RVOL (x)</th>
       </tr></thead>`;
-    const body = rows.map((r) => `<tr class="border-b border-slate-100">
+    const body = rows.map((r) => {
+      const bg = volumeDivergingColor(r.volZScore, volRange);
+      const volStyle = bg ? ` style="background-color:${bg};"` : "";
+      return `<tr class="border-b border-slate-100">
         <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
         <td class="px-2 py-1.5 text-slate-500">${r.shortName}</td>
         <td class="px-2 py-1.5 text-slate-700">${r.currentState || "—"}</td>
         <td class="px-2 py-1.5 text-slate-500">${r.t1State || "—"}</td>
         <td class="text-right px-2 py-1.5 text-slate-500">${r.rsRatio != null ? r.rsRatio.toFixed(2) : "—"}</td>
         <td class="text-right px-2 py-1.5 text-slate-500">${r.rsMomentum != null ? r.rsMomentum.toFixed(2) : "—"}</td>
-      </tr>`).join("");
+        <td class="text-right px-2 py-1.5"${volStyle}>${r.volZScore != null ? r.volZScore.toFixed(2) : "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.volRvol != null ? r.volRvol.toFixed(2) + "x" : "—"}</td>
+      </tr>`;
+    }).join("");
     table.innerHTML = head + `<tbody>${body}</tbody>`;
   }
 
@@ -1746,6 +2043,11 @@ window.QD = (function () {
       const rotationInstruments = universe.filter((i) => i.id !== state.momentum.benchmarkAssetId);
       const rotationData = computeRotationGraphData(rotationInstruments, seriesByInst, benchSeries, params.lookbackPeriods, state.momentum.tailLength);
       state.momentum.rotationData = rotationData;
+
+      // Volume anomaly for the RRG overlay (halo + summary columns + tooltip).
+      state.momentum.volumeAnomalyById = computeVolumeAnomalyMap(
+        rotationInstruments, state.momentum.volumeSeriesByInstrument, state.momentum.volBaselinePeriods
+      );
 
       if (!state.momentum.rrgSelectionInitialized) {
         state.momentum.rrgSelectedIds = computeDefaultRrgSelection(
@@ -1858,7 +2160,10 @@ window.QD = (function () {
     { label: "Inverse-Volatility Weighting", desc: "ให้น้ำหนักแปรผกผันกับค่าเบี่ยงเบนมาตรฐานของแต่ละตัว (ผันผวนน้อย = น้ำหนักมาก) — เรียกใน UI ว่า \"Optimized Risk-adjusted\" แต่ไม่ใช่ Mean-Variance Optimization เต็มรูปแบบ (ไม่มี covariance matrix ระหว่างสินทรัพย์)" },
     { label: "RS-Ratio / RS-Momentum", desc: "วัดความแข็งแกร่งเชิงเปรียบเทียบกับ Benchmark แบบ self-normalize ด้วย EMA และค่าเฉลี่ยเคลื่อนที่ของตัวเอง โดยผูกหน้าต่างคำนวณกับค่า Lookback ที่เลือกไว้ — ต่างจาก RRG ทั่วไปที่มักใช้คาบเวลาตายตัว (14/10 period)" },
     { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
-    { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" }
+    { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
+    { label: "วงแหวน Volume บนกราฟ RRG", desc: "จุดล่าสุดของแต่ละเส้นจะมีวงแหวนสีเมื่อ volume งวดล่าสุดผิดปกติเทียบกับฐานของตัวเอง (ส้ม = พุ่ง Z ≥ 2, น้ำเงิน = แห้ง Z ≤ −2) ใช้เป็นสัญญาณยืนยันว่าการหมุนของ RS เกิดขึ้นพร้อมกับปริมาณซื้อขายที่ผิดปกติหรือไม่ — ขนาดจุดยังคงหมายถึงความเก่า-ใหม่ของ tail เหมือนเดิม ไม่ได้แปลว่า volume" },
+    { label: "Correlation Matrix", desc: "ค่าสหสัมพันธ์ของผลตอบแทนระหว่างคู่สินทรัพย์ในหน้าต่างล่าสุดที่กำหนด (แดง = เคลื่อนไหวไปด้วยกัน, น้ำเงิน = สวนทางกัน) คลิกช่องใดก็ได้เพื่อดูกราฟ rolling correlation ย้อนหลังของคู่นั้น" },
+    { label: "ค่าเฉลี่ย Correlation ของทั้งกลุ่ม", desc: "เฉลี่ยค่าสหสัมพันธ์ของทุกคู่ในกลุ่มที่เลือก ณ แต่ละช่วงเวลา — ใช้ดูภาพ market regime (ค่าสูง = ตลาดเคลื่อนไหวไปทางเดียวกันหมด ผลของการกระจายความเสี่ยงลดลง) จุดบนกราฟถูกสุ่มเลือกช่วงเวลาไม่เกิน 100 จุดเพื่อความเร็ว" }
   ];
 
   function renderMomentumGlossary() {
@@ -1869,15 +2174,881 @@ window.QD = (function () {
     ).join("");
   }
 
+  // =======================================================================
+  // Volume Anomaly (2026-09) -- pure math shared by the standalone Volume
+  // tab and the RRG halo overlay in the Momentum tab.
+  //
+  // Both metrics normalise each instrument against ITS OWN trailing history,
+  // so the resulting numbers are unitless and directly comparable across
+  // ETFs of very different size -- which is why no AUM / shares-outstanding
+  // data is needed (we don't have any) to answer "unusual vs its peers".
+  // =======================================================================
+  const VOLUME_BASELINE_OPTIONS = {
+    day:   [10, 20, 50, 100],
+    week:  [10, 20, 26, 52],
+    month: [6, 12, 24]
+  };
+  const VOLUME_BASELINE_DEFAULTS = { day: 20, week: 20, month: 12 };
+
+  // |Z-score| at or beyond this counts as "ผิดปกติ" for the table badge and
+  // the RRG halo. It is a *display* threshold only -- the heatmap itself
+  // stays relative (min/max across the rows actually shown), same principle
+  // as the Seasonal tab's F11 heatmap.
+  const VOLUME_ANOMALY_Z_THRESHOLD = 2;
+
+  const VOLUME_DRILLDOWN_PERIODS = { day: 250, week: 156, month: 60 };
+  // Fetched on top of what is strictly needed, so the rolling baseline is
+  // already populated at the left edge of the drill-down window.
+  const VOLUME_FETCH_BUFFER_PERIODS = 10;
+  const APPROX_DAYS_PER_PERIOD = { day: 1.6, week: 7.6, month: 31.5 };
+
+  const VOLUME_POS_HUE = 25;   // orange -- volume above its own normal
+  const VOLUME_NEG_HUE = 215;  // blue   -- volume below its own normal
+  const VOLUME_POS_COLOR = "#ea580c";
+  const VOLUME_NEG_COLOR = "#2563eb";
+
+  // Mean + sample SD of the `baselinePeriods` values ending just BEFORE
+  // index `endExclusive`. The observation being judged is deliberately left
+  // out of its own baseline, so a spike cannot inflate the very average it
+  // is measured against.
+  function volumeBaselineStats(volumes, endExclusive, baselinePeriods) {
+    if (!Array.isArray(volumes) || !baselinePeriods || baselinePeriods < 2) return null;
+    const start = endExclusive - baselinePeriods;
+    if (start < 0 || endExclusive > volumes.length) return null;
+    const win = volumes.slice(start, endExclusive);
+    if (win.some((v) => v == null || Number.isNaN(v))) return null;
+    const mean = win.reduce((a, b) => a + b, 0) / win.length;
+    const sd = stdevSample(win);
+    return { mean, sd };
+  }
+
+  // series: ascending [{period_end, volume}]. Judges the LAST element.
+  function computeVolumeAnomaly(series, baselinePeriods) {
+    if (!series || series.length < baselinePeriods + 1) return null;
+    const volumes = series.map((p) => (p.volume == null ? null : Number(p.volume)));
+    const idx = volumes.length - 1;
+    const base = volumeBaselineStats(volumes, idx, baselinePeriods);
+    const current = volumes[idx];
+    if (!base || current == null) return null;
+    return {
+      periodEnd: series[idx].period_end,
+      current,
+      mean: base.mean,
+      sd: base.sd,
+      zScore: (base.sd != null && base.sd > 0) ? (current - base.mean) / base.sd : null,
+      rvol: base.mean > 0 ? current / base.mean : null
+    };
+  }
+
+  // Rolling mean ± 1SD / ± 2SD "normal band" for the drill-down chart. Bands
+  // are clipped at 0 because traded volume cannot be negative.
+  function computeVolumeBandSeries(series, baselinePeriods) {
+    if (!series || !series.length) return [];
+    const volumes = series.map((p) => (p.volume == null ? null : Number(p.volume)));
+    const out = [];
+    for (let i = 0; i < series.length; i++) {
+      const base = volumeBaselineStats(volumes, i, baselinePeriods);
+      const v = volumes[i];
+      const sd = base && base.sd != null ? base.sd : null;
+      out.push({
+        periodEnd: series[i].period_end,
+        volume: v,
+        adjClose: series[i].adj_close == null ? null : Number(series[i].adj_close),
+        mean: base ? base.mean : null,
+        sd,
+        upper1: base && sd != null ? base.mean + sd : null,
+        lower1: base && sd != null ? Math.max(0, base.mean - sd) : null,
+        upper2: base && sd != null ? base.mean + 2 * sd : null,
+        lower2: base && sd != null ? Math.max(0, base.mean - 2 * sd) : null,
+        zScore: (base && sd != null && sd > 0 && v != null) ? (v - base.mean) / sd : null
+      });
+    }
+    return out;
+  }
+
+  // "How unusual", regardless of direction -- a quiet-volume outlier is as
+  // much an anomaly as a spike, so ranking uses distance from normal
+  // (0 for Z-score, 1x for RVOL) rather than the raw signed value.
+  function volumeAnomalyMagnitude(row, metric) {
+    if (metric === "rvol") return row.rvol == null ? null : Math.abs(row.rvol - 1);
+    return row.zScore == null ? null : Math.abs(row.zScore);
+  }
+
+  // instrumentId -> anomaly (or absent when history is too short). Used by
+  // the RRG halo / summary table / tooltip in the Momentum tab.
+  function computeVolumeAnomalyMap(instruments, seriesByInstrumentId, baselinePeriods) {
+    const out = {};
+    instruments.forEach((inst) => {
+      const a = computeVolumeAnomaly(seriesByInstrumentId[inst.id], baselinePeriods);
+      if (a) out[inst.id] = a;
+    });
+    return out;
+  }
+
+  function rankVolumeAnomalies(instruments, seriesByInstrumentId, baselinePeriods, metric) {
+    const rows = [];
+    instruments.forEach((inst) => {
+      const series = seriesByInstrumentId[inst.id];
+      const anomaly = computeVolumeAnomaly(series, baselinePeriods);
+      if (!anomaly) return; // insufficient history -> excluded (same convention as the momentum Leaderboard)
+      rows.push({
+        instrumentId: inst.id, ticker: inst.ticker, name: inst.name, category: inst.category,
+        periodEnd: anomaly.periodEnd, currentVolume: anomaly.current,
+        meanVolume: anomaly.mean, sdVolume: anomaly.sd,
+        zScore: anomaly.zScore, rvol: anomaly.rvol,
+        isAnomaly: anomaly.zScore != null && Math.abs(anomaly.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
+      });
+    });
+    rows.sort((a, b) => {
+      const av = volumeAnomalyMagnitude(a, metric), bv = volumeAnomalyMagnitude(b, metric);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return bv - av;
+    });
+    rows.forEach((r, i) => { r.rank = i + 1; });
+    return rows;
+  }
+
+  // Symmetric (diverging) scale around `center` -- unlike the Seasonal
+  // heatmap, volume anomalies are meaningful in BOTH directions, so the
+  // colour scale must be two-sided rather than a single good->bad ramp.
+  function computeSymmetricRange(values, center) {
+    let maxAbs = 0;
+    values.forEach((v) => {
+      if (v == null || Number.isNaN(v)) return;
+      const d = Math.abs(v - center);
+      if (d > maxAbs) maxAbs = d;
+    });
+    return { center, maxAbs };
+  }
+
+  function volumeDivergingColor(value, range) {
+    if (value == null || Number.isNaN(value)) return null;
+    if (!range || !range.maxAbs) return HEATMAP_NEUTRAL;
+    let t = (value - range.center) / range.maxAbs;
+    t = Math.max(-1, Math.min(1, t));
+    const hue = t >= 0 ? VOLUME_POS_HUE : VOLUME_NEG_HUE;
+    const light = 97 - 25 * Math.abs(t);
+    return `hsl(${hue}, 80%, ${light.toFixed(0)}%)`;
+  }
+
+  // The newest week/month is normally still IN PROGRESS (e.g. a month with
+  // only a handful of trading days so far), so its summed volume is low by
+  // construction and every instrument reads as a "dry-up". The numbers are
+  // deliberately left exactly as the data says -- no silent dropping of the
+  // period -- but the UI states the caveat plainly wherever they are shown.
+  function isLikelyIncompletePeriod(periodEnd, granularity, now) {
+    if (!periodEnd || granularity === "day") return false;
+    const d = new Date(`${periodEnd}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return false;
+    const ref = now ? new Date(now.getTime()) : new Date();
+    if (granularity === "month") {
+      return d.getUTCFullYear() === ref.getUTCFullYear() && d.getUTCMonth() === ref.getUTCMonth();
+    }
+    if (granularity === "week") {
+      return (ref.getTime() - d.getTime()) < 7 * 24 * 3600 * 1000;
+    }
+    return false;
+  }
+
+  function incompletePeriodMessage(periodEnd, granularity) {
+    const unit = granularity === "month" ? "เดือน" : "สัปดาห์";
+    return `หมายเหตุ: งวดล่าสุด (${periodEnd}) ยังไม่จบ${unit} — volume ที่รวมได้จึงยังไม่เต็มงวด ทำให้ทุกตัวมีแนวโน้มอ่านค่าเป็น "แห้งผิดปกติ" ตัวเลขนี้เป็นค่าตามข้อมูลจริง ไม่ได้ปรับแต่ง`;
+  }
+
+  function renderIncompleteNote(elId, periodEnd, granularity) {
+    const el = byId(elId);
+    if (!el) return false;
+    const incomplete = isLikelyIncompletePeriod(periodEnd, granularity);
+    if (incomplete) { el.textContent = incompletePeriodMessage(periodEnd, granularity); show(el); }
+    else { el.textContent = ""; hide(el); }
+    return incomplete;
+  }
+
+  function formatVolumeNumber(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return (v / 1e9).toFixed(2) + "B";
+    if (abs >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (abs >= 1e3) return (v / 1e3).toFixed(1) + "K";
+    return String(Math.round(v));
+  }
+
+  // p_start_date for a volume/price fetch that only needs `periods` recent
+  // periods -- keeps payloads small (and well clear of PostgREST row caps)
+  // instead of pulling full history every time.
+  function approxStartDateForPeriods(granularity, periods, now) {
+    const days = Math.ceil((periods + VOLUME_FETCH_BUFFER_PERIODS) * (APPROX_DAYS_PER_PERIOD[granularity] || 1.6)) + 14;
+    const base = now ? new Date(now.getTime()) : new Date();
+    base.setUTCDate(base.getUTCDate() - days);
+    return base.toISOString().slice(0, 10);
+  }
+
+  // ---------------------------------------------------------------------
+  // Volume data access
+  // ---------------------------------------------------------------------
+  async function fetchPeriodVolumes(instrumentIds, granularity, startDate, endDate) {
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("period_volume_series", {
+        p_instrument_ids: instrumentIds,
+        p_granularity: granularity,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null
+      }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  function groupVolumeRows(rows) {
+    const byInst = {};
+    rows.forEach((r) => {
+      byInst[r.instrument_id] = byInst[r.instrument_id] || [];
+      byInst[r.instrument_id].push({
+        period_end: r.period_end,
+        volume: r.volume == null ? null : Number(r.volume),
+        adj_close: r.adj_close == null ? null : Number(r.adj_close)
+      });
+    });
+    Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
+    return byInst;
+  }
+
+  function computeVolumeFetchKey() {
+    return `${state.volume.universeMode}|${state.volume.granularity}|${state.volume.baselinePeriods}`;
+  }
+
+  async function loadVolumeUniverseData() {
+    const errEl = byId("volLeaderboardError");
+    hide(errEl);
+    setLoading("volLoading", true);
+    setText("volLeaderboardStatus", "กำลังโหลดข้อมูล volume...");
+    try {
+      state.volume.selectionInitialized = false;
+      const universe = getUniverseInstruments(state.volume.universeMode);
+      state.volume.universeInstruments = universe;
+      if (!universe.length) {
+        state.volume.seriesByInstrument = {};
+        state.volume.dataLoaded = true;
+        state.volume.lastFetchKey = computeVolumeFetchKey();
+        setText("volLeaderboardStatus", "");
+        return true;
+      }
+      const g = state.volume.granularity;
+      const needed = Math.max(VOLUME_DRILLDOWN_PERIODS[g] || 120, state.volume.baselinePeriods + 2);
+      const rows = await fetchPeriodVolumes(universe.map((i) => i.id), g, approxStartDateForPeriods(g, needed));
+      state.volume.seriesByInstrument = groupVolumeRows(rows);
+      state.volume.dataLoaded = true;
+      state.volume.lastFetchKey = computeVolumeFetchKey();
+      setText("volLeaderboardStatus", `โหลดข้อมูลแล้ว (${universe.length} instruments)`);
+      return true;
+    } catch (e) {
+      showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
+      setText("volLeaderboardStatus", "");
+      return false;
+    } finally {
+      setLoading("volLoading", false);
+    }
+  }
+
+  async function runVolumeCalculate() {
+    const errEl = byId("volCalculateError");
+    hide(errEl);
+    setText("volCalculateStatus", "กำลังคำนวณ...");
+    try {
+      const needsFetch = !state.volume.dataLoaded || computeVolumeFetchKey() !== state.volume.lastFetchKey;
+      if (needsFetch) {
+        const ok = await loadVolumeUniverseData();
+        if (!ok) { setText("volCalculateStatus", ""); return; }
+      }
+      if (!state.volume.selectionInitialized) {
+        state.volume.selectedIds = state.volume.universeInstruments.map((i) => i.id);
+        state.volume.selectionInitialized = true;
+        state.volume.drilldownInstrumentId = null;
+      }
+      renderVolumeCheckboxPanel();
+      rerenderVolumeDisplay();
+      setText("volCalculateStatus", "คำนวณเสร็จแล้ว");
+    } catch (e) {
+      showError(errEl, `คำนวณไม่สำเร็จ: ${e.message || e}`);
+      setText("volCalculateStatus", "");
+    }
+  }
+
+  // Recomputes + redraws from data already in memory (no network) -- used by
+  // the checkbox panel and the metric/baseline pickers.
+  function rerenderVolumeDisplay() {
+    const selected = new Set(state.volume.selectedIds);
+    const insts = state.volume.universeInstruments.filter((i) => selected.has(i.id));
+    state.volume.rows = rankVolumeAnomalies(insts, state.volume.seriesByInstrument, state.volume.baselinePeriods, state.volume.metric);
+    renderVolumeLeaderboardChart(state.volume.rows);
+    renderVolumeLeaderboardTable(state.volume.rows);
+    renderVolumeDrilldown();
+    renderIncompleteNote("volIncompleteNote", state.volume.rows.length ? state.volume.rows[0].periodEnd : null, state.volume.granularity);
+  }
+
+  function volumeMetricMeta() {
+    return state.volume.metric === "rvol"
+      ? { key: "rvol", label: "RVOL (x)", center: 1 }
+      : { key: "zScore", label: "Volume Z-score", center: 0 };
+  }
+
+  function buildVolumeChartDatasets(rows, metric, maxN) {
+    const meta = metric === "rvol" ? { key: "rvol", center: 1 } : { key: "zScore", center: 0 };
+    const top = rows.slice(0, maxN || 20);
+    return {
+      labels: top.map((r) => r.ticker),
+      values: top.map((r) => (r[meta.key] == null ? null : r[meta.key] - meta.center)),
+      colors: top.map((r) => {
+        const v = r[meta.key];
+        if (v == null) return "#cbd5e1";
+        return v >= meta.center ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR;
+      })
+    };
+  }
+
+  function renderVolumeLeaderboardChart(rows) {
+    const canvas = byId("volLeaderboardChart");
+    if (!canvas) return;
+    const built = buildVolumeChartDatasets(rows, state.volume.metric, 20);
+    if (typeof Chart === "undefined") return;
+    if (volLeaderboardChartInstance) { volLeaderboardChartInstance.destroy(); volLeaderboardChartInstance = null; }
+    const meta = volumeMetricMeta();
+    const axisLabel = meta.key === "rvol" ? "RVOL − 1 (เท่า)" : "Volume Z-score";
+    volLeaderboardChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: { labels: built.labels, datasets: [{ label: axisLabel, data: built.values, backgroundColor: built.colors }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { title: { display: true, text: axisLabel } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  function renderVolumeLeaderboardTable(rows) {
+    const table = byId("volLeaderboardTable");
+    if (!table) return;
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือก Universe แล้วกด "คำนวณ" (หรือประวัติ volume ไม่พอสำหรับ baseline ที่เลือก)</td></tr></tbody>`;
+      return;
+    }
+    const meta = volumeMetricMeta();
+    const range = computeSymmetricRange(rows.map((r) => r[meta.key]), meta.center);
+    const head = `<thead><tr>
+        <th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Rank</th>
+        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Ticker</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Category</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volume ล่าสุด</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">ค่าเฉลี่ย baseline</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Z-score</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RVOL (x)</th>
+        <th class="text-center px-2 py-2 bg-slate-50 border-b border-slate-200">สถานะ</th>
+      </tr></thead>`;
+    const body = rows.map((r) => {
+      const bg = volumeDivergingColor(r[meta.key], range);
+      const style = bg ? ` style="background-color:${bg};"` : "";
+      const zStyle = meta.key === "zScore" ? style : "";
+      const rStyle = meta.key === "rvol" ? style : "";
+      let badge = `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">ปกติ</span>`;
+      if (r.isAnomaly) {
+        badge = r.zScore > 0
+          ? `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#ffedd5;color:#9a3412;">พุ่งผิดปกติ</span>`
+          : `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1e40af;">แห้งผิดปกติ</span>`;
+      }
+      return `<tr class="border-b border-slate-100 cursor-pointer hover:bg-slate-50 vol-row" data-inst-id="${r.instrumentId}">
+          <td class="sticky-col px-3 py-1.5 text-slate-700">${r.rank}</td>
+          <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
+          <td class="px-2 py-1.5 text-slate-500">${tickerShortName(r.ticker)}</td>
+          <td class="px-2 py-1.5 text-slate-500">${r.category}</td>
+          <td class="text-right px-2 py-1.5 text-slate-600">${formatVolumeNumber(r.currentVolume)}</td>
+          <td class="text-right px-2 py-1.5 text-slate-500">${formatVolumeNumber(r.meanVolume)}</td>
+          <td class="text-right px-2 py-1.5"${zStyle}>${r.zScore != null ? r.zScore.toFixed(2) : "—"}</td>
+          <td class="text-right px-2 py-1.5"${rStyle}>${r.rvol != null ? r.rvol.toFixed(2) + "x" : "—"}</td>
+          <td class="text-center px-2 py-1.5">${badge}</td>
+        </tr>`;
+    }).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+    table.querySelectorAll(".vol-row").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        state.volume.drilldownInstrumentId = Number(tr.getAttribute("data-inst-id"));
+        renderVolumeDrilldown();
+      });
+    });
+  }
+
+  function renderVolumeCheckboxPanel() {
+    const panel = byId("volCheckboxPanel");
+    if (!panel) return;
+    const selected = new Set(state.volume.selectedIds);
+    panel.innerHTML = state.volume.universeInstruments.map((inst) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${inst.id}" class="vol-cb" ${selected.has(inst.id) ? "checked" : ""} />
+         ${inst.ticker}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".vol-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.volume.selectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.volume.selectedIds = Array.from(set);
+        rerenderVolumeDisplay();
+      });
+    });
+  }
+
+  function buildVolumeDrilldownData(series, baselinePeriods, maxPoints) {
+    const band = computeVolumeBandSeries(series, baselinePeriods);
+    return maxPoints && band.length > maxPoints ? band.slice(band.length - maxPoints) : band;
+  }
+
+  function renderVolumeDrilldown() {
+    const titleEl = byId("volDrilldownTitle");
+    const noteEl = byId("volDrilldownNote");
+    const canvas = byId("volDrilldownChart");
+    const instId = state.volume.drilldownInstrumentId;
+    const inst = state.volume.universeInstruments.find((i) => i.id === instId);
+    if (!inst) {
+      if (titleEl) titleEl.textContent = "กราฟย้อนหลังรายตัว";
+      if (noteEl) noteEl.textContent = "คลิกแถวในตารางด้านบนเพื่อเลือก instrument";
+      if (volDrilldownChartInstance) { volDrilldownChartInstance.destroy(); volDrilldownChartInstance = null; }
+      return;
+    }
+    const series = state.volume.seriesByInstrument[instId] || [];
+    const points = buildVolumeDrilldownData(series, state.volume.baselinePeriods, VOLUME_DRILLDOWN_PERIODS[state.volume.granularity]);
+    if (titleEl) titleEl.textContent = `กราฟย้อนหลังรายตัว — ${inst.ticker} (${tickerShortName(inst.ticker)})`;
+    if (noteEl) noteEl.textContent = points.length
+      ? `แสดง ${points.length} งวดล่าสุด · baseline ${state.volume.baselinePeriods} งวด (แถบเงา = ค่าเฉลี่ย ± 1SD และ ± 2SD แบบ rolling)`
+      : "ข้อมูลไม่พอสำหรับวาดกราฟ";
+    if (!canvas || typeof Chart === "undefined") return;
+    if (volDrilldownChartInstance) { volDrilldownChartInstance.destroy(); volDrilldownChartInstance = null; }
+    const labels = points.map((p) => p.periodEnd);
+    volDrilldownChartInstance = new Chart(canvas.getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "bar", label: "Volume", data: points.map((p) => p.volume), yAxisID: "y",
+            backgroundColor: points.map((p) => (p.zScore != null && Math.abs(p.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
+              ? (p.zScore > 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR) : "#cbd5e1")) },
+          { type: "line", label: "ค่าเฉลี่ย baseline", data: points.map((p) => p.mean), yAxisID: "y",
+            borderColor: "#475569", pointRadius: 0, borderWidth: 1.5, fill: false },
+          { type: "line", label: "+2SD", data: points.map((p) => p.upper2), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "+1SD", data: points.map((p) => p.upper1), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "−1SD", data: points.map((p) => p.lower1), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "−2SD", data: points.map((p) => p.lower2), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "ราคาปิด", data: points.map((p) => p.adjClose), yAxisID: "y1",
+            borderColor: "#7c3aed", pointRadius: 0, borderWidth: 1.5, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          y: { position: "left", title: { display: true, text: "Volume" } },
+          y1: { position: "right", title: { display: true, text: "ราคาปิด" }, grid: { drawOnChartArea: false } }
+        },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+  }
+
+  function renderVolumeBaselinePicker() {
+    const el = byId("volBaselinePicker");
+    if (!el) return;
+    const g = state.volume.granularity;
+    const unit = g === "day" ? "วัน" : (g === "week" ? "สัปดาห์" : "เดือน");
+    el.innerHTML = (VOLUME_BASELINE_OPTIONS[g] || []).map((v) =>
+      `<option value="${v}" ${v === state.volume.baselinePeriods ? "selected" : ""}>${v} ${unit}</option>`).join("");
+  }
+
+  const VOLUME_GLOSSARY_ITEMS = [
+    { label: "Volume Z-score", desc: "volume ของงวดล่าสุดห่างจากค่าเฉลี่ยย้อนหลังของ instrument ตัวเองกี่ SD — ค่าบวกมากคือพุ่งผิดปกติ ค่าลบมากคือแห้งผิดปกติ (ค่าที่ใช้เป็นเกณฑ์ \"ผิดปกติ\" คือ |Z| ≥ 2)" },
+    { label: "RVOL (x)", desc: "volume งวดล่าสุดเป็นกี่เท่าของค่าเฉลี่ยย้อนหลัง — อ่านง่ายกว่า Z-score แต่ไม่ได้ปรับตามว่าปกติ instrument ตัวนั้นผันผวนแค่ไหน" },
+    { label: "Baseline", desc: "จำนวนงวดย้อนหลังที่ใช้เป็นฐาน \"ปกติ\" โดยไม่นับงวดปัจจุบันเข้าไปในฐานด้วย (กันไม่ให้ค่าที่ผิดปกติไปดันค่าเฉลี่ยที่ตัวเองถูกเทียบ)" },
+    { label: "เทียบข้าม ETF ได้อย่างไร", desc: "ทั้ง Z-score และ RVOL เป็นอัตราส่วนเทียบกับฐานของตัวเอง จึงไม่มีหน่วยและไม่ขึ้นกับขนาดกอง — การเรียงอันดับในตารางจึงตอบทั้ง \"ผิดปกติเทียบตัวเอง\" และ \"ผิดปกติเทียบเพื่อนในกลุ่ม ณ ตอนนี้\" พร้อมกัน (ไม่ต้องใช้ข้อมูล AUM ซึ่งฐานข้อมูลนี้ไม่มี)" },
+    { label: "สีในตาราง", desc: "ไล่สีสองทางแบบ relative: ส้มเข้ม = พุ่งผิดปกติมากที่สุดในกลุ่มที่แสดงอยู่, น้ำเงินเข้ม = แห้งผิดปกติมากที่สุด, สีจางกลางๆ = ใกล้ปกติ (ไม่ใช่ threshold ตายตัว)" }
+  ];
+
+  function renderVolumeGlossary() {
+    const el = byId("volGlossary");
+    if (!el) return;
+    el.innerHTML = VOLUME_GLOSSARY_ITEMS.map((it) =>
+      `<div class="text-xs"><span class="font-semibold text-slate-700">${it.label}</span><span class="text-slate-500"> — ${it.desc}</span></div>`
+    ).join("");
+  }
+
+  // =======================================================================
+  // Correlation Explorer (2026-09) -- lives inside the Momentum tab, shares
+  // its Universe selector but keeps an independent return-frequency +
+  // rolling-window control.
+  // =======================================================================
+  const CORR_DEFAULT_WINDOW = { day: 60, week: 26, month: 12 };
+  const CORR_MIN_OVERLAP = 5;            // fewer overlapping return observations than this -> correlation is null
+  const CORR_AVG_MAX_POINTS = 100;       // evaluation points on the average-correlation time series (subsampled for speed)
+  const CORR_DEFAULT_MAX_SELECTED = 25;  // above this the matrix pre-checks only the first N, for readability
+
+  function pearson(xs, ys) {
+    const n = xs.length;
+    if (n < 2 || ys.length !== n) return null;
+    let sx = 0, sy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+    const mx = sx / n, my = sy / n;
+    let num = 0, dx2 = 0, dy2 = 0;
+    for (let i = 0; i < n; i++) {
+      const a = xs[i] - mx, b = ys[i] - my;
+      num += a * b; dx2 += a * a; dy2 += b * b;
+    }
+    if (dx2 <= 0 || dy2 <= 0) return null;
+    return num / Math.sqrt(dx2 * dy2);
+  }
+
+  // items: [{instrumentId, ticker, series:[{period_end, adj_close}]}]
+  // Returns a shared ascending date axis plus per-instrument return arrays
+  // aligned to it (null where that instrument has no return on that date --
+  // different listing dates and market holidays are handled by the pairwise
+  // overlap logic below rather than by dropping dates globally).
+  function buildAlignedReturns(items) {
+    const axisSet = new Set();
+    items.forEach((it) => (it.series || []).forEach((p) => axisSet.add(p.period_end)));
+    const axis = Array.from(axisSet).sort();
+    const indexOf = new Map(axis.map((d, i) => [d, i]));
+    const returnsById = {};
+    items.forEach((it) => {
+      const arr = new Array(axis.length).fill(null);
+      const series = it.series || [];
+      for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].adj_close, cur = series[i].adj_close;
+        if (prev == null || cur == null || prev === 0) continue;
+        const idx = indexOf.get(series[i].period_end);
+        if (idx == null) continue;
+        arr[idx] = cur / prev - 1;
+      }
+      returnsById[it.instrumentId] = arr;
+    });
+    return { axis, returnsById };
+  }
+
+  // Correlation over the last `windowPeriods` axis slots ending at
+  // endIndex where BOTH series have a return.
+  function correlationForWindow(retsA, retsB, endIndex, windowPeriods) {
+    if (!retsA || !retsB) return null;
+    const xs = [], ys = [];
+    for (let i = endIndex; i >= 0 && xs.length < windowPeriods; i--) {
+      const a = retsA[i], b = retsB[i];
+      if (a == null || b == null) continue;
+      xs.push(a); ys.push(b);
+    }
+    if (xs.length < Math.min(windowPeriods, CORR_MIN_OVERLAP)) return null;
+    return pearson(xs, ys);
+  }
+
+  function computeCorrelationMatrix(items, windowPeriods) {
+    const aligned = buildAlignedReturns(items);
+    const endIndex = aligned.axis.length - 1;
+    const ids = items.map((it) => it.instrumentId);
+    const tickers = items.map((it) => it.ticker);
+    const values = ids.map((idA, i) => ids.map((idB, j) => {
+      if (i === j) return 1;
+      if (j < i) return null; // filled by mirroring below
+      return correlationForWindow(aligned.returnsById[idA], aligned.returnsById[idB], endIndex, windowPeriods);
+    }));
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = 0; j < i; j++) values[i][j] = values[j][i];
+    }
+    return { ids, tickers, values, windowPeriods, axisLength: aligned.axis.length, aligned };
+  }
+
+  function computeRollingPairCorrelation(aligned, idA, idB, windowPeriods) {
+    const retsA = aligned.returnsById[idA], retsB = aligned.returnsById[idB];
+    const out = [];
+    if (!retsA || !retsB) return out;
+    for (let i = windowPeriods; i < aligned.axis.length; i++) {
+      const c = correlationForWindow(retsA, retsB, i, windowPeriods);
+      if (c != null) out.push({ periodEnd: aligned.axis[i], corr: c });
+    }
+    return out;
+  }
+
+  // Average of all pairwise correlations through time -- a market-regime
+  // read (everything moving together vs differentiating). Evaluation points
+  // are subsampled to CORR_AVG_MAX_POINTS because the cost is
+  // O(points x pairs x window) and a 56-name universe is 1,540 pairs.
+  function computeAverageCorrelationSeries(aligned, ids, windowPeriods, maxPoints) {
+    const out = [];
+    const total = aligned.axis.length;
+    if (total <= windowPeriods || ids.length < 2) return out;
+    const available = total - windowPeriods;
+    const step = Math.max(1, Math.ceil(available / (maxPoints || CORR_AVG_MAX_POINTS)));
+    for (let i = windowPeriods; i < total; i += step) {
+      let sum = 0, count = 0;
+      for (let a = 0; a < ids.length; a++) {
+        for (let b = a + 1; b < ids.length; b++) {
+          const c = correlationForWindow(aligned.returnsById[ids[a]], aligned.returnsById[ids[b]], i, windowPeriods);
+          if (c != null) { sum += c; count++; }
+        }
+      }
+      if (count) out.push({ periodEnd: aligned.axis[i], avgCorr: sum / count, pairCount: count });
+    }
+    return out;
+  }
+
+  // Blue (negative) -> white (zero) -> red (positive). Fixed -1..+1 scale,
+  // not relative: correlation already has an absolute, interpretable range.
+  function correlationColor(value) {
+    if (value == null || Number.isNaN(value)) return null;
+    const t = Math.max(-1, Math.min(1, value));
+    const hue = t >= 0 ? 0 : 215;
+    const light = 97 - 32 * Math.abs(t);
+    return `hsl(${hue}, 70%, ${light.toFixed(0)}%)`;
+  }
+
+  function corrFetchKey() {
+    return `${state.momentum.universeMode}|${state.momentum.corr.frequency}`;
+  }
+
+  // Reuses the price series already loaded for the Leaderboard/RRG whenever
+  // the requested correlation frequency matches the momentum Timeframe --
+  // only a genuinely different frequency (or universe) costs a fetch.
+  async function ensureCorrelationSeries() {
+    const corr = state.momentum.corr;
+    const key = corrFetchKey();
+    if (corr.seriesCacheKey === key && Object.keys(corr.seriesByInstrument).length) return true;
+
+    const universe = state.momentum.universeInstruments.length
+      ? state.momentum.universeInstruments
+      : getUniverseInstruments(state.momentum.universeMode);
+    corr.instruments = universe;
+    if (!universe.length) { corr.seriesByInstrument = {}; corr.seriesCacheKey = key; return true; }
+
+    if (corr.frequency === state.momentum.timeframe && state.momentum.dataLoaded) {
+      const reused = {};
+      universe.forEach((inst) => {
+        const s = state.momentum.seriesByInstrument[inst.id];
+        if (s && s.length) reused[inst.id] = s;
+      });
+      if (Object.keys(reused).length) {
+        corr.seriesByInstrument = reused;
+        corr.seriesCacheKey = key;
+        return true;
+      }
+    }
+
+    const g = corr.frequency;
+    const needed = Math.max(corr.windowPeriods * 3, (CORR_DEFAULT_WINDOW[g] || 60) * 3);
+    const rows = await fetchPeriodEndCloses(universe.map((i) => i.id), g, approxStartDateForPeriods(g, needed));
+    const byInst = {};
+    rows.forEach((r) => {
+      byInst[r.instrument_id] = byInst[r.instrument_id] || [];
+      byInst[r.instrument_id].push({ period_end: r.period_end, adj_close: Number(r.adj_close) });
+    });
+    Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
+    corr.seriesByInstrument = byInst;
+    corr.seriesCacheKey = key;
+    return true;
+  }
+
+  function corrSelectedItems() {
+    const corr = state.momentum.corr;
+    const selected = new Set(corr.selectedIds);
+    return corr.instruments
+      .filter((inst) => selected.has(inst.id) && corr.seriesByInstrument[inst.id] && corr.seriesByInstrument[inst.id].length > 1)
+      .map((inst) => ({ instrumentId: inst.id, ticker: inst.ticker, series: corr.seriesByInstrument[inst.id] }));
+  }
+
+  async function runCorrelationCalculate() {
+    const corr = state.momentum.corr;
+    const errEl = byId("corrError");
+    hide(errEl);
+    setLoading("corrLoading", true);
+    setText("corrStatus", "กำลังคำนวณ...");
+    try {
+      await ensureCorrelationSeries();
+      if (!corr.selectionInitialized) {
+        const ranked = state.momentum.leaderboardRows.map((r) => r.instrumentId);
+        const ordered = corr.instruments.slice().sort((a, b) => {
+          const ai = ranked.indexOf(a.id), bi = ranked.indexOf(b.id);
+          return (ai === -1 ? 1e9 : ai) - (bi === -1 ? 1e9 : bi);
+        });
+        corr.selectedIds = ordered.slice(0, CORR_DEFAULT_MAX_SELECTED).map((i) => i.id);
+        corr.selectionInitialized = true;
+      }
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+      setText("corrStatus", "คำนวณเสร็จแล้ว");
+    } catch (e) {
+      showError(errEl, `คำนวณ Correlation ไม่สำเร็จ: ${e.message || e}`);
+      setText("corrStatus", "");
+    } finally {
+      setLoading("corrLoading", false);
+    }
+  }
+
+  function recomputeCorrelation() {
+    const corr = state.momentum.corr;
+    const items = corrSelectedItems();
+    if (items.length < 2) {
+      corr.matrix = null; corr.avgSeries = []; corr.pairSeries = []; corr.selectedPair = null;
+      renderCorrelationMatrix();
+      renderCorrAvgChart();
+      renderCorrPairChart();
+      return;
+    }
+    corr.matrix = computeCorrelationMatrix(items, corr.windowPeriods);
+    corr.avgSeries = computeAverageCorrelationSeries(corr.matrix.aligned, corr.matrix.ids, corr.windowPeriods, CORR_AVG_MAX_POINTS);
+    if (corr.selectedPair) {
+      const stillThere = corr.matrix.ids.includes(corr.selectedPair.aId) && corr.matrix.ids.includes(corr.selectedPair.bId);
+      if (stillThere) {
+        corr.pairSeries = computeRollingPairCorrelation(corr.matrix.aligned, corr.selectedPair.aId, corr.selectedPair.bId, corr.windowPeriods);
+      } else {
+        corr.selectedPair = null; corr.pairSeries = [];
+      }
+    }
+    renderCorrelationMatrix();
+    renderCorrAvgChart();
+    renderCorrPairChart();
+  }
+
+  function renderCorrCheckboxPanel() {
+    const panel = byId("corrCheckboxPanel");
+    const noteEl = byId("corrSelectionNote");
+    const corr = state.momentum.corr;
+    if (noteEl) {
+      noteEl.textContent = corr.instruments.length > CORR_DEFAULT_MAX_SELECTED
+        ? `Universe นี้มี ${corr.instruments.length} ตัว — ค่าเริ่มต้นติ๊กให้ ${CORR_DEFAULT_MAX_SELECTED} ตัวแรกตามอันดับ Leaderboard เพื่อให้ matrix ยังอ่านได้ ติ๊กเพิ่มเองได้ตามต้องการ`
+        : "ค่าเริ่มต้น: ทุกตัวใน Universe";
+    }
+    if (!panel) return;
+    const selected = new Set(corr.selectedIds);
+    panel.innerHTML = corr.instruments.map((inst) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${inst.id}" class="corr-cb" ${selected.has(inst.id) ? "checked" : ""} />
+         ${inst.ticker}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".corr-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.corr.selectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.corr.selectedIds = Array.from(set);
+        recomputeCorrelation();
+      });
+    });
+  }
+
+  function renderCorrelationMatrix() {
+    const table = byId("corrMatrixTable");
+    if (!table) return;
+    const corr = state.momentum.corr;
+    if (!corr.matrix) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือกอย่างน้อย 2 ตัวแล้วกด "คำนวณ Correlation"</td></tr></tbody>`;
+      return;
+    }
+    const { tickers, values, ids } = corr.matrix;
+    const head = `<thead><tr><th class="sticky-col text-left px-2 py-1 bg-slate-50 border-b border-slate-200"></th>` +
+      tickers.map((t) => `<th class="px-1.5 py-1 bg-slate-50 border-b border-slate-200 text-slate-600">${t}</th>`).join("") +
+      `</tr></thead>`;
+    const body = tickers.map((rowTicker, i) => {
+      const cells = tickers.map((colTicker, j) => {
+        const v = values[i][j];
+        const bg = correlationColor(v);
+        const style = bg ? ` style="background-color:${bg};"` : "";
+        const txt = v == null ? "—" : v.toFixed(2);
+        return `<td class="text-right px-1.5 py-1 corr-cell cursor-pointer" data-i="${i}" data-j="${j}"${style} title="${rowTicker} vs ${colTicker}">${txt}</td>`;
+      }).join("");
+      return `<tr><th class="sticky-col text-left px-2 py-1 font-medium text-slate-700 border-b border-slate-100">${rowTicker}</th>${cells}</tr>`;
+    }).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+    table.querySelectorAll(".corr-cell").forEach((td) => {
+      td.addEventListener("click", () => {
+        const i = Number(td.getAttribute("data-i")), j = Number(td.getAttribute("data-j"));
+        if (i === j) return;
+        selectCorrelationPair(ids[i], ids[j]);
+      });
+    });
+  }
+
+  function selectCorrelationPair(aId, bId) {
+    const corr = state.momentum.corr;
+    if (!corr.matrix) return;
+    const aIdx = corr.matrix.ids.indexOf(aId), bIdx = corr.matrix.ids.indexOf(bId);
+    if (aIdx === -1 || bIdx === -1) return;
+    corr.selectedPair = { aId, bId, aTicker: corr.matrix.tickers[aIdx], bTicker: corr.matrix.tickers[bIdx] };
+    corr.pairSeries = computeRollingPairCorrelation(corr.matrix.aligned, aId, bId, corr.windowPeriods);
+    renderCorrPairChart();
+  }
+
+  function renderCorrPairChart() {
+    const titleEl = byId("corrPairTitle");
+    const corr = state.momentum.corr;
+    if (titleEl) {
+      titleEl.textContent = corr.selectedPair
+        ? `Rolling Correlation รายคู่ — ${corr.selectedPair.aTicker} vs ${corr.selectedPair.bTicker} (หน้าต่าง ${corr.windowPeriods} งวด)`
+        : "Rolling Correlation รายคู่ (ยังไม่ได้เลือกคู่)";
+    }
+    const canvas = byId("corrPairChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    if (corrPairChartInstance) { corrPairChartInstance.destroy(); corrPairChartInstance = null; }
+    if (!corr.pairSeries.length) return;
+    corrPairChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: corr.pairSeries.map((p) => p.periodEnd),
+        datasets: [{ label: "Correlation", data: corr.pairSeries.map((p) => p.corr), borderColor: "#2563eb", pointRadius: 0, borderWidth: 1.5, fill: false }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { min: -1, max: 1, title: { display: true, text: "Correlation" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  function renderCorrAvgChart() {
+    const canvas = byId("corrAvgChart");
+    const corr = state.momentum.corr;
+    if (!canvas || typeof Chart === "undefined") return;
+    if (corrAvgChartInstance) { corrAvgChartInstance.destroy(); corrAvgChartInstance = null; }
+    if (!corr.avgSeries.length) return;
+    corrAvgChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: corr.avgSeries.map((p) => p.periodEnd),
+        datasets: [{ label: "ค่าเฉลี่ย Correlation", data: corr.avgSeries.map((p) => p.avgCorr), borderColor: "#059669", pointRadius: 0, borderWidth: 1.5, fill: false }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { min: -1, max: 1, title: { display: true, text: "ค่าเฉลี่ย Correlation" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
   function switchTab(tab) {
     state.activeTab = tab;
-    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum");
-    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum");
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), volEl = byId("tabVolume");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), volBtn = byId("tabBtnVolume");
     if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
     if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
+    if (volEl) volEl.classList.toggle("hidden", tab !== "volume");
     if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
     if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
+    if (volBtn) volBtn.classList.toggle("qd-tab-active", tab === "volume");
     if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
+    // The Volume tab deliberately does NOT auto-load: its fetch is heavier
+    // (daily grain) and the agreed UX is an explicit "คำนวณ" click.
   }
 
   function bindMomentumUIHandlers() {
@@ -1885,6 +3056,8 @@ window.QD = (function () {
     if (tabSeasBtn) tabSeasBtn.addEventListener("click", () => switchTab("seasonality"));
     const tabMomBtn = byId("tabBtnMomentum");
     if (tabMomBtn) tabMomBtn.addEventListener("click", () => switchTab("momentum"));
+    const tabVolBtn = byId("tabBtnVolume");
+    if (tabVolBtn) tabVolBtn.addEventListener("click", () => switchTab("volume"));
 
     const universeEl = byId("momUniversePicker");
     if (universeEl) universeEl.addEventListener("change", (e) => { state.momentum.universeMode = e.target.value; });
@@ -1895,7 +3068,17 @@ window.QD = (function () {
       const def = MOMENTUM_TIMEFRAME_DEFAULTS[e.target.value];
       state.momentum.lookbackPeriods = def.lookback;
       state.momentum.smaPeriods = def.sma;
+      // The volume baseline is measured in the same periods as the timeframe,
+      // so its sensible default moves with it (the user can still override).
+      state.momentum.volBaselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || state.momentum.volBaselinePeriods;
+      const volBaseEl = byId("momVolBaselineInput");
+      if (volBaseEl) volBaseEl.value = state.momentum.volBaselinePeriods;
       renderMomentumLookbackSmaPickers();
+    });
+
+    const volBaselineEl = byId("momVolBaselineInput");
+    if (volBaselineEl) volBaselineEl.addEventListener("change", (e) => {
+      state.momentum.volBaselinePeriods = Math.max(3, Number(e.target.value) || 12);
     });
 
     const lbEl = byId("momLookbackPicker");
@@ -1941,6 +3124,86 @@ window.QD = (function () {
 
     const exportBtn = byId("momExportBtn");
     if (exportBtn) exportBtn.addEventListener("click", () => exportMomentumToExcel());
+  }
+
+  function bindVolumeUIHandlers() {
+    const uEl = byId("volUniversePicker");
+    if (uEl) uEl.addEventListener("change", (e) => { state.volume.universeMode = e.target.value; });
+
+    const gEl = byId("volGranularityPicker");
+    if (gEl) gEl.addEventListener("change", (e) => {
+      state.volume.granularity = e.target.value;
+      state.volume.baselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || 20;
+      renderVolumeBaselinePicker();
+    });
+
+    const bEl = byId("volBaselinePicker");
+    if (bEl) bEl.addEventListener("change", (e) => {
+      state.volume.baselinePeriods = Number(e.target.value) || 20;
+      // Baseline length changes the numbers but not the data we hold, so the
+      // fetch key moves with it and "คำนวณ" decides whether a refetch is
+      // actually needed (a longer baseline may need more history).
+      if (state.volume.dataLoaded) rerenderVolumeDisplay();
+    });
+
+    const mEl = byId("volMetricPicker");
+    if (mEl) mEl.addEventListener("change", (e) => {
+      state.volume.metric = e.target.value;
+      if (state.volume.dataLoaded) rerenderVolumeDisplay();
+    });
+
+    const calcBtn = byId("volCalculateBtn");
+    if (calcBtn) calcBtn.addEventListener("click", () => runVolumeCalculate());
+
+    const selectAll = byId("volSelectAllBtn");
+    if (selectAll) selectAll.addEventListener("click", () => {
+      state.volume.selectedIds = state.volume.universeInstruments.map((i) => i.id);
+      state.volume.selectionInitialized = true;
+      renderVolumeCheckboxPanel();
+      rerenderVolumeDisplay();
+    });
+
+    const clearAll = byId("volClearAllBtn");
+    if (clearAll) clearAll.addEventListener("click", () => {
+      state.volume.selectedIds = [];
+      state.volume.selectionInitialized = true;
+      renderVolumeCheckboxPanel();
+      rerenderVolumeDisplay();
+    });
+  }
+
+  function bindCorrelationUIHandlers() {
+    const freqEl = byId("corrFrequencyPicker");
+    if (freqEl) freqEl.addEventListener("change", (e) => {
+      state.momentum.corr.frequency = e.target.value;
+      state.momentum.corr.windowPeriods = CORR_DEFAULT_WINDOW[e.target.value] || 12;
+      const winEl = byId("corrWindowInput");
+      if (winEl) winEl.value = state.momentum.corr.windowPeriods;
+    });
+
+    const winEl = byId("corrWindowInput");
+    if (winEl) winEl.addEventListener("change", (e) => {
+      state.momentum.corr.windowPeriods = Math.max(5, Number(e.target.value) || 12);
+    });
+
+    const calcBtn = byId("corrCalculateBtn");
+    if (calcBtn) calcBtn.addEventListener("click", () => runCorrelationCalculate());
+
+    const selectAll = byId("corrSelectAllBtn");
+    if (selectAll) selectAll.addEventListener("click", () => {
+      state.momentum.corr.selectedIds = state.momentum.corr.instruments.map((i) => i.id);
+      state.momentum.corr.selectionInitialized = true;
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+    });
+
+    const clearAll = byId("corrClearAllBtn");
+    if (clearAll) clearAll.addEventListener("click", () => {
+      state.momentum.corr.selectedIds = [];
+      state.momentum.corr.selectionInitialized = true;
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -2113,8 +3376,12 @@ window.QD = (function () {
     sb = overrideClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     bindStaticUIHandlers();
     bindMomentumUIHandlers();
+    bindVolumeUIHandlers();
+    bindCorrelationUIHandlers();
     renderStatGlossary();
     renderMomentumGlossary();
+    renderVolumeGlossary();
+    renderVolumeBaselinePicker();
     switchTab(state.activeTab);
 
     const { data: { session } } = await sb.auth.getSession();
@@ -2159,6 +3426,23 @@ window.QD = (function () {
     renderRotationGraph, renderRrgCheckboxPanel, rerenderRotationDisplay, renderRotationSummaryTable,
     buildMomentumExportSheets, updateMomExportAvailability, exportMomentumToExcel,
     renderMomentumGlossary, renderMomentumBenchmarkPicker, renderMomentumLookbackSmaPickers, switchTab,
+    volumeHaloColor, buildRotationPointStyles, buildRotationDatasets, formatRotationTooltip,
+    // Volume Anomaly tab (2026-09) -- pure helpers
+    VOLUME_BASELINE_OPTIONS, VOLUME_BASELINE_DEFAULTS, VOLUME_ANOMALY_Z_THRESHOLD,
+    volumeBaselineStats, computeVolumeAnomaly, computeVolumeBandSeries, computeVolumeAnomalyMap,
+    volumeAnomalyMagnitude, rankVolumeAnomalies, computeSymmetricRange, volumeDivergingColor,
+    formatVolumeNumber, approxStartDateForPeriods, buildVolumeChartDatasets, buildVolumeDrilldownData,
+    isLikelyIncompletePeriod, incompletePeriodMessage, renderIncompleteNote,
+    // Volume Anomaly tab -- data + flows
+    fetchPeriodVolumes, groupVolumeRows, computeVolumeFetchKey, loadVolumeUniverseData, runVolumeCalculate,
+    rerenderVolumeDisplay, renderVolumeLeaderboardChart, renderVolumeLeaderboardTable,
+    renderVolumeCheckboxPanel, renderVolumeDrilldown, renderVolumeBaselinePicker, renderVolumeGlossary,
+    // Correlation Explorer (2026-09) -- pure helpers
+    CORR_DEFAULT_WINDOW, pearson, buildAlignedReturns, correlationForWindow, computeCorrelationMatrix,
+    computeRollingPairCorrelation, computeAverageCorrelationSeries, correlationColor,
+    // Correlation Explorer -- data + flows
+    ensureCorrelationSeries, runCorrelationCalculate, recomputeCorrelation, corrSelectedItems,
+    renderCorrCheckboxPanel, renderCorrelationMatrix, selectCorrelationPair, renderCorrPairChart, renderCorrAvgChart,
     init
   };
 })();
