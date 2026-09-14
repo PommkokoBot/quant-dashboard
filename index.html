@@ -209,6 +209,7 @@
             <option value="asset_class">Asset Class</option>
             <option value="broad_market">Broad Market</option>
             <option value="thematic">Thematic</option>
+            <option value="us_sector">US Sector</option>
           </select>
         </div>
         <div>
@@ -320,6 +321,28 @@
       </div>
       <p id="momIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
       <p id="momLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
+    </section>
+
+    <!-- ---------- Price-Volume Scatter (snapshot; sits above RRG) ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <h2 class="text-sm font-semibold text-slate-800">Price–Volume Scatter</h2>
+        <span id="momPvScatterStatus" class="text-xs text-slate-500"></span>
+      </div>
+      <p class="text-xs text-slate-500 mb-3">ภาพนิ่ง ณ งวดล่าสุด (ไม่มีมิติเวลาแบบ RRG) — แกนนอน = Trailing Return ตาม Lookback ที่เลือก, แกนตั้ง = Volume Z-score จุดละ 1 instrument ใช้ข้อมูลชุดเดียวกับตาราง Leaderboard ด้านบน เอาเมาส์ชี้ที่จุดเพื่อดูรายละเอียด</p>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2 text-[10px] text-slate-500">
+        <span>สีจุด = quadrant เดียวกับโซนพื้นหลังของ RRG:</span>
+        <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#059669;"></span> Leading</span>
+        <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#2563eb;"></span> Improving</span>
+        <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#dc2626;"></span> Lagging</span>
+        <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#d97706;"></span> Weakening</span>
+        <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#94a3b8;"></span> ไม่ทราบ (ยังไม่กด "คำนวณ" หรือประวัติราคาไม่พอคำนวณ RS-Ratio)</span>
+      </div>
+      <div class="relative h-96">
+        <canvas id="momPvScatterChart"></canvas>
+      </div>
+      <p class="text-[10px] text-slate-400 mt-2">เส้นประแนวตั้งที่ 0% และแนวนอนที่ 0 = จุดอ้างอิง "ผลตอบแทนเป็นกลาง / volume ปกติ" · เส้นประจางที่ Z = ±2 คือเกณฑ์ที่ระบบถือว่าผิดปกติ — มุมขวาบน = ราคาขึ้นพร้อม volume พุ่ง, มุมขวาล่าง = ราคาขึ้นแต่ volume แห้ง (สภาพคล่องบาง), มุมซ้ายบน = ราคาลงพร้อม volume พุ่ง (แรงขายหนัก)</p>
+      <p id="momPvScatterEmpty" class="text-[11px] text-slate-400 mt-2 hidden">ยังไม่มีข้อมูลพอจะพลอต — ต้องมีทั้ง Trailing Return และ Volume Z-score อย่างน้อย 1 instrument</p>
     </section>
 
     <!-- ---------- Level 2: Rotation Graph (RRG) ---------- -->
@@ -493,6 +516,7 @@ window.QD = (function () {
   let overviewChartInstance = null;
   let momLeaderboardChartInstance = null;
   let momRotationChartInstance = null;
+  let momPvScatterChartInstance = null;
   let momVolumeChartInstance = null;
   let momDrilldownChartInstance = null;
   let corrPairChartInstance = null;
@@ -1219,6 +1243,18 @@ window.QD = (function () {
 
   const CHART_ROTATION_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
 
+  // The 4 RRG quadrants. These colors are NOT new -- they are exactly the
+  // label colors rrgQuadrantPlugin() already paints the RRG background zones
+  // with, so a dot colored here matches the zone it would sit in over there.
+  // (RRG *lines* are colored per-instrument from CHART_ROTATION_COLORS, which
+  // is a different encoding entirely -- do not conflate the two.)
+  const QUADRANT_ORDER = ["Leading", "Improving", "Lagging", "Weakening"];
+  const QUADRANT_COLORS = {
+    Leading: "#059669", Improving: "#2563eb", Lagging: "#dc2626", Weakening: "#d97706"
+  };
+  const QUADRANT_UNKNOWN_LABEL = "ไม่ทราบ";
+  const QUADRANT_UNKNOWN_COLOR = "#94a3b8";
+
   // Default number of instruments pre-checked in the RRG instrument-selection
   // panel, ranked by Trailing Return (10.6 redesign, item 6) -- replaces the
   // old Top-N Strategy dropdown, which no longer exists.
@@ -1280,6 +1316,12 @@ window.QD = (function () {
     }
     if (mode === "thematic") {
       return insts.filter((i) => i.category === "thematic");
+    }
+    // US Sector (added 2026-09): the 11 SPDR select-sector ETFs. The rows were
+    // already in `instruments` + `ohlcv_daily` (price AND volume) since the
+    // Phase 1 ingest -- only the UI could not reach them.
+    if (mode === "us_sector") {
+      return insts.filter((i) => i.category === "us_sector");
     }
     return [];
   }
@@ -1449,6 +1491,93 @@ window.QD = (function () {
     if (angle < 0) angle += 360;
     const idx = Math.floor(((angle + 22.5) % 360) / 45) % 8;
     return OCTANT_LABELS[idx];
+  }
+
+  // Strict sign-based quadrant, matching the background zones drawn by
+  // rrgQuadrantPlugin() cell for cell (x>100 & y>100 = Leading, etc.).
+  //
+  // NOTE this deliberately does NOT reuse classifyOctant()'s prefix: the
+  // 8-way label is angle-based and straddles the axes, so a point at
+  // x=101,y=140 (angle ~76 deg) is labelled "Improving – Strong" while
+  // sitting geometrically inside the green Leading zone. Both are correct
+  // for what they measure; the scatter follows the zone because that is the
+  // promise its color legend makes ("same color as the RRG background").
+  function classifyQuadrant(x, y) {
+    if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return null;
+    if (y > 100) return x > 100 ? "Leading" : "Improving";
+    return x > 100 ? "Weakening" : "Lagging";
+  }
+
+  // instrumentId -> quadrant of its LATEST rotation point. Instruments with
+  // no rotation data (not computed yet, or too little price history for
+  // RS-Ratio) simply do not appear -- callers treat a miss as "unknown"
+  // rather than guessing a quadrant.
+  function quadrantMapFromRotation(rotationData) {
+    const out = {};
+    if (!rotationData || !Array.isArray(rotationData.results)) return out;
+    rotationData.results.forEach((r) => {
+      if (!r || !Array.isArray(r.points) || r.points.length === 0) return;
+      const last = r.points[r.points.length - 1];
+      const q = classifyQuadrant(last.x, last.y);
+      if (q) out[r.instrumentId] = q;
+    });
+    return out;
+  }
+
+  // Chart.js datasets for the Price-Volume scatter: one dataset per quadrant
+  // (plus an "unknown" gray group) so the legend reads as the 4 quadrant
+  // names. A row needs BOTH axes to be plottable -- a row with only momentum
+  // or only volume has no position on this plane and is skipped (it is still
+  // in the table, which is the union view).
+  function buildPriceVolumeScatterDatasets(rows, quadrantById) {
+    const qById = quadrantById || {};
+    const buckets = new Map();
+    QUADRANT_ORDER.forEach((q) => buckets.set(q, []));
+    buckets.set(QUADRANT_UNKNOWN_LABEL, []);
+    (rows || []).forEach((r) => {
+      if (!r || r.trailingReturnPct == null || r.volZScore == null) return;
+      if (Number.isNaN(r.trailingReturnPct) || Number.isNaN(r.volZScore)) return;
+      const q = qById[r.instrumentId] || null;
+      const key = q && buckets.has(q) ? q : QUADRANT_UNKNOWN_LABEL;
+      buckets.get(key).push({
+        x: r.trailingReturnPct,
+        y: r.volZScore,
+        instrumentId: r.instrumentId,
+        ticker: r.ticker,
+        shortName: r.shortName,
+        quadrant: q,
+        rvol: r.rvol,
+        volRank: r.volRank,
+        momRank: r.momRank
+      });
+    });
+    const datasets = [];
+    buckets.forEach((points, label) => {
+      if (points.length === 0) return;
+      const color = label === QUADRANT_UNKNOWN_LABEL ? QUADRANT_UNKNOWN_COLOR : QUADRANT_COLORS[label];
+      datasets.push({
+        label: `${label} (${points.length})`,
+        quadrant: label === QUADRANT_UNKNOWN_LABEL ? null : label,
+        data: points,
+        backgroundColor: color,
+        borderColor: color,
+        pointRadius: 6,
+        pointHoverRadius: 8
+      });
+    });
+    return datasets;
+  }
+
+  function formatPvScatterTooltip(point) {
+    if (!point) return [];
+    const lines = [`${point.ticker} — ${point.shortName || tickerShortName(point.ticker)}`];
+    lines.push(`Trailing Return: ${point.x >= 0 ? "+" : ""}${point.x.toFixed(2)}%`);
+    lines.push(`Volume Z-score: ${point.y >= 0 ? "+" : ""}${point.y.toFixed(2)}`);
+    if (point.rvol != null) lines.push(`RVOL: ${point.rvol.toFixed(2)}x`);
+    lines.push(`Quadrant: ${point.quadrant || "ไม่ทราบ (ยังไม่คำนวณ RRG หรือประวัติราคาไม่พอ)"}`);
+    if (point.momRank != null) lines.push(`อันดับ Momentum: #${point.momRank}`);
+    if (point.volRank != null) lines.push(`อันดับ Volume: #${point.volRank}`);
+    return lines;
   }
 
   function alignTwoSeries(seriesA, seriesB) {
@@ -1979,6 +2108,10 @@ window.QD = (function () {
     renderMomentumTable(rows);
     renderMomLeaderboardChart(rows);
     renderMomVolumeChart(rows);
+    // The scatter reads the same rows; its dot colors come from whatever
+    // rotationData currently holds (gray "unknown" before the first
+    // "คำนวณ" completes -- rerenderRotationDisplay() repaints it then).
+    renderPriceVolumeScatter();
     renderMomColumnPanel();
     renderPresetButtons();
     const anyPeriodEnd = rows.find((r) => r.volPeriodEnd);
@@ -2333,6 +2466,82 @@ window.QD = (function () {
   // color scheme (item 4.2). Uses the chart's live pixel scale so it stays
   // correct across zoom/resize; degrades to drawing nothing if x=100/y=100
   // falls outside the current axis range (quadrant width/height becomes 0).
+  // Reference lines for the Price-Volume scatter: solid-ish crosshair at
+  // (0% return, Z=0) and faint dashes at the Z = +/-2 anomaly threshold the
+  // rest of the app already uses (VOLUME_ANOMALY_Z_THRESHOLD).
+  function pvScatterGuidesPlugin() {
+    return {
+      id: "pvScatterGuides",
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!ctx || !chartArea || !scales || !scales.x || !scales.y) return;
+        ctx.save();
+        const drawH = (val, color, dash) => {
+          const py = scales.y.getPixelForValue(val);
+          if (py < chartArea.top || py > chartArea.bottom) return;
+          ctx.strokeStyle = color; ctx.setLineDash(dash);
+          ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
+        };
+        const drawV = (val, color, dash) => {
+          const px = scales.x.getPixelForValue(val);
+          if (px < chartArea.left || px > chartArea.right) return;
+          ctx.strokeStyle = color; ctx.setLineDash(dash);
+          ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
+        };
+        drawH(VOLUME_ANOMALY_Z_THRESHOLD, "rgba(234,88,12,0.35)", [3, 3]);
+        drawH(-VOLUME_ANOMALY_Z_THRESHOLD, "rgba(37,99,235,0.35)", [3, 3]);
+        drawH(0, "rgba(100,116,139,0.5)", [4, 3]);
+        drawV(0, "rgba(100,116,139,0.5)", [4, 3]);
+        ctx.restore();
+      }
+    };
+  }
+
+  // Snapshot scatter: Trailing Return (x) vs Volume Z-score (y), colored by
+  // the RRG quadrant of each instrument's latest rotation point. Reads
+  // state.momentum.rows (the same rows the table renders) and
+  // state.momentum.rotationData -- it never fetches or recomputes anything.
+  function renderPriceVolumeScatter() {
+    const canvas = byId("momPvScatterChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    // Same instrument set as the RRG: the current table selection minus the
+    // benchmark. The benchmark is excluded on purpose -- it is the yardstick
+    // the RS-Ratio is measured against, so it has no quadrant of its own and
+    // would otherwise show up as a misleading gray "unknown" dot.
+    const rows = (state.momentum.rows || []).filter((r) => r.instrumentId !== state.momentum.benchmarkAssetId);
+    const quadrantById = quadrantMapFromRotation(state.momentum.rotationData);
+    const datasets = buildPriceVolumeScatterDatasets(rows, quadrantById);
+    const plotted = datasets.reduce((n, d) => n + d.data.length, 0);
+
+    const emptyEl = byId("momPvScatterEmpty");
+    if (emptyEl) emptyEl.classList.toggle("hidden", plotted > 0);
+    setText("momPvScatterStatus", plotted > 0 ? `${plotted} instruments` : "");
+
+    if (momPvScatterChartInstance) { momPvScatterChartInstance.destroy(); momPvScatterChartInstance = null; }
+    const unit = MOMENTUM_UNIT_LABEL[state.momentum.timeframe] || "";
+    momPvScatterChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "scatter",
+      data: { datasets },
+      plugins: [pvScatterGuidesPlugin()],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: `Trailing Return ${state.momentum.lookbackPeriods} ${unit} (%)` } },
+          y: { title: { display: true, text: "Volume Z-score (log scale)" } }
+        },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              title() { return ""; },
+              label(ctx) { return formatPvScatterTooltip(ctx.raw); }
+            }
+          }
+        }
+      }
+    });
+  }
+
   function rrgQuadrantPlugin() {
     return {
       id: "rrgQuadrantBackground",
@@ -2500,6 +2709,9 @@ window.QD = (function () {
     if (!state.momentum.rotationData) return;
     renderRotationGraph(state.momentum.rotationData, state.momentum.rrgSelectedIds);
     renderRotationSummaryTable(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    // Quadrant colors only exist once rotationData does -- repaint the
+    // scatter here so it stops showing everything as "unknown" gray.
+    renderPriceVolumeScatter();
     const anyAnomaly = Object.keys(state.momentum.volumeAnomalyById || {})[0];
     renderIncompleteNote(
       "momVolIncompleteNote",
@@ -2738,6 +2950,7 @@ window.QD = (function () {
     { label: "Risk-Adjusted Score", desc: "(Trailing Return − Risk-free Rate ที่ปรับสัดส่วนตามช่วงเวลา) ÷ ความผันผวนของช่วงนั้น — ลักษณะคล้าย Sharpe Ratio แต่ไม่ได้ annualize เต็มรูปแบบ" },
     { label: "Inverse-Volatility Weighting", desc: "ให้น้ำหนักแปรผกผันกับค่าเบี่ยงเบนมาตรฐานของแต่ละตัว (ผันผวนน้อย = น้ำหนักมาก) — เรียกใน UI ว่า \"Optimized Risk-adjusted\" แต่ไม่ใช่ Mean-Variance Optimization เต็มรูปแบบ (ไม่มี covariance matrix ระหว่างสินทรัพย์)" },
     { label: "RS-Ratio / RS-Momentum", desc: "วัดความแข็งแกร่งเชิงเปรียบเทียบกับ Benchmark แบบ self-normalize ด้วย EMA และค่าเฉลี่ยเคลื่อนที่ของตัวเอง โดยผูกหน้าต่างคำนวณกับค่า Lookback ที่เลือกไว้ — ต่างจาก RRG ทั่วไปที่มักใช้คาบเวลาตายตัว (14/10 period)" },
+    { label: "Price–Volume Scatter", desc: "ภาพนิ่งของงวดล่าสุด วางทุก instrument บนระนาบ Trailing Return (แกนนอน) × Volume Z-score (แกนตั้ง) — ใช้ตอบคำถามว่า \"ราคาที่วิ่งอยู่ มี volume หนุนหรือไม่\" สีของจุดคือ quadrant ของ RRG ณ จุดล่าสุด (เขียว Leading / น้ำเงิน Improving / แดง Lagging / ส้ม Weakening / เทา = ยังไม่ได้คำนวณ RRG หรือประวัติราคาไม่พอ) instrument ที่มีข้อมูลด้านเดียว (เช่นมีราคาแต่ไม่มี volume) จะไม่ปรากฏบนกราฟนี้เพราะไม่มีพิกัดครบ แต่ยังอยู่ในตาราง" },
     { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
     { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
     { label: "วงแหวน Volume บนกราฟ RRG", desc: "จุดล่าสุดของแต่ละเส้นจะมีวงแหวนสีเมื่อ volume งวดล่าสุดผิดปกติเทียบกับฐานของตัวเอง (ส้ม = พุ่ง Z ≥ 2, น้ำเงิน = แห้ง Z ≤ −2) ใช้เป็นสัญญาณยืนยันว่าการหมุนของ RS เกิดขึ้นพร้อมกับปริมาณซื้อขายที่ผิดปกติหรือไม่ — ขนาดจุดยังคงหมายถึงความเก่า-ใหม่ของ tail เหมือนเดิม ไม่ได้แปลว่า volume" },
@@ -3818,7 +4031,9 @@ window.QD = (function () {
     // Momentum & Rotation (Phase 2) -- pure helpers (unit-testable)
     getUniverseInstruments, computeTrailingReturn, computeSMASignal, computeReturnSeries, stdevSample,
     computePeriodicVolatility, computeWindowVolatility, computeRiskAdjustedScore,
-    ema, sma, classifyOctant, alignTwoSeries, computeRotationGraphData,
+    ema, sma, classifyOctant, classifyQuadrant, alignTwoSeries, computeRotationGraphData,
+    quadrantMapFromRotation, buildPriceVolumeScatterDatasets, formatPvScatterTooltip,
+    renderPriceVolumeScatter, QUADRANT_ORDER, QUADRANT_COLORS, QUADRANT_UNKNOWN_LABEL, QUADRANT_UNKNOWN_COLOR,
     rankUniverseFromSeries, rankUniverseNow,
     buildLeaderboardChartDatasets, momentumRankParams, computeMomentumFetchKey,
     tickerShortName, computeDefaultRrgSelection, buildRrgCheckboxItems, buildRotationSummaryRows,
