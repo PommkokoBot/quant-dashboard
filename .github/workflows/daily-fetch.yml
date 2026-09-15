@@ -39,7 +39,11 @@ jobs:
             python scripts/fetch_prices.py --lookback-days "${{ inputs.lookback_days || 10 }}"
           fi
 
+      # The price step fails the job (-> GitHub e-mails the workflow owner) when
+      # the health check finds an instrument erroring 3 run-days in a row or
+      # 3+ trading days stale. Macro data should still be fetched in that case.
       - name: Fetch macro series (FRED)
+        if: success() || failure()
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
