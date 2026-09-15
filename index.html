@@ -144,6 +144,7 @@
           <table id="overviewTable" class="text-xs w-full"></table>
         </div>
       </div>
+      <p id="seasonalAsOfNote" class="text-[11px] text-slate-500 mt-2 hidden"></p>
       <p id="overviewError" class="text-sm text-red-600 mt-2 hidden"></p>
     </section>
 
@@ -222,17 +223,27 @@
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Lookback (Momentum)</label>
-          <select id="momLookbackPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
+          <div class="flex items-center gap-1">
+            <select id="momLookbackPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
+            <input id="momLookbackCustom" type="number" step="1" inputmode="numeric"
+                   class="hidden border border-slate-300 rounded-lg px-2 py-2 text-sm w-24" aria-label="Lookback กำหนดเอง" />
+          </div>
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">SMA (Trend Filter)</label>
-          <select id="momSmaPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
+          <div class="flex items-center gap-1">
+            <select id="momSmaPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select>
+            <input id="momSmaCustom" type="number" step="1" inputmode="numeric"
+                   class="hidden border border-slate-300 rounded-lg px-2 py-2 text-sm w-24" aria-label="SMA กำหนดเอง" />
+          </div>
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Benchmark</label>
           <select id="momBenchmarkPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]"></select>
         </div>
       </div>
+      <p id="momParamError" class="text-xs text-red-600 mt-2 hidden"></p>
+      <p id="momParamWarning" class="text-xs mt-2 hidden" style="color:#9a3412;"></p>
       <div class="flex flex-wrap items-end gap-4 mt-4 pt-4 border-t border-slate-100">
         <label class="flex items-center gap-2 text-xs font-medium text-slate-600">
           <input type="checkbox" id="momRiskAdjustedToggle" />
@@ -319,7 +330,7 @@
           <table id="momLeaderboardTable" class="text-xs w-full"></table>
         </div>
       </div>
-      <p id="momIncompleteNote" class="text-[11px] mt-2 hidden" style="color:#9a3412;"></p>
+      <p id="momAsOfNote" class="text-[11px] text-slate-500 mt-2 hidden"></p>
       <p id="momLeaderboardError" class="text-sm text-red-600 mt-2 hidden"></p>
     </section>
 
@@ -571,6 +582,7 @@ window.QD = (function () {
   const state = {
     session: null,
     instrumentsLoaded: false,
+    dataAsOf: null,             // data_as_of() result: { as_of, last_complete_week_start, last_complete_month_start, ... }
     instruments: [],
     assetId: null,
     periodType: "month",
@@ -593,6 +605,8 @@ window.QD = (function () {
       timeframe: "month",
       lookbackPeriods: 12,
       smaPeriods: 10,
+      paramErrors: { lookback: "", sma: "" }, // validation messages for the custom inputs
+      loadedPricePeriods: 0,    // momentumPriceLookbackPeriods() at the time of the last price fetch
       riskAdjusted: false,
       riskFreeAnnualPct: 2,
       benchmarkAssetId: null,
@@ -607,7 +621,6 @@ window.QD = (function () {
       volBaselinePeriods: 12,   // trailing periods used as the "normal volume" baseline
       volumeSeriesByInstrument: {}, // instrumentId -> [{period_end, volume, adj_close}] at the active timeframe
       volumeAnomalyById: {},    // instrumentId -> { zScore, rvol, current, mean, periodEnd }
-      volumeMeta: null,         // month-to-date aggregation info (cutoffTradingDays / partial)
 
       // ---- Merged Leaderboard table ----
       selectedIds: [],          // instruments included in the table + both charts
@@ -748,7 +761,10 @@ window.QD = (function () {
       p_period_type: periodType,
       p_period: period,
       p_lookback_years: lookback,
-      p_end_year: endYear
+      p_end_year: endYear,
+      // 2026-09-15: only completed months/weeks count as observations -- the
+      // month/week still in progress is left out (see data_as_of()).
+      p_complete_only: true
     });
     if (error) throw error;
     return data;
@@ -1228,7 +1244,44 @@ window.QD = (function () {
     month: { lookback: 12, sma: 10 }
   };
   const MOMENTUM_PERIODS_PER_YEAR = { day: 252, week: 52, month: 12 };
+
+  // Custom Lookback / SMA input (2026-09-15). Lower bounds keep the RRG
+  // maths meaningful (RS-Momentum's ROC period is ~0.7 x lookback and needs
+  // at least 2); the upper bound is ~10 years, beyond which the price fetch
+  // turns into dozens of paged requests. Below 21 trading days a Day
+  // lookback is allowed but flagged: that horizon is short-term reversal
+  // territory in the literature, not momentum.
+  const MOMENTUM_CUSTOM_MIN = { lookback: 3, sma: 2 };
+  const MOMENTUM_CUSTOM_MAX = { day: 2520, week: 520, month: 120 };
+  const MOMENTUM_REVERSAL_ZONE_DAYS = 21;
   const MOMENTUM_UNIT_LABEL = { day: "วัน", week: "สัปดาห์", month: "เดือน" };
+
+  function momentumParamBounds(kind, timeframe) {
+    return {
+      min: MOMENTUM_CUSTOM_MIN[kind] || 2,
+      max: MOMENTUM_CUSTOM_MAX[timeframe] || MOMENTUM_CUSTOM_MAX.month
+    };
+  }
+
+  function momentumReversalWarning(timeframe, lookbackPeriods) {
+    if (timeframe !== "day" || !(lookbackPeriods < MOMENTUM_REVERSAL_ZONE_DAYS)) return "";
+    return `คำเตือน: Lookback ${lookbackPeriods} วัน สั้นกว่า ${MOMENTUM_REVERSAL_ZONE_DAYS} วันทำการ (~1 เดือน) — งานวิจัยพบว่าช่วงนี้ราคามักกลับตัว (short-term reversal) มากกว่าจะวิ่งต่อ ผลการจัดอันดับจึงอาจไม่ใช่สัญญาณ momentum`;
+  }
+
+  // Pure validation of one typed value. Returns { ok, value, error }.
+  function validateMomentumParam(kind, timeframe, raw) {
+    const unit = MOMENTUM_UNIT_LABEL[timeframe] || "งวด";
+    const label = kind === "sma" ? "SMA" : "Lookback";
+    const text = raw == null ? "" : String(raw).trim();
+    if (text === "") return { ok: false, value: null, error: `${label}: กรุณากรอกตัวเลข` };
+    if (!/^[+]?\d+$/.test(text)) return { ok: false, value: null, error: `${label}: ต้องเป็นจำนวนเต็มบวก` };
+    const value = Number(text);
+    const b = momentumParamBounds(kind, timeframe);
+    if (value < b.min || value > b.max) {
+      return { ok: false, value: null, error: `${label}: ต้องอยู่ระหว่าง ${b.min}-${b.max} ${unit}` };
+    }
+    return { ok: true, value, error: "" };
+  }
   // Daily RS-Momentum is far noisier than the weekly convention, so the tail
   // default stretches to keep the rotation readable at day granularity.
   const MOMENTUM_TAIL_DEFAULTS = { day: 30, week: 12, month: 12 };
@@ -1277,18 +1330,18 @@ window.QD = (function () {
     GLD: "Gold", GSG: "Commodity (GSCI)", SLV: "Silver", UNG: "Natural Gas", USO: "Crude Oil (WTI)",
     // REIT
     VNQ: "US Real Estate",
-    // Thai
-    "^SET.BK": "SET Index", "^SETHD.BK": "SET High Dividend", "1DIV.BK": "Thai High Dividend",
     // Thematic
+    // 2026-09-15: IRBO -> ARTY, FIVG -> SIXG, LNGR -> AGNG (ticker changes by the issuers)
+    AGNG: "Aging Population", ARTY: "AI & Tech (iShares)", SIXG: "Connective Technologies",
     AIQ: "AI & Technology", ARKG: "Genomics", ARKK: "ARK Innovation", ARKQ: "Autonomous & Robotics",
     ARKX: "Space Exploration", BATT: "Lithium & Battery (Amplify)", BLOK: "Blockchain", BOTZ: "Robotics & AI (Global X)",
     CHAT: "Generative AI", CIBR: "Cybersecurity (First Trust)", CRBN: "Low Carbon", DRIV: "EV & Autonomous",
-    EBIZ: "E-commerce", EDUT: "Education", ESPO: "Gaming & eSports", ETHA: "Ethereum",
-    FINX: "FinTech", FIVG: "5G Connectivity", FIW: "Water (First Trust)", GRID: "Smart Grid",
-    HACK: "Cybersecurity (ETFMG)", HJEN: "Hydrogen", HRTS: "GLP-1 & Obesity Care", IBB: "Biotechnology",
-    IBIT: "Bitcoin", ICLN: "Clean Energy (iShares)", IGF: "Global Infrastructure", IRBO: "Robotics & AI (iShares)",
+    EBIZ: "E-commerce", ESPO: "Gaming & eSports", ETHA: "Ethereum",
+    FINX: "FinTech", FIW: "Water (First Trust)", GRID: "Smart Grid",
+    HACK: "Cybersecurity (ETFMG)", HRTS: "GLP-1 & Obesity Care", IBB: "Biotechnology",
+    IBIT: "Bitcoin", ICLN: "Clean Energy (iShares)", IGF: "Global Infrastructure",
     ITA: "Aerospace & Defense (iShares)", KROP: "AgTech & Food", KWEB: "China Internet", LIT: "Lithium & Battery (Global X)",
-    LNGR: "Aging Population", METV: "Metaverse", MOO: "Agribusiness", NLR: "Uranium & Nuclear",
+    METV: "Metaverse", MOO: "Agribusiness", NLR: "Uranium & Nuclear",
     PAVE: "US Infrastructure", PAWZ: "Pet Care", PBD: "Clean Energy (Invesco)", PHO: "Water Resources (Invesco)",
     PRNT: "3D Printing", QTUM: "Quantum Computing", REMX: "Rare Earth Metals", ROBO: "Robotics & Automation",
     SKYY: "Cloud Computing (First Trust)", SMH: "Semiconductors (VanEck)", SNSR: "Internet of Things", SOCL: "Social Media",
@@ -1636,7 +1689,11 @@ window.QD = (function () {
   // comes back shorter than requested.
   const PERIOD_END_CLOSES_PAGE_SIZE = 4000;
 
-  async function fetchPeriodEndCloses(instrumentIds, granularity, startDate, endDate) {
+  // completeOnly (default true, 2026-09-15): week/month series stop at the
+  // last COMPLETED period -- the one still in progress is never returned, so
+  // every trailing return / SMA / RS value compares whole periods only. Day
+  // bars are always complete (prices land after the close) and never cut.
+  async function fetchPeriodEndCloses(instrumentIds, granularity, startDate, endDate, completeOnly) {
     let allRows = [];
     let offset = 0;
     while (true) {
@@ -1644,7 +1701,8 @@ window.QD = (function () {
         p_instrument_ids: instrumentIds,
         p_granularity: granularity,
         p_start_date: startDate || null,
-        p_end_date: endDate || null
+        p_end_date: endDate || null,
+        p_complete_only: completeOnly !== false
       }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
       if (error) throw error;
       const rows = data || [];
@@ -1653,6 +1711,22 @@ window.QD = (function () {
       offset += PERIOD_END_CLOSES_PAGE_SIZE;
     }
     return allRows;
+  }
+
+  // Global "as-of" info (2026-09-15): latest date in the database plus the
+  // newest COMPLETE week/month under the rule "a period is complete once any
+  // data for the next period exists". Used only for the on-screen note; the
+  // actual cut is applied server-side by p_complete_only. Failure is
+  // non-fatal -- the note simply is not shown.
+  async function fetchDataAsOf() {
+    try {
+      const { data, error } = await sb.rpc("data_as_of");
+      if (error) throw error;
+      state.dataAsOf = data || null;
+    } catch (e) {
+      state.dataAsOf = null;
+    }
+    return state.dataAsOf;
   }
 
   async function fetchLatestMacroValue(seriesId) {
@@ -1693,6 +1767,16 @@ window.QD = (function () {
     return Math.max(m.lookbackPeriods || 0, m.smaPeriods || 0) + (m.tailLength || 12) + 5;
   }
 
+  // True when the loaded price history cannot serve the current parameters:
+  // nothing loaded yet, Universe/Timeframe/Benchmark/baseline changed, or a
+  // (custom) Lookback/SMA/Tail now needs more periods than were fetched.
+  function momentumNeedsFetch() {
+    const m = state.momentum;
+    return !m.dataLoaded
+      || computeMomentumFetchKey() !== m.lastFetchKey
+      || momentumPriceLookbackPeriods() > (m.loadedPricePeriods || 0);
+  }
+
   // Returns true on success, false if the fetch failed (error already shown
   // in the UI) -- callers that chain further work (runMomentumCalculate)
   // use this to stop before running Level 2 on stale/incomplete data.
@@ -1709,15 +1793,21 @@ window.QD = (function () {
       // (Universe/Timeframe/Benchmark), so the RRG display-selection default
       // (Top-N by Trailing Return) is re-applied once the new leaderboard is
       // known -- see runMomentumCalculate.
-      state.momentum.rrgSelectionInitialized = false;
-      state.momentum.selectionInitialized = false;
-      // A different universe also invalidates the Correlation sub-section's
-      // cached series + default selection (it shares this Universe picker),
-      // and the drill-down cache (different granularity/instrument set).
-      state.momentum.corr.selectionInitialized = false;
-      state.momentum.corr.seriesCacheKey = null;
-      state.momentum.drilldownCacheKey = null;
-      state.momentum.drilldownSeries = [];
+      // A re-fetch that only lengthens the history (custom Lookback/SMA/Tail
+      // beyond what was loaded) keeps the user's selections -- only a change
+      // of Universe/Timeframe/Benchmark/baseline resets them.
+      const sameUniverse = state.momentum.dataLoaded && computeMomentumFetchKey() === state.momentum.lastFetchKey;
+      if (!sameUniverse) {
+        state.momentum.rrgSelectionInitialized = false;
+        state.momentum.selectionInitialized = false;
+        // A different universe also invalidates the Correlation sub-section's
+        // cached series + default selection (it shares this Universe picker),
+        // and the drill-down cache (different granularity/instrument set).
+        state.momentum.corr.selectionInitialized = false;
+        state.momentum.corr.seriesCacheKey = null;
+        state.momentum.drilldownCacheKey = null;
+        state.momentum.drilldownSeries = [];
+      }
 
       const universe = getUniverseInstruments(state.momentum.universeMode);
       state.momentum.universeInstruments = universe;
@@ -1731,6 +1821,7 @@ window.QD = (function () {
         state.momentum.selectionInitialized = true;
         state.momentum.dataLoaded = true;
         state.momentum.lastFetchKey = computeMomentumFetchKey();
+        state.momentum.loadedPricePeriods = momentumPriceLookbackPeriods();
         recomputeMomentumRows();
         renderMomentumLeaderboard();
         setText("momLeaderboardStatus", "");
@@ -1738,7 +1829,9 @@ window.QD = (function () {
       }
 
       const tf = state.momentum.timeframe;
-      const priceStart = approxStartDateForPeriods(tf, momentumPriceLookbackPeriods());
+      const pricePeriods = momentumPriceLookbackPeriods();
+      const priceStart = approxStartDateForPeriods(tf, pricePeriods);
+      if (!state.dataAsOf) fetchDataAsOf().then(() => renderAsOfNote("momAsOfNote", state.momentum.timeframe));
       const volPlan = volumeFetchPlan(tf, state.momentum.volBaselinePeriods + 2);
 
       const pricePromise = fetchPeriodEndCloses(idList, tf, priceStart);
@@ -1758,6 +1851,7 @@ window.QD = (function () {
       state.momentum.seriesByInstrument = byInst;
       state.momentum.dataLoaded = true;
       state.momentum.lastFetchKey = computeMomentumFetchKey();
+      state.momentum.loadedPricePeriods = pricePeriods;
 
       if (!state.momentum.selectionInitialized) {
         state.momentum.selectedIds = universe.map((i) => i.id);
@@ -1771,14 +1865,10 @@ window.QD = (function () {
 
       const volResult = await volumePromise;
       if (volResult.ok) {
-        const grouped = groupVolumeRows(volResult.rows);
-        const applied = applyVolumeAggregation(grouped, volPlan);
-        state.momentum.volumeSeriesByInstrument = applied.series;
-        state.momentum.volumeMeta = applied.meta;
+        state.momentum.volumeSeriesByInstrument = groupVolumeRows(volResult.rows);
         setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
       } else {
         state.momentum.volumeSeriesByInstrument = {};
-        state.momentum.volumeMeta = null;
         setText("momLeaderboardStatus", `โหลดราคาแล้ว แต่ข้อมูล volume ไม่สำเร็จ (${volResult.error && volResult.error.message ? volResult.error.message : volResult.error})`);
       }
       // Progressive render #2: fill in the volume half.
@@ -2114,8 +2204,7 @@ window.QD = (function () {
     renderPriceVolumeScatter();
     renderMomColumnPanel();
     renderPresetButtons();
-    const anyPeriodEnd = rows.find((r) => r.volPeriodEnd);
-    renderIncompleteNote("momIncompleteNote", anyPeriodEnd ? anyPeriodEnd.volPeriodEnd : null, state.momentum.timeframe, state.momentum.volumeMeta);
+    renderAsOfNote("momAsOfNote", state.momentum.timeframe);
     updateMomExportAvailability();
   }
 
@@ -2328,9 +2417,7 @@ window.QD = (function () {
         const periods = VOLUME_DRILLDOWN_PERIODS[tf] || 120;
         const plan = volumeFetchPlan(tf, Math.max(periods, state.momentum.volBaselinePeriods + 2));
         const rows = await fetchPeriodVolumes([instrumentId], plan.granularity, plan.startDate);
-        const grouped = groupVolumeRows(rows);
-        const applied = applyVolumeAggregation(grouped, plan);
-        state.momentum.drilldownSeries = applied.series[instrumentId] || [];
+        state.momentum.drilldownSeries = groupVolumeRows(rows)[instrumentId] || [];
         state.momentum.drilldownCacheKey = cacheKey;
       } catch (e) {
         state.momentum.drilldownSeries = [];
@@ -2712,12 +2799,6 @@ window.QD = (function () {
     // Quadrant colors only exist once rotationData does -- repaint the
     // scatter here so it stops showing everything as "unknown" gray.
     renderPriceVolumeScatter();
-    const anyAnomaly = Object.keys(state.momentum.volumeAnomalyById || {})[0];
-    renderIncompleteNote(
-      "momVolIncompleteNote",
-      anyAnomaly ? state.momentum.volumeAnomalyById[anyAnomaly].periodEnd : null,
-      state.momentum.timeframe
-    );
     updateMomExportAvailability();
   }
 
@@ -2768,7 +2849,7 @@ window.QD = (function () {
     hide(errEl);
     setText("momCalculateStatus", "กำลังคำนวณ...");
     try {
-      const needsFetch = !state.momentum.dataLoaded || computeMomentumFetchKey() !== state.momentum.lastFetchKey;
+      const needsFetch = momentumNeedsFetch();
       if (needsFetch) {
         const ok = await loadMomentumUniverseData();
         if (!ok) { setText("momCalculateStatus", ""); return; }
@@ -2928,14 +3009,88 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Static pickers / glossary / tab switching
   // ---------------------------------------------------------------------
+  // Lookback / SMA pickers (2026-09-15): the research-backed presets stay
+  // as the dropdown, plus a "กำหนดเอง..." entry that reveals a number box.
+  // A value that is not one of the presets (i.e. a custom one) keeps the
+  // dropdown on "กำหนดเอง..." with the box showing that value.
+  const MOMENTUM_CUSTOM_OPTION = "custom";
+
+  function renderParamPicker(selectId, inputId, presets, current, unit, kind) {
+    const tf = state.momentum.timeframe;
+    const isCustom = presets.indexOf(current) === -1;
+    const sel = byId(selectId);
+    if (sel) {
+      sel.innerHTML = presets.map((v) => `<option value="${v}" ${!isCustom && v === current ? "selected" : ""}>${v} ${unit}</option>`).join("")
+        + `<option value="${MOMENTUM_CUSTOM_OPTION}" ${isCustom ? "selected" : ""}>กำหนดเอง...</option>`;
+    }
+    const inp = byId(inputId);
+    if (inp) {
+      const b = momentumParamBounds(kind, tf);
+      inp.min = String(b.min);
+      inp.max = String(b.max);
+      inp.placeholder = `${b.min}-${b.max}`;
+      inp.title = `จำนวน${unit} (${b.min}-${b.max})`;
+      if (isCustom) { inp.value = String(current); show(inp); } else { hide(inp); }
+    }
+  }
+
+  function renderMomentumParamMessages() {
+    const errs = state.momentum.paramErrors || {};
+    const errText = [errs.lookback, errs.sma].filter(Boolean).join(" · ");
+    const errEl = byId("momParamError");
+    if (errEl) { errEl.textContent = errText; if (errText) show(errEl); else hide(errEl); }
+    const warn = momentumReversalWarning(state.momentum.timeframe, state.momentum.lookbackPeriods);
+    const warnEl = byId("momParamWarning");
+    if (warnEl) { warnEl.textContent = warn; if (warn) show(warnEl); else hide(warnEl); }
+  }
+
+  // Applies an accepted Lookback/SMA value. A longer window than the history
+  // already loaded triggers a re-fetch -- otherwise instruments would drop out
+  // of the table silently for "not enough history".
+  function applyMomentumParam(kind, value) {
+    if (kind === "sma") state.momentum.smaPeriods = value;
+    else state.momentum.lookbackPeriods = value;
+    state.momentum.paramErrors = Object.assign({}, state.momentum.paramErrors, { [kind]: "" });
+    renderMomentumParamMessages();
+    if (state.momentum.dataLoaded && momentumNeedsFetch()) {
+      return loadMomentumUniverseData();
+    }
+    recomputeMomentumRows();
+    renderMomentumLeaderboard();
+    return Promise.resolve(true);
+  }
+
+  function onParamSelectChange(kind, selectEl, inputEl) {
+    if (selectEl.value === MOMENTUM_CUSTOM_OPTION) {
+      if (inputEl) {
+        const cur = kind === "sma" ? state.momentum.smaPeriods : state.momentum.lookbackPeriods;
+        inputEl.value = String(cur);
+        show(inputEl);
+        if (typeof inputEl.focus === "function") inputEl.focus();
+      }
+      return Promise.resolve(false);
+    }
+    if (inputEl) hide(inputEl);
+    return applyMomentumParam(kind, Number(selectEl.value));
+  }
+
+  function onParamInputChange(kind, inputEl) {
+    const res = validateMomentumParam(kind, state.momentum.timeframe, inputEl.value);
+    if (!res.ok) {
+      state.momentum.paramErrors = Object.assign({}, state.momentum.paramErrors, { [kind]: res.error });
+      renderMomentumParamMessages();
+      return Promise.resolve(false);
+    }
+    return applyMomentumParam(kind, res.value);
+  }
+
   function renderMomentumLookbackSmaPickers() {
     const tf = state.momentum.timeframe;
     const opts = MOMENTUM_TIMEFRAME_OPTIONS[tf];
     const unit = MOMENTUM_UNIT_LABEL[tf] || "งวด";
-    const lbEl = byId("momLookbackPicker");
-    if (lbEl) lbEl.innerHTML = opts.lookbacks.map((v) => `<option value="${v}" ${v === state.momentum.lookbackPeriods ? "selected" : ""}>${v} ${unit}</option>`).join("");
-    const smaEl = byId("momSmaPicker");
-    if (smaEl) smaEl.innerHTML = opts.smas.map((v) => `<option value="${v}" ${v === state.momentum.smaPeriods ? "selected" : ""}>${v} ${unit}</option>`).join("");
+    renderParamPicker("momLookbackPicker", "momLookbackCustom", opts.lookbacks, state.momentum.lookbackPeriods, unit, "lookback");
+    renderParamPicker("momSmaPicker", "momSmaCustom", opts.smas, state.momentum.smaPeriods, unit, "sma");
+    renderMomentumParamMessages();
   }
 
   function renderMomentumBenchmarkPicker() {
@@ -2960,7 +3115,7 @@ window.QD = (function () {
     { label: "RVOL (x)", desc: "volume งวดล่าสุดเป็นกี่เท่าของค่าเฉลี่ยฐาน — ใช้ค่าเฉลี่ยเรขาคณิต (geometric mean) เป็นตัวหาร ซึ่งเป็นตัวเดียวกับที่ Z-score อ้างอิง ทั้ง 2 คอลัมน์จึงเล่าเรื่องเดียวกัน" },
     { label: "ค่าเฉลี่ย baseline", desc: "ค่าเฉลี่ยเรขาคณิตของ volume ในช่วงย้อนหลังที่กำหนด โดย**ไม่นับงวดปัจจุบัน**เข้าไปในฐาน (กันไม่ให้ค่าที่ผิดปกติไปดันค่าเฉลี่ยที่ตัวเองถูกเทียบ)" },
     { label: "อันดับ Momentum / อันดับ Volume", desc: "อันดับคงที่ตาม Trailing Return และตามระดับความผิดปกติของ volume (|Z| ไม่ว่าจะพุ่งหรือแห้ง) — ไม่เปลี่ยนตามการ sort ตาราง จึงใช้เทียบข้ามมิติได้ เช่น \"volume อันดับ 1 แต่ momentum อันดับ 45\" คือ volume เข้าผิดปกติทั้งที่ราคายังไม่ไปไหน" },
-    { label: "โหมดรายเดือน = เทียบแบบ month-to-date", desc: "เดือนที่ยังไม่จบมี volume น้อยกว่าปกติโดยธรรมชาติ ระบบจึงตัดทุกเดือนย้อนหลังให้เหลือ \"จำนวนวันทำการเท่ากับที่ผ่านไปแล้วในเดือนปัจจุบัน\" เพื่อเทียบแบบจริงต่อจริง (ไม่ได้ประมาณค่าขยายให้เต็มเดือน) พอเดือนจบเต็มก็จะเท่ากับยอดรวมทั้งเดือนเอง" },
+    { label: "ใช้เฉพาะงวดที่จบแล้ว (รายสัปดาห์/รายเดือน)", desc: "ทุกตัวเลขในหน้านี้ (Trailing Return, SMA, RRG, Volume, Correlation) ใช้เฉพาะสัปดาห์/เดือนที่จบแล้วเท่านั้น งวดที่ยังไม่จบจะไม่นำมาคำนวณ — ถือว่างวดจบแล้วเมื่อมีข้อมูลของงวดถัดไปเข้ามาในระบบ ถ้าต้องการสัญญาณที่สดกว่า ให้ใช้ Timeframe รายวันแล้วกำหนด Lookback เอง" },
     { label: "สีในตาราง", desc: "คอลัมน์ Trailing Return ไล่สีทิศทางเดียว (เขียว = ดีกว่า) ส่วนคอลัมน์ Volume Z-score ไล่สี 2 ทาง (ส้ม = พุ่งผิดปกติ, น้ำเงิน = แห้งผิดปกติ) — ทั้งคู่เป็นสีแบบ relative เทียบกับแถวที่แสดงอยู่ ไม่ใช่ threshold ตายตัว" }
   ];
 
@@ -3149,88 +3304,22 @@ window.QD = (function () {
     return base.toISOString().slice(0, 10);
   }
 
-  // ---------------------------------------------------------------------
-  // Month-to-date aggregation (trading-day matched)
-  // ---------------------------------------------------------------------
-  // The newest calendar month is normally still in progress, so its summed
-  // volume is low purely because fewer days have traded -- on real data that
-  // made SPY read as a -2.87 "dry-up" on 2026-09-11 when the month was only
-  // ~8 sessions old. Rather than extrapolating (pro-rating) the partial month
-  // up to a full one, which invents data, every month is truncated to the
-  // SAME NUMBER OF TRADING DAYS as the current one, so the comparison is
-  // like-for-like: "first 8 sessions of this month vs the first 8 sessions of
-  // each prior month".
-  //
-  // Trading days are counted, not calendar dates, because 1-11 September and
-  // 1-11 March contain different numbers of sessions.
-  //
-  // When the current month is complete this degenerates to plain monthly
-  // totals, so no special-casing is needed once the month closes.
-  function monthKeyOf(dateStr) {
-    return typeof dateStr === "string" ? dateStr.slice(0, 7) : null;
-  }
-
-  function aggregateVolumeMonthToDate(dailyRows) {
-    if (!dailyRows || !dailyRows.length) return { series: [], cutoffTradingDays: 0, partial: false };
-    const sorted = dailyRows.slice().sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0)));
-    const byMonth = new Map();
-    sorted.forEach((r) => {
-      const k = monthKeyOf(r.period_end);
-      if (!k) return;
-      if (!byMonth.has(k)) byMonth.set(k, []);
-      byMonth.get(k).push(r);
-    });
-    const keys = Array.from(byMonth.keys()).sort();
-    if (!keys.length) return { series: [], cutoffTradingDays: 0, partial: false };
-    const cutoff = byMonth.get(keys[keys.length - 1]).length; // sessions elapsed in the newest month
-    const series = keys.map((k) => {
-      const rows = byMonth.get(k);
-      const used = rows.slice(0, Math.min(cutoff, rows.length));
-      let sum = 0;
-      let anyVolume = false;
-      used.forEach((r) => {
-        if (r.volume == null) return;
-        sum += Number(r.volume);
-        anyVolume = true;
-      });
-      const last = used[used.length - 1];
-      return {
-        period_end: last.period_end,
-        volume: anyVolume ? sum : null,
-        adj_close: last.adj_close == null ? null : Number(last.adj_close),
-        tradingDays: used.length,
-        monthKey: k
-      };
-    });
-    // A prior month with fewer sessions than the cutoff is summed over all of
-    // its own days; flagged so the UI can explain the (rare) mismatch.
-    const shortMonths = series.filter((s) => s.tradingDays < cutoff).length;
-    return { series, cutoffTradingDays: cutoff, partial: cutoff < 15, shortMonths };
-  }
-
-  // What to fetch for the volume side, given the momentum timeframe:
-  //   month -> DAILY rows (month-to-date needs session-level detail)
-  //   week  -> weekly aggregates straight from the RPC (no week-to-date, by decision)
-  //   day   -> daily rows as-is
+  // What to fetch for the volume side, given the momentum timeframe.
+  // 2026-09-15: the month-to-date aggregation was removed -- every timeframe
+  // now reads its own granularity straight from the RPC, and week/month stop
+  // at the last COMPLETED period (p_complete_only), so a half-finished
+  // period can never read as a volume "dry-up".
   function volumeFetchPlan(timeframe, periodsNeeded, now) {
-    if (timeframe === "month") {
-      const months = periodsNeeded + 1;
-      const days = Math.ceil(months * APPROX_DAYS_PER_PERIOD.month) + 21;
-      const base = now ? new Date(now.getTime()) : new Date();
-      base.setUTCDate(base.getUTCDate() - days);
-      return { granularity: "day", startDate: base.toISOString().slice(0, 10), aggregate: "mtd" };
-    }
     return {
       granularity: timeframe,
-      startDate: approxStartDateForPeriods(timeframe, periodsNeeded, now),
-      aggregate: "none"
+      startDate: approxStartDateForPeriods(timeframe, periodsNeeded, now)
     };
   }
 
   // ---------------------------------------------------------------------
   // Volume data access
   // ---------------------------------------------------------------------
-  async function fetchPeriodVolumes(instrumentIds, granularity, startDate, endDate) {
+  async function fetchPeriodVolumes(instrumentIds, granularity, startDate, endDate, completeOnly) {
     let allRows = [];
     let offset = 0;
     while (true) {
@@ -3238,7 +3327,8 @@ window.QD = (function () {
         p_instrument_ids: instrumentIds,
         p_granularity: granularity,
         p_start_date: startDate || null,
-        p_end_date: endDate || null
+        p_end_date: endDate || null,
+        p_complete_only: completeOnly !== false
       }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
       if (error) throw error;
       const rows = data || [];
@@ -3263,51 +3353,51 @@ window.QD = (function () {
     return byInst;
   }
 
-  // Applies the fetch plan's aggregation to every instrument's raw rows.
-  function applyVolumeAggregation(byInstrument, plan) {
-    if (!plan || plan.aggregate !== "mtd") return { series: byInstrument, meta: null };
-    const out = {};
-    let meta = null;
-    Object.keys(byInstrument).forEach((k) => {
-      const agg = aggregateVolumeMonthToDate(byInstrument[k]);
-      out[k] = agg.series;
-      if (!meta || agg.cutoffTradingDays > meta.cutoffTradingDays) meta = agg;
-    });
-    return { series: out, meta };
-  }
-
   // ---------------------------------------------------------------------
-  // "Period still in progress" note
+  // "Data as of" note (2026-09-15)
   // ---------------------------------------------------------------------
-  // Month is handled properly by the month-to-date aggregation above, so the
-  // note is only needed for the weekly view (week-to-date was explicitly out
-  // of scope) -- daily bars are complete by construction because prices only
-  // land after the close.
-  function isLikelyIncompletePeriod(periodEnd, granularity, now) {
-    if (!periodEnd || granularity !== "week") return false;
-    const d = new Date(`${periodEnd}T00:00:00Z`);
-    if (Number.isNaN(d.getTime())) return false;
-    const ref = now ? new Date(now.getTime()) : new Date();
-    return (ref.getTime() - d.getTime()) < 7 * 24 * 3600 * 1000;
+  // Week/month views only ever use COMPLETED periods, so the note tells the
+  // user which period the numbers stop at. Day bars are complete by
+  // construction (prices are loaded after the close).
+  const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+
+  function formatThaiDate(dateStr) {
+    if (typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return null;
+    const y = Number(dateStr.slice(0, 4));
+    const m = Number(dateStr.slice(5, 7));
+    const d = Number(dateStr.slice(8, 10));
+    if (!(m >= 1 && m <= 12)) return null;
+    return `${d} ${THAI_MONTHS_SHORT[m - 1]} ${y}`;
   }
 
-  function incompletePeriodMessage(periodEnd) {
-    return `หมายเหตุ: งวดล่าสุด (${periodEnd}) ยังไม่จบสัปดาห์ — volume ที่รวมได้จึงยังไม่เต็มงวด ทำให้ทุกตัวมีแนวโน้มอ่านค่าเป็น "แห้งผิดปกติ" ตัวเลขนี้เป็นค่าตามข้อมูลจริง ไม่ได้ปรับแต่ง (โหมดรายเดือนไม่มีปัญหานี้ เพราะเทียบแบบนับวันทำการเท่ากันอยู่แล้ว)`;
+  function dataAsOfMessage(asOf, granularity) {
+    if (!asOf || !asOf.as_of) return "";
+    const latest = formatThaiDate(asOf.as_of);
+    if (!latest) return "";
+    if (granularity === "month") {
+      const m = asOf.last_complete_month_start;
+      if (!formatThaiDate(m)) return "";
+      const label = `${THAI_MONTHS_SHORT[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+      return `ข้อมูลรายเดือนถึงเดือน ${label} (ใช้เฉพาะเดือนที่จบแล้ว — เดือนที่ยังไม่จบไม่นำมาคำนวณ) · ข้อมูลล่าสุดในระบบ ${latest}`;
+    }
+    if (granularity === "week") {
+      const w = formatThaiDate(asOf.last_complete_week_start);
+      if (!w) return "";
+      return `ข้อมูลรายสัปดาห์ถึงสัปดาห์ที่เริ่ม ${w} (ใช้เฉพาะสัปดาห์ที่จบแล้ว — สัปดาห์ที่ยังไม่จบไม่นำมาคำนวณ) · ข้อมูลล่าสุดในระบบ ${latest}`;
+    }
+    return `ข้อมูลรายวันถึงวันที่ ${latest}`;
   }
 
-  function mtdNoteMessage(meta) {
-    if (!meta || !meta.cutoffTradingDays) return "";
-    return `หมายเหตุ: เดือนล่าสุดยังไม่จบ — เทียบแบบ month-to-date โดยตัดทุกเดือนให้เหลือ ${meta.cutoffTradingDays} วันทำการแรกเท่ากันหมด (ไม่ได้ประมาณค่าขยายให้เต็มเดือน)`;
-  }
-
-  function renderIncompleteNote(elId, periodEnd, granularity, mtdMeta) {
+  function renderAsOfNote(elId, granularity) {
     const el = byId(elId);
     if (!el) return false;
-    let msg = "";
-    if (granularity === "month" && mtdMeta && mtdMeta.partial) msg = mtdNoteMessage(mtdMeta);
-    else if (isLikelyIncompletePeriod(periodEnd, granularity)) msg = incompletePeriodMessage(periodEnd);
+    const msg = dataAsOfMessage(state.dataAsOf, granularity);
     if (msg) { el.textContent = msg; show(el); } else { el.textContent = ""; hide(el); }
     return !!msg;
+  }
+
+  function renderSeasonalAsOfNote() {
+    return renderAsOfNote("seasonalAsOfNote", state.periodType);
   }
 
   // =======================================================================
@@ -3683,6 +3773,7 @@ window.QD = (function () {
       const def = MOMENTUM_TIMEFRAME_DEFAULTS[e.target.value];
       state.momentum.lookbackPeriods = def.lookback;
       state.momentum.smaPeriods = def.sma;
+      state.momentum.paramErrors = { lookback: "", sma: "" };
       // The volume baseline is measured in the same periods as the timeframe,
       // so its sensible default moves with it (the user can still override).
       state.momentum.volBaselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || state.momentum.volBaselinePeriods;
@@ -3704,10 +3795,14 @@ window.QD = (function () {
     });
 
     const lbEl = byId("momLookbackPicker");
-    if (lbEl) lbEl.addEventListener("change", (e) => { state.momentum.lookbackPeriods = Number(e.target.value); recomputeMomentumRows(); renderMomentumLeaderboard(); });
+    const lbCustomEl = byId("momLookbackCustom");
+    if (lbEl) lbEl.addEventListener("change", () => { onParamSelectChange("lookback", lbEl, lbCustomEl); });
+    if (lbCustomEl) lbCustomEl.addEventListener("change", () => { onParamInputChange("lookback", lbCustomEl); });
 
     const smaEl = byId("momSmaPicker");
-    if (smaEl) smaEl.addEventListener("change", (e) => { state.momentum.smaPeriods = Number(e.target.value); recomputeMomentumRows(); renderMomentumLeaderboard(); });
+    const smaCustomEl = byId("momSmaCustom");
+    if (smaEl) smaEl.addEventListener("change", () => { onParamSelectChange("sma", smaEl, smaCustomEl); });
+    if (smaCustomEl) smaCustomEl.addEventListener("change", () => { onParamInputChange("sma", smaCustomEl); });
 
     const benchEl = byId("momBenchmarkPicker");
     if (benchEl) benchEl.addEventListener("change", (e) => { state.momentum.benchmarkAssetId = Number(e.target.value); });
@@ -3874,6 +3969,8 @@ window.QD = (function () {
       syncTopControlsFromState();
       renderVariantForms();
       renderRollingStatPicker();
+      await fetchDataAsOf();
+      renderSeasonalAsOfNote();
       await fetchOverview();
 
       // Momentum tab: static pickers only -- price data loads lazily on first
@@ -3970,7 +4067,7 @@ window.QD = (function () {
     if (assetPicker) assetPicker.addEventListener("change", (e) => { state.assetId = Number(e.target.value); fetchOverview(); });
 
     const periodTypePicker = byId("periodTypePicker");
-    if (periodTypePicker) periodTypePicker.addEventListener("change", (e) => { state.periodType = e.target.value; fetchOverview(); });
+    if (periodTypePicker) periodTypePicker.addEventListener("change", (e) => { state.periodType = e.target.value; renderSeasonalAsOfNote(); fetchOverview(); });
 
     const lookbackPicker = byId("lookbackPicker");
     if (lookbackPicker) lookbackPicker.addEventListener("change", (e) => { state.lookback = parseLookbackValue(e.target.value); fetchOverview(); });
@@ -4049,8 +4146,8 @@ window.QD = (function () {
     MOMENTUM_TIMEFRAME_OPTIONS, MOMENTUM_TIMEFRAME_DEFAULTS, MOMENTUM_TAIL_DEFAULTS,
     logVolume, volumeBaselineStats, computeVolumeAnomaly, computeVolumeBandSeries, computeVolumeAnomalyMap,
     volumeAnomalyMagnitude, computeSymmetricRange, volumeDivergingColor, formatVolumeNumber,
-    approxStartDateForPeriods, aggregateVolumeMonthToDate, volumeFetchPlan, applyVolumeAggregation,
-    isLikelyIncompletePeriod, incompletePeriodMessage, mtdNoteMessage, renderIncompleteNote,
+    approxStartDateForPeriods, volumeFetchPlan,
+    fetchDataAsOf, formatThaiDate, dataAsOfMessage, renderAsOfNote, renderSeasonalAsOfNote,
     // Volume data access
     fetchPeriodVolumes, groupVolumeRows,
     // Merged Leaderboard table
@@ -4059,7 +4156,11 @@ window.QD = (function () {
     buildVolumeChartDatasets, buildVolumeDrilldownData,
     recomputeMomentumRows, sortedMomentumRows, renderMomentumTable, renderMomColumnPanel,
     renderMomSelectionPanel, renderMomVolumeChart, renderMomDrilldown, openDrilldown,
-    momentumPriceLookbackPeriods,
+    momentumPriceLookbackPeriods, momentumNeedsFetch,
+    // Custom Lookback / SMA (2026-09-15)
+    MOMENTUM_CUSTOM_OPTION, MOMENTUM_CUSTOM_MIN, MOMENTUM_CUSTOM_MAX, MOMENTUM_REVERSAL_ZONE_DAYS,
+    momentumParamBounds, momentumReversalWarning, validateMomentumParam, applyMomentumParam,
+    onParamSelectChange, onParamInputChange, renderMomentumParamMessages,
     // Table layout (order / visibility / sort / persistence)
     initTableLayout, applyTablePreset, resetTableLayout, moveColumn, toggleColumn, setSort,
     currentLayout, sanitizeLayout, saveLayout, loadLayout, applyLayout, MOMENTUM_LAYOUT_KEY,
