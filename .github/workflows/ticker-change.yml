@@ -1,0 +1,38 @@
+name: Ticker change (one-off)
+
+# Re-points instruments whose ticker was changed by the issuer, using
+# config/ticker_changes.json. Run manually from the Actions tab.
+# Each entry is verified (raw close must match on common days) before
+# anything is written; a failed check writes nothing and fails the run.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify and report only (write nothing)"
+        type: boolean
+        default: false
+
+jobs:
+  ticker-change:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply ticker changes
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: scripts
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python ticker_change.py --dry-run
+          else
+            python ticker_change.py
+          fi
