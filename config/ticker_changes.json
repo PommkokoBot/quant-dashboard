@@ -1,0 +1,8 @@
+{
+  "_comment": "Issuer ticker changes applied by scripts/ticker_change.py (2026-09-15). Safe to re-run: already-renamed entries are skipped.",
+  "changes": [
+    {"instrument_id": 30, "old_ticker": "IRBO", "new_ticker": "ARTY", "new_name": "iShares Future AI & Tech ETF"},
+    {"instrument_id": 71, "old_ticker": "FIVG", "new_ticker": "SIXG", "new_name": "Defiance Connective Technologies ETF"},
+    {"instrument_id": 78, "old_ticker": "LNGR", "new_ticker": "AGNG", "new_name": "Global X Aging Population ETF"}
+  ]
+}
