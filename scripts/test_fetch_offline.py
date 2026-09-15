@@ -97,8 +97,8 @@ class TestBuildRowsAndFlags(unittest.TestCase):
 
 class TestFetchYfHistory(unittest.TestCase):
     """Pins down the fix for a real bug hit on the first live GitHub Actions run:
-    yfinance's period="max" is rejected outright for some tickers (e.g. ^SETHD.BK --
-    "Period 'max' is invalid, must be one of: 1d, 5d"). full_history mode must use an
+    yfinance's period="max" is rejected outright for some tickers (seen on a Thai
+    index symbol -- "Period 'max' is invalid, must be one of: 1d, 5d"). full_history mode must use an
     explicit start date instead of period="max", uniformly for every ticker."""
 
     @patch("fetch_prices.yf.download")
@@ -107,7 +107,7 @@ class TestFetchYfHistory(unittest.TestCase):
         mock_download.return_value = pd.DataFrame(
             {"Open": [1], "High": [1], "Low": [1], "Close": [1], "Adj Close": [1.0], "Volume": [100]}, index=idx
         )
-        fetch_prices.fetch_yf_history("^SETHD.BK", start=None, full_history=True)
+        fetch_prices.fetch_yf_history("^EXAMPLE.BK", start=None, full_history=True)
         _, kwargs = mock_download.call_args
         self.assertNotIn("period", kwargs)
         self.assertEqual(kwargs.get("start"), fetch_prices.FULL_HISTORY_START)
@@ -164,6 +164,169 @@ class TestRunWiring(unittest.TestCase):
         # it returns normally, so no SystemExit should be raised here.
         fetch_prices.run(lookback_days=10, full_history=False, only_ticker="SPY")
         mock_client.table.return_value.upsert.assert_called()
+
+
+def _yf(rows):
+    """rows: list of (date, close, adj_close)"""
+    idx = pd.to_datetime([r[0] for r in rows])
+    return pd.DataFrame(
+        {"Open": [r[1] for r in rows], "High": [r[1] for r in rows], "Low": [r[1] for r in rows],
+         "Close": [r[1] for r in rows], "Adj Close": [r[2] for r in rows], "Volume": [100] * len(rows)},
+        index=idx,
+    )
+
+
+class TestDetectBasisChange(unittest.TestCase):
+    """2026-09-15: a dividend or split after the last full download re-bases
+    Yahoo's whole adjusted history; the incremental run must notice."""
+
+    STORED = {"2026-09-08": (100.0, 98.0), "2026-09-09": (101.0, 98.98), "2026-09-10": (102.0, 99.96)}
+
+    def test_same_basis_returns_none(self):
+        df = _yf([("2026-09-09", 101.0, 98.98), ("2026-09-10", 102.0, 99.96), ("2026-09-11", 103.0, 100.94)])
+        self.assertIsNone(fetch_prices.detect_basis_change(self.STORED, df))
+
+    def test_float_noise_is_ignored(self):
+        df = _yf([("2026-09-09", 101.0 * (1 + 1e-9), 98.98 * (1 - 1e-9))])
+        self.assertIsNone(fetch_prices.detect_basis_change(self.STORED, df))
+
+    def test_new_dividend_rescales_adj_close(self):
+        # a 0.5% dividend went ex after the stored download: every older adj_close x0.995
+        df = _yf([("2026-09-09", 101.0, 98.98 * 0.995), ("2026-09-10", 102.0, 99.96 * 0.995), ("2026-09-11", 102.5, 102.5)])
+        res = fetch_prices.detect_basis_change(self.STORED, df)
+        self.assertEqual(res["reason"], "adjustment")
+        self.assertEqual(res["date"], "2026-09-09")
+        self.assertAlmostEqual(res["new_ratio"] / res["stored_ratio"], 0.995, places=9)
+
+    def test_smallest_real_dividend_still_detected(self):
+        df = _yf([("2026-09-09", 101.0, 98.98 * (1 - 1e-4))])
+        self.assertIsNotNone(fetch_prices.detect_basis_change(self.STORED, df))
+
+    def test_split_rescales_close(self):
+        # 2:1 split: Yahoo's split-adjusted close for old days halves
+        df = _yf([("2026-09-09", 50.5, 49.49), ("2026-09-10", 51.0, 49.98)])
+        res = fetch_prices.detect_basis_change(self.STORED, df)
+        self.assertEqual(res["reason"], "close")
+
+    def test_no_overlap_or_unusable_rows(self):
+        self.assertIsNone(fetch_prices.detect_basis_change(self.STORED, _yf([("2026-09-11", 1.0, 1.0)])))
+        self.assertIsNone(fetch_prices.detect_basis_change({}, _yf([("2026-09-09", 101.0, 50.0)])))
+        stored_null = {"2026-09-09": (None, 98.98)}
+        self.assertIsNone(fetch_prices.detect_basis_change(stored_null, _yf([("2026-09-09", 101.0, 50.0)])))
+        self.assertIsNone(fetch_prices.detect_basis_change(self.STORED, _yf([("2026-09-09", float("nan"), 50.0)])))
+
+
+def _client_with(instruments, stored_rows=None, last_close=None, health=None, health_error=None):
+    c = MagicMock()
+    c.table.return_value.select.return_value.eq.return_value.execute.return_value.data = instruments
+    c.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = last_close or []
+    c.table.return_value.select.return_value.eq.return_value.gte.return_value.order.return_value.range.return_value.execute.return_value.data = stored_rows or []
+    if health_error:
+        c.rpc.return_value.execute.side_effect = health_error
+    else:
+        c.rpc.return_value.execute.return_value.data = health or []
+    return c
+
+
+def _logged(client):
+    return [call.args[0] for call in client.table.return_value.insert.call_args_list]
+
+
+class TestRunRebase(unittest.TestCase):
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_basis_change_triggers_full_history_refetch(self, mock_fetch, mock_get_client):
+        stored = [{"date": "2026-09-09", "close": 101.0, "adj_close": 98.98}]
+        client = _client_with([{"id": 7, "ticker": "SPY"}], stored_rows=stored)
+        mock_get_client.return_value = client
+        window = _yf([("2026-09-09", 101.0, 98.98 * 0.99), ("2026-09-10", 102.0, 102.0)])
+        full = _yf([("2026-01-02", 90.0, 88.0), ("2026-09-09", 101.0, 98.98 * 0.99), ("2026-09-10", 102.0, 102.0)])
+        mock_fetch.side_effect = [window, full]
+        fetch_prices.run(lookback_days=10, full_history=False, only_ticker=None)
+        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertEqual(mock_fetch.call_args_list[1].args, ("SPY", None, True), "second call pulls full history")
+        upserted = client.table.return_value.upsert.call_args_list[0].args[0]
+        self.assertEqual(len(upserted), 3, "the full series is written, not just the window")
+        logs = _logged(client)
+        self.assertEqual(logs[0]["status"], "ok")
+        self.assertIn("adjustment basis changed", logs[0]["message"])
+        self.assertEqual(logs[0]["detail"]["basis_change"]["reason"], "adjustment")
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_same_basis_stays_incremental(self, mock_fetch, mock_get_client):
+        stored = [{"date": "2026-09-09", "close": 101.0, "adj_close": 98.98}]
+        client = _client_with([{"id": 7, "ticker": "SPY"}], stored_rows=stored)
+        mock_get_client.return_value = client
+        mock_fetch.return_value = _yf([("2026-09-09", 101.0, 98.98), ("2026-09-10", 102.0, 99.96)])
+        fetch_prices.run(lookback_days=10, full_history=False, only_ticker=None)
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(len(client.table.return_value.upsert.call_args_list[0].args[0]), 2)
+        self.assertNotIn("basis", _logged(client)[0]["message"])
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_full_history_run_never_compares(self, mock_fetch, mock_get_client):
+        client = _client_with([{"id": 7, "ticker": "SPY"}])
+        mock_get_client.return_value = client
+        mock_fetch.return_value = _yf([("2026-09-09", 101.0, 98.0)])
+        fetch_prices.run(lookback_days=10, full_history=True, only_ticker=None)
+        self.assertEqual(mock_fetch.call_count, 1)
+        client.table.return_value.select.return_value.eq.return_value.gte.assert_not_called()
+
+
+class TestHealthCheck(unittest.TestCase):
+    ISSUES = [
+        {"instrument_id": 30, "ticker": "IRBO", "issue": "error_streak",
+         "detail": {"days": 3, "first_day": "2026-09-12", "last_day": "2026-09-14", "last_message": "yfinance returned no rows"}},
+        {"instrument_id": 30, "ticker": "IRBO", "issue": "stale",
+         "detail": {"last_date": "2026-07-17", "latest_date_in_db": "2026-09-14", "trading_days_behind": 40}},
+    ]
+
+    def test_format_messages(self):
+        self.assertIn("error 3 run-days in a row", fetch_prices.format_health_issue(self.ISSUES[0]))
+        self.assertIn("40 trading day(s) behind", fetch_prices.format_health_issue(self.ISSUES[1]))
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_issues_fail_the_job(self, mock_fetch, mock_get_client):
+        client = _client_with([{"id": 1, "ticker": "SPY"}], health=self.ISSUES)
+        mock_get_client.return_value = client
+        mock_fetch.return_value = _yf([("2026-09-10", 1.0, 1.0)])
+        with self.assertRaises(SystemExit) as cm:
+            fetch_prices.run(lookback_days=10, full_history=False, only_ticker=None)
+        self.assertEqual(cm.exception.code, 1)
+        client.rpc.assert_called_with("data_health_report", {"p_error_days": 3, "p_stale_days": 3})
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_single_error_without_streak_does_not_fail(self, mock_fetch, mock_get_client):
+        client = _client_with([{"id": 1, "ticker": "SPY"}, {"id": 2, "ticker": "BAD"}], health=[])
+        mock_get_client.return_value = client
+        mock_fetch.side_effect = [_yf([("2026-09-10", 1.0, 1.0)]), pd.DataFrame()]
+        fetch_prices.run(lookback_days=10, full_history=False, only_ticker=None)  # no SystemExit
+        self.assertEqual([l["status"] for l in _logged(client)], ["ok", "error"])
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_health_check_failure_fails_the_job(self, mock_fetch, mock_get_client):
+        client = _client_with([{"id": 1, "ticker": "SPY"}], health_error=RuntimeError("rpc down"))
+        mock_get_client.return_value = client
+        mock_fetch.return_value = _yf([("2026-09-10", 1.0, 1.0)])
+        with self.assertRaises(SystemExit):
+            fetch_prices.run(lookback_days=10, full_history=False, only_ticker=None)
+
+    @patch("fetch_prices.get_client")
+    @patch("fetch_prices.fetch_yf_history")
+    def test_single_ticker_debug_run_skips_health_but_fails_on_error(self, mock_fetch, mock_get_client):
+        client = _client_with([{"id": 1, "ticker": "SPY"}], health=self.ISSUES)
+        mock_get_client.return_value = client
+        mock_fetch.return_value = _yf([("2026-09-10", 1.0, 1.0)])
+        fetch_prices.run(lookback_days=10, full_history=False, only_ticker="SPY")  # ok path, no exit
+        client.rpc.assert_not_called()
+        mock_fetch.return_value = pd.DataFrame()
+        with self.assertRaises(SystemExit):
+            fetch_prices.run(lookback_days=10, full_history=False, only_ticker="SPY")
 
 
 class TestFredParsing(unittest.TestCase):
