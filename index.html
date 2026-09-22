@@ -4341,6 +4341,18 @@ window.QD = (function () {
   // ---- Events Tab: load, render, custom events, admin ----
 
   async function loadEventsTab() {
+    // Seasonal pickers are independent of the events fetch — render them first
+    // so they work even if the events fetch fails.
+    renderSeasonalAssetPicker();
+    renderSeasonalYearGroupPicker();
+
+    // Show custom event form if logged in
+    if (state.session) show(byId("customEventSection"));
+    // Show admin panel if admin
+    if (state.session && state.session.user && state.session.user.email === "mehresix@gmail.com") {
+      show(byId("adminEventSection"));
+    }
+
     if (state.eventsTab.loading) return;
     state.eventsTab.loading = true;
     state.eventsTab.loaded = false;
@@ -4353,16 +4365,10 @@ window.QD = (function () {
       renderEventsCalendarStrip(rows);
       renderEventsTable(rows, null, null);
       populateEventsFilters(rows);
-      // Show custom event form if logged in
-      if (state.session) show(byId("customEventSection"));
-      // Show admin panel if admin
+      // Load admin pending drafts (separate query)
       if (state.session && state.session.user && state.session.user.email === "mehresix@gmail.com") {
-        show(byId("adminEventSection"));
         await loadAdminPendingDrafts();
       }
-      // Populate seasonal asset picker
-      renderSeasonalAssetPicker();
-      renderSeasonalYearGroupPicker();
     } catch (e) {
       showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
     } finally {
