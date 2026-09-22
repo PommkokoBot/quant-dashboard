@@ -57,3 +57,15 @@ jobs:
         # Don't fail the whole run if macro fetch has issues (e.g. FRED_API_KEY not
         # added yet) -- the price fetch above is the critical path for the dashboard.
         continue-on-error: true
+
+      # Market event calendar (2026-09-21): FOMC (curated file), CPI/PCE release
+      # dates (FRED), US elections and monthly option expiry (rules). Runs even
+      # if an earlier step failed; a FRED list that fails its sanity check makes
+      # this step fail (-> e-mail) and nothing is written for that event type.
+      - name: Sync market events
+        if: success() || failure()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python scripts/fetch_events.py

@@ -1,0 +1,33 @@
+name: Market events sync (manual)
+
+# Run by hand to check or refresh the event calendar outside the daily job,
+# e.g. the first time (tick dry run to see what would be written).
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify and report only (write nothing)"
+        type: boolean
+        default: true
+
+jobs:
+  events:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Sync market events
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python scripts/fetch_events.py --dry-run
+          else
+            python scripts/fetch_events.py
+          fi
