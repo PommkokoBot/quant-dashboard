@@ -4507,7 +4507,7 @@ window.QD = (function () {
     try {
       const { error } = await sb.from("market_events").insert({
         event_date: date,
-        event_name: name,
+        name: name,
         event_type: "custom",
         color: color || "#3498db",
         status: "draft"
@@ -4544,7 +4544,7 @@ window.QD = (function () {
     try {
       const rows = events.map((e) => ({
         event_date: e.date,
-        event_name: e.name,
+        name: e.name,
         event_type: "custom",
         color: "#3498db",
         status: "draft"
@@ -4596,7 +4596,7 @@ window.QD = (function () {
         const eid = d.event_id || d.id;
         return `<tr class="border-t border-slate-100">` +
           `<td class="px-3 py-1.5">${escapeHtml(d.event_date || "")}</td>` +
-          `<td class="px-3 py-1.5">${escapeHtml(d.event_name || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(d.name || "")}</td>` +
           `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(maskEmail(d.creator_email || ""))}</td>` +
           `<td class="px-3 py-1.5 text-center">` +
           `<button class="text-green-600 hover:underline mr-2" data-approve="${eid}">Approve</button>` +
