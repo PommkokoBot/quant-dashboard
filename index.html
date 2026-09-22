@@ -65,6 +65,7 @@
       <nav class="flex items-center gap-1" role="tablist">
         <button id="tabBtnSeasonality" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="seasonality">Seasonality</button>
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
+        <button id="tabBtnHealth" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="health">Data Health</button>
       </nav>
     </div>
     <button id="logoutBtn" class="text-sm text-slate-600 hover:text-red-600 border border-slate-300 rounded-lg px-3 py-1.5">
@@ -402,6 +403,7 @@
     <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
       <h2 id="momDrilldownTitle" class="text-sm font-semibold text-slate-800 mb-1">กราฟย้อนหลังรายตัว</h2>
       <p class="text-xs text-slate-500 mb-3">คลิกแถวในตารางด้านบนเพื่อดู volume ย้อนหลังของตัวนั้น เทียบกับแถบ "ช่วงปกติ" (ค่าเฉลี่ย ± 1SD และ ± 2SD แบบ rolling บนสเกล log) พร้อมเส้นราคาปิดบนแกนขวา — ข้อมูลจะถูกดึงเฉพาะตอนที่คลิก</p>
+      <div id="momEventToggles" class="text-[11px] text-slate-600 mb-2 flex flex-wrap items-center"></div>
       <div class="relative h-80">
         <div id="momDrilldownLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10">
           <div class="spinner"></div>
@@ -509,6 +511,39 @@
   <!-- /#tabMomentum -->
 
 
+  <!-- ===================== DATA HEALTH (2026-09-21) ===================== -->
+  <div id="tabHealth" class="hidden space-y-6">
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-semibold text-slate-800">Data Health — สุขภาพข้อมูล</h2>
+          <p id="healthAsOf" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+          <label class="inline-flex items-center gap-1"><input type="checkbox" id="healthOnlyProblems" /> แสดงเฉพาะที่ต้องจับตา/มีปัญหา</label>
+          <button id="healthRefreshBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
+        </div>
+      </div>
+      <p id="healthError" class="hidden text-xs text-red-600 mb-2"></p>
+      <div id="healthSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
+      <p class="text-[11px] text-slate-500 mb-2">เกณฑ์เดียวกับอีเมลแจ้งเตือนของ cron: <b>มีปัญหา</b> = ดึงข้อมูลล้มเหลว 3 วันติด หรือช้ากว่าตลาด 3 วันทำการขึ้นไป · <b>ต้องจับตา</b> = ล้มเหลว/ช้ากว่าตลาด 1–2 วัน หรือมีวันที่ข้อมูลขาดในรอบ 1 ปี · "ตลาด" = วันที่ SPY มีข้อมูล</p>
+      <div class="relative overflow-x-auto border border-slate-200 rounded-lg">
+        <div id="healthLoading" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10"><div class="spinner"></div></div>
+        <table id="healthInstrumentTable" class="text-xs w-full"></table>
+      </div>
+    </section>
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">ข้อมูลเศรษฐกิจมหภาค (FRED)</h2>
+      <p class="text-[11px] text-slate-500 mb-2">ข้อมูลรายเดือนลงวันที่เป็นวันที่ 1 ของเดือนที่วัด และประกาศหลังจากนั้นหลายสัปดาห์ จึงใช้เกณฑ์อายุ 70 วัน (รายวันใช้ 7 วัน)</p>
+      <div class="overflow-x-auto border border-slate-200 rounded-lg"><table id="healthMacroTable" class="text-xs w-full"></table></div>
+    </section>
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">ปฏิทิน Event</h2>
+      <p class="text-[11px] text-slate-500 mb-2">FOMC มาจากปฏิทินของ Federal Reserve ที่รวบรวมไว้ในไฟล์ · CPI/PCE มาจาก FRED (อัปเดตทุกวันพร้อม cron) · เลือกตั้งและวันหมดอายุออปชันคำนวณจากกฎ</p>
+      <div class="overflow-x-auto border border-slate-200 rounded-lg"><table id="healthEventTable" class="text-xs w-full"></table></div>
+    </section>
+  </div>
+
   </main>
 </div>
 
@@ -583,6 +618,10 @@ window.QD = (function () {
     session: null,
     instrumentsLoaded: false,
     dataAsOf: null,             // data_as_of() result: { as_of, last_complete_week_start, last_complete_month_start, ... }
+    // 2026-09-21: market event calendar (loaded once, on the first drill-down)
+    events: { loaded: false, loading: null, rows: [], types: [], enabled: [], enabledInitialized: false, error: "" },
+    // 2026-09-21: Data Health tab (loaded on first visit to the tab)
+    health: { loaded: false, loading: false, data: null, onlyProblems: false },
     instruments: [],
     assetId: null,
     periodType: "month",
@@ -2428,6 +2467,7 @@ window.QD = (function () {
       }
       setLoading("momDrilldownLoading", false);
     }
+    if (!state.events.loaded) await ensureMarketEvents();
     renderMomDrilldown();
     renderMomentumTable(sortedMomentumRows()); // refresh the row highlight
     updateMomExportAvailability();
@@ -2446,14 +2486,18 @@ window.QD = (function () {
     const tf = state.momentum.timeframe;
     const points = buildVolumeDrilldownData(series, state.momentum.volBaselinePeriods, VOLUME_DRILLDOWN_PERIODS[tf]);
     state.momentum.drilldownPoints = points;
+    const labels = points.map((p) => p.periodEnd);
+    const eventMarkers = buildEventMarkers(mapEventsToPeriods(labels, state.events.rows, tf, state.events.enabled));
+    state.momentum.drilldownEventMarkers = eventMarkers;
     if (noteEl) {
       noteEl.textContent = `แสดง ${points.length} งวดล่าสุด · baseline ${state.momentum.volBaselinePeriods} ${MOMENTUM_UNIT_LABEL[tf]}` +
-        ` (แถบเงา = ค่าเฉลี่ยเรขาคณิต × / ÷ 1SD และ 2SD บนสเกล log)`;
+        ` (แถบเงา = ค่าเฉลี่ยเรขาคณิต × / ÷ 1SD และ 2SD บนสเกล log)` +
+        (state.events.enabled.length ? ` · เส้นประแนวตั้ง = event ${eventMarkers.reduce((a, m) => a + m.events.length, 0)} รายการในช่วงนี้` : "");
     }
     if (!canvas || typeof Chart === "undefined") return;
     if (momDrilldownChartInstance) { momDrilldownChartInstance.destroy(); momDrilldownChartInstance = null; }
-    const labels = points.map((p) => p.periodEnd);
     momDrilldownChartInstance = new Chart(canvas.getContext("2d"), {
+      plugins: [eventMarkersPlugin],
       data: {
         labels,
         datasets: [
@@ -2480,7 +2524,20 @@ window.QD = (function () {
           y: { position: "left", title: { display: true, text: "Volume" } },
           y1: { position: "right", title: { display: true, text: "ราคาปิด" }, grid: { drawOnChartArea: false } }
         },
-        plugins: { legend: { position: "bottom" } }
+        plugins: {
+          legend: { position: "bottom" },
+          qdEventMarkers: { markers: eventMarkers },
+          tooltip: {
+            callbacks: {
+              // list the events that fall in the hovered period
+              afterBody: (items) => {
+                const i = items && items.length ? items[0].dataIndex : -1;
+                const m = eventMarkers.find((x) => x.index === i);
+                return m ? m.events.map((e) => `• ${e.nameTh || e.code} (${formatThaiDate(e.eventDate) || e.eventDate})`) : [];
+              }
+            }
+          }
+        }
       }
     });
   }
@@ -3346,7 +3403,12 @@ window.QD = (function () {
       byInst[r.instrument_id].push({
         period_end: r.period_end,
         volume: r.volume == null ? null : Number(r.volume),
-        adj_close: r.adj_close == null ? null : Number(r.adj_close)
+        adj_close: r.adj_close == null ? null : Number(r.adj_close),
+        // 2026-09-21: period open/high/low on the adj_close basis (null from an
+        // older RPC that did not return them)
+        adj_open: r.adj_open == null ? null : Number(r.adj_open),
+        adj_high: r.adj_high == null ? null : Number(r.adj_high),
+        adj_low: r.adj_low == null ? null : Number(r.adj_low)
       });
     });
     Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
@@ -3749,13 +3811,16 @@ window.QD = (function () {
 
   function switchTab(tab) {
     state.activeTab = tab;
-    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum");
-    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum");
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth");
     if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
     if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
+    if (healthEl) healthEl.classList.toggle("hidden", tab !== "health");
     if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
     if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
+    if (healthBtn) healthBtn.classList.toggle("qd-tab-active", tab === "health");
     if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
+    if (tab === "health" && !state.health.loaded && !state.health.loading && state.session) loadDataHealth();
   }
 
   function bindMomentumUIHandlers() {
@@ -3915,6 +3980,391 @@ window.QD = (function () {
       renderCorrCheckboxPanel();
       recomputeCorrelation();
     });
+  }
+
+  // =====================================================================
+  // Market events (2026-09-21, Round 1 item C)
+  // =====================================================================
+  // market_events_between() returns every event with the trading day it lands
+  // on (market_date). The page only maps those days onto chart periods and
+  // draws them -- no date logic of its own beyond "which period holds this day".
+  const EVENT_TYPE_STYLE = {
+    fomc:             { short: "FOMC",     color: "#dc2626" },
+    cpi:              { short: "CPI",      color: "#d97706" },
+    pce:              { short: "PCE",      color: "#ca8a04" },
+    us_election_pres: { short: "เลือกตั้ง",  color: "#2563eb" },
+    us_election_mid:  { short: "กลางเทอม", color: "#0891b2" },
+    opex_monthly:     { short: "OpEx",     color: "#64748b" }
+  };
+  const EVENT_DEFAULT_STYLE = { color: "#6b7280" };
+
+  function eventStyle(code) {
+    return EVENT_TYPE_STYLE[code] || Object.assign({ short: code }, EVENT_DEFAULT_STYLE);
+  }
+
+  async function fetchMarketEvents() {
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("market_events_between", { p_types: null, p_start: null, p_end: null })
+        .range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  // Distinct event types in first-seen order of the style table (known types
+  // first, in EVENT_TYPE_STYLE order; unknown ones after, alphabetically).
+  function eventTypesFromRows(rows) {
+    const byCode = {};
+    (rows || []).forEach((r) => {
+      if (!byCode[r.event_type]) {
+        byCode[r.event_type] = { code: r.event_type, nameTh: r.name_th || r.event_type, showDefault: !!r.show_default, count: 0 };
+      }
+      byCode[r.event_type].count += 1;
+    });
+    const known = Object.keys(EVENT_TYPE_STYLE);
+    return Object.values(byCode).sort((a, b) => {
+      const ia = known.indexOf(a.code), ib = known.indexOf(b.code);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 1e9 : ia) - (ib === -1 ? 1e9 : ib);
+      return a.code < b.code ? -1 : 1;
+    });
+  }
+
+  // The period a trading day belongs to, as a comparable key. The chart's own
+  // period_end dates are keyed the same way, so an event lands on the bar whose
+  // period contains it (Monday-based weeks, like date_trunc('week') in SQL).
+  function eventPeriodKey(dateStr, timeframe) {
+    if (!dateStr) return null;
+    const s = String(dateStr).slice(0, 10);
+    if (timeframe === "month") return s.slice(0, 7);
+    if (timeframe === "week") {
+      const d = new Date(s + "T00:00:00Z");
+      if (isNaN(d.getTime())) return null;
+      const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+      d.setUTCDate(d.getUTCDate() - dow);
+      return d.toISOString().slice(0, 10);
+    }
+    return s;
+  }
+
+  // -> [{ index, events: [{code, eventDate, marketDate, nameTh}] }] for the
+  // enabled types only; events outside the plotted periods are dropped.
+  function mapEventsToPeriods(periodEnds, events, timeframe, enabledCodes) {
+    const enabled = new Set(enabledCodes || []);
+    const idxByKey = new Map();
+    (periodEnds || []).forEach((pe, i) => idxByKey.set(eventPeriodKey(pe, timeframe), i));
+    const byIndex = new Map();
+    (events || []).forEach((e) => {
+      if (!enabled.has(e.event_type) || !e.market_date) return;
+      const i = idxByKey.get(eventPeriodKey(e.market_date, timeframe));
+      if (i === undefined) return;
+      if (!byIndex.has(i)) byIndex.set(i, []);
+      byIndex.get(i).push({ code: e.event_type, eventDate: e.event_date, marketDate: e.market_date, nameTh: e.name_th });
+    });
+    return Array.from(byIndex.entries()).sort((a, b) => a[0] - b[0]).map(([index, evs]) => ({ index, events: evs }));
+  }
+
+  // One marker per bar: colour of the first type there, label lists every
+  // distinct type ("FOMC·CPI").
+  function buildEventMarkers(mapped) {
+    return (mapped || []).map((m) => {
+      const codes = [];
+      m.events.forEach((e) => { if (codes.indexOf(e.code) === -1) codes.push(e.code); });
+      return { index: m.index, color: eventStyle(codes[0]).color, label: codes.map((c) => eventStyle(c).short).join("·"), codes, events: m.events };
+    });
+  }
+
+  // Draws dashed vertical lines + a small label on a Chart.js chart. Pure
+  // canvas calls so it can be tested with a recording fake context.
+  function drawEventMarkers(ctx, area, xForIndex, markers) {
+    if (!ctx || !area || !markers || !markers.length) return 0;
+    let drawn = 0;
+    let lastLabelRight = -Infinity;
+    let row = 0;
+    ctx.save();
+    ctx.font = "10px sans-serif";
+    ctx.textBaseline = "top";
+    markers.forEach((m) => {
+      const x = xForIndex(m.index);
+      if (x == null || isNaN(x) || x < area.left - 0.5 || x > area.right + 0.5) return;
+      ctx.strokeStyle = m.color;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, area.top);
+      ctx.lineTo(x, area.bottom);
+      ctx.stroke();
+      // labels alternate between two rows when they would overlap
+      const w = ctx.measureText ? ctx.measureText(m.label).width : m.label.length * 6;
+      row = x - 2 < lastLabelRight ? (row + 1) % 2 : 0;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.label, Math.min(x + 2, area.right - w), area.top + 2 + row * 12);
+      lastLabelRight = Math.max(lastLabelRight, x + 2 + w);
+      drawn += 1;
+    });
+    ctx.restore();
+    return drawn;
+  }
+
+  const eventMarkersPlugin = {
+    id: "qdEventMarkers",
+    afterDatasetsDraw(chart, _args, opts) {
+      const markers = (opts && opts.markers) || [];
+      if (!markers.length || !chart.scales || !chart.scales.x) return;
+      drawEventMarkers(chart.ctx, chart.chartArea, (i) => chart.scales.x.getPixelForValue(i), markers);
+    }
+  };
+
+  // Loads events once per session; failure is non-fatal (the chart is drawn
+  // without markers and the note says why).
+  async function ensureMarketEvents() {
+    const ev = state.events;
+    if (ev.loaded) return ev.rows;
+    if (ev.loading) return ev.loading;
+    ev.loading = (async () => {
+      try {
+        const rows = await fetchMarketEvents();
+        ev.rows = rows;
+        ev.types = eventTypesFromRows(rows);
+        if (!ev.enabledInitialized) {
+          ev.enabled = ev.types.filter((t) => t.showDefault).map((t) => t.code);
+          ev.enabledInitialized = true;
+        }
+        ev.error = "";
+      } catch (e) {
+        ev.rows = [];
+        ev.types = [];
+        ev.error = (e && e.message) || String(e);
+      }
+      ev.loaded = true;
+      ev.loading = null;
+      renderEventToggles();
+      return ev.rows;
+    })();
+    return ev.loading;
+  }
+
+  function renderEventToggles() {
+    const el = byId("momEventToggles");
+    if (!el) return;
+    const ev = state.events;
+    if (ev.error) {
+      el.innerHTML = `<span class="text-slate-400">โหลดปฏิทิน event ไม่สำเร็จ: ${escapeHtml(ev.error)}</span>`;
+      return;
+    }
+    if (!ev.types.length) {
+      el.innerHTML = ev.loaded ? `<span class="text-slate-400">ยังไม่มีข้อมูล event</span>` : "";
+      return;
+    }
+    el.innerHTML = `<span class="text-slate-500 mr-1">แสดง event บนกราฟ:</span>` + ev.types.map((t) => {
+      const st = eventStyle(t.code);
+      const on = ev.enabled.indexOf(t.code) !== -1;
+      return `<label class="inline-flex items-center gap-1 mr-3 cursor-pointer" title="${escapeHtml(t.nameTh)} (${t.count} รายการ)">` +
+        `<input type="checkbox" data-event-code="${escapeHtml(t.code)}" ${on ? "checked" : ""} />` +
+        `<span class="inline-block w-3 border-t-2 border-dashed" style="border-color:${st.color}"></span>` +
+        `<span>${escapeHtml(t.nameTh)}</span></label>`;
+    }).join("");
+    el.querySelectorAll("input[data-event-code]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const code = cb.getAttribute("data-event-code");
+        const set = new Set(state.events.enabled);
+        if (cb.checked) set.add(code); else set.delete(code);
+        state.events.enabled = ev.types.map((t) => t.code).filter((c) => set.has(c));
+        renderMomDrilldown(); // redraw only -- no fetch
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // =====================================================================
+  // Data Health tab (2026-09-21, Round 1 item A)
+  // =====================================================================
+  // Thresholds match the cron alert (data_health_report / fetch_prices.py):
+  // 3 consecutive error run-days or 3+ trading days behind = problem.
+  const HEALTH_ERROR_DAYS = 3;
+  const HEALTH_STALE_DAYS = 3;
+  const MACRO_SERIES_INFO = {
+    DGS10:    { label: "US 10Y Treasury Yield", freq: "daily",   maxAgeDays: 7 },
+    FEDFUNDS: { label: "Fed Funds Rate",        freq: "monthly", maxAgeDays: 70 },
+    CPIAUCSL: { label: "US CPI YoY",            freq: "monthly", maxAgeDays: 70 },
+    UNRATE:   { label: "US Unemployment Rate",  freq: "monthly", maxAgeDays: 70 }
+  };
+  const HEALTH_STATUS_LABEL = { ok: "ปกติ", warn: "ต้องจับตา", error: "มีปัญหา" };
+  const HEALTH_STATUS_CLASS = {
+    ok: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    warn: "bg-amber-50 text-amber-700 border-amber-200",
+    error: "bg-red-50 text-red-700 border-red-200"
+  };
+
+  // -> { status: ok|warn|error, reasons: [thai text] }
+  function classifyInstrumentHealth(r) {
+    const reasons = [];
+    let status = "ok";
+    const bump = (s) => { if (s === "error" || (s === "warn" && status === "ok")) status = s; };
+    if (!r || !r.rows) { return { status: "error", reasons: ["ไม่มีข้อมูลราคา"] }; }
+    if (r.error_streak >= HEALTH_ERROR_DAYS) { bump("error"); reasons.push(`ดึงข้อมูลล้มเหลว ${r.error_streak} วันติด`); }
+    else if (r.error_streak > 0) { bump("warn"); reasons.push(`ดึงข้อมูลล้มเหลว ${r.error_streak} วันล่าสุด`); }
+    if (r.days_behind >= HEALTH_STALE_DAYS) { bump("error"); reasons.push(`ช้ากว่าตลาด ${r.days_behind} วันทำการ`); }
+    else if (r.days_behind > 0) { bump("warn"); reasons.push(`ช้ากว่าตลาด ${r.days_behind} วันทำการ`); }
+    if (r.missing_1y > 0) { bump("warn"); reasons.push(`ข้อมูลขาด ${r.missing_1y} วันในรอบ 1 ปี`); }
+    if (r.last_status && r.last_status !== "ok" && !(r.error_streak > 0)) { bump("warn"); reasons.push(`ผลดึงล่าสุด: ${r.last_status}`); }
+    return { status, reasons };
+  }
+
+  function daysBetween(a, b) {
+    const da = new Date(String(a).slice(0, 10) + "T00:00:00Z"), db = new Date(String(b).slice(0, 10) + "T00:00:00Z");
+    if (isNaN(da.getTime()) || isNaN(db.getTime())) return null;
+    return Math.round((db - da) / 86400000);
+  }
+
+  // Monthly series are dated the 1st of the month they describe and are
+  // published weeks later, so they are judged on a longer allowance.
+  function classifyMacroHealth(m, today) {
+    const info = MACRO_SERIES_INFO[m.series_id] || { label: m.series_id, freq: "unknown", maxAgeDays: 70 };
+    const age = daysBetween(m.last_date, today);
+    if (age == null) return { status: "error", age: null, info, reason: "ไม่มีข้อมูล" };
+    if (age > info.maxAgeDays) return { status: "warn", age, info, reason: `ข้อมูลล่าสุดเก่า ${age} วัน (เกณฑ์ ${info.maxAgeDays} วัน)` };
+    return { status: "ok", age, info, reason: "" };
+  }
+
+  function classifyEventTypeHealth(e) {
+    if (!e.count) return { status: "warn", reason: "ยังไม่มีข้อมูล (รอ workflow ดึงครั้งแรก)" };
+    if (!e.next_date && e.source !== "manual") return { status: "warn", reason: "ไม่มีวันนัดครั้งถัดไป" };
+    return { status: "ok", reason: "" };
+  }
+
+  function summarizeHealth(instruments) {
+    const out = { total: 0, ok: 0, warn: 0, error: 0 };
+    (instruments || []).forEach((r) => { out.total += 1; out[classifyInstrumentHealth(r).status] += 1; });
+    return out;
+  }
+
+  // problems first (error, warn, ok), then ticker
+  function sortHealthRows(instruments) {
+    const rank = { error: 0, warn: 1, ok: 2 };
+    return (instruments || []).map((r) => Object.assign({ health: classifyInstrumentHealth(r) }, r))
+      .sort((a, b) => (rank[a.health.status] - rank[b.health.status]) || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
+  }
+
+  async function fetchDataHealth() {
+    const { data, error } = await sb.rpc("data_health_overview");
+    if (error) throw error;
+    return data || { instruments: [], macro: [], events: [] };
+  }
+
+  async function loadDataHealth() {
+    const h = state.health;
+    h.loading = true;
+    setLoading("healthLoading", true);
+    hide(byId("healthError"));
+    try {
+      h.data = await fetchDataHealth();
+      h.loaded = true;
+    } catch (e) {
+      showError(byId("healthError"), `โหลด Data Health ไม่สำเร็จ: ${(e && e.message) || e}`);
+    }
+    h.loading = false;
+    setLoading("healthLoading", false);
+    renderDataHealth();
+  }
+
+  function healthBadge(status) {
+    return `<span class="inline-block text-[11px] px-2 py-0.5 rounded-full border ${HEALTH_STATUS_CLASS[status]}">${HEALTH_STATUS_LABEL[status]}</span>`;
+  }
+
+  function formatDateTimeTh(ts) {
+    if (!ts) return "–";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "–";
+    const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const date = formatThaiDate(local);
+    const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
+    return `${date} ${hh}:${mm}`;
+  }
+
+  function renderDataHealth() {
+    const data = state.health.data;
+    if (!data) return;
+    const today = new Date().toISOString().slice(0, 10);
+    setText("healthAsOf", `ข้อมูลราคาล่าสุดในระบบ: ${data.as_of ? formatThaiDate(data.as_of) : "–"} · ` +
+      `cron รันล่าสุด: ${formatDateTimeTh(data.last_fetch_run)}`);
+
+    const sum = summarizeHealth(data.instruments);
+    const cards = byId("healthSummary");
+    if (cards) {
+      const card = (label, n, cls) => `<div class="rounded-xl border ${cls} px-4 py-3"><div class="text-[11px]">${label}</div><div class="text-xl font-semibold">${n}</div></div>`;
+      cards.innerHTML = card("Instrument ทั้งหมด", sum.total, "border-slate-200 text-slate-700") +
+        card(HEALTH_STATUS_LABEL.ok, sum.ok, HEALTH_STATUS_CLASS.ok) +
+        card(HEALTH_STATUS_LABEL.warn, sum.warn, HEALTH_STATUS_CLASS.warn) +
+        card(HEALTH_STATUS_LABEL.error, sum.error, HEALTH_STATUS_CLASS.error);
+    }
+
+    const onlyProblems = state.health.onlyProblems;
+    const rows = sortHealthRows(data.instruments).filter((r) => !onlyProblems || r.health.status !== "ok");
+    const tbl = byId("healthInstrumentTable");
+    if (tbl) {
+      const head = ["สถานะ", "Ticker", "ชื่อ", "หมวด", "ข้อมูลล่าสุด", "ช้ากว่าตลาด (วัน)", "ขาดใน 1 ปี (วัน)", "error ติดกัน", "ดึงล่าสุด", "หมายเหตุ"];
+      tbl.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${head.map((h) => `<th class="text-left font-medium px-2 py-1.5 whitespace-nowrap">${h}</th>`).join("")}</tr></thead>` +
+        `<tbody>` + (rows.length ? rows.map((r) =>
+          `<tr class="border-t border-slate-100" data-health-ticker="${escapeHtml(r.ticker)}">` +
+          `<td class="px-2 py-1">${healthBadge(r.health.status)}</td>` +
+          `<td class="px-2 py-1 font-medium">${escapeHtml(r.ticker)}</td>` +
+          `<td class="px-2 py-1 text-slate-600">${escapeHtml(r.name)}</td>` +
+          `<td class="px-2 py-1 text-slate-500">${escapeHtml(r.category)}</td>` +
+          `<td class="px-2 py-1 whitespace-nowrap">${r.last_date ? formatThaiDate(r.last_date) : "–"}</td>` +
+          `<td class="px-2 py-1 text-right">${r.days_behind}</td>` +
+          `<td class="px-2 py-1 text-right">${r.missing_1y}</td>` +
+          `<td class="px-2 py-1 text-right">${r.error_streak}</td>` +
+          `<td class="px-2 py-1 whitespace-nowrap text-slate-500" title="${escapeHtml(r.last_message || "")}">${escapeHtml(r.last_status || "–")} · ${formatDateTimeTh(r.last_run_at)}</td>` +
+          `<td class="px-2 py-1 text-slate-600">${escapeHtml(r.health.reasons.join(" · "))}</td>` +
+          `</tr>`).join("") : `<tr><td colspan="${head.length}" class="px-2 py-3 text-center text-slate-400">ไม่มีรายการที่มีปัญหา</td></tr>`) + `</tbody>`;
+    }
+
+    const mt = byId("healthMacroTable");
+    if (mt) {
+      mt.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${["สถานะ", "Series", "ความหมาย", "ข้อมูลล่าสุด", "อายุ (วัน)", "เพิ่มแถวใหม่ล่าสุด", "หมายเหตุ"].map((h) => `<th class="text-left font-medium px-2 py-1.5">${h}</th>`).join("")}</tr></thead><tbody>` +
+        (data.macro || []).map((m) => {
+          const c = classifyMacroHealth(m, today);
+          return `<tr class="border-t border-slate-100"><td class="px-2 py-1">${healthBadge(c.status)}</td>` +
+            `<td class="px-2 py-1 font-medium">${escapeHtml(m.series_id)}</td><td class="px-2 py-1 text-slate-600">${escapeHtml(c.info.label)}</td>` +
+            `<td class="px-2 py-1">${m.last_date ? formatThaiDate(m.last_date) : "–"}</td><td class="px-2 py-1 text-right">${c.age == null ? "–" : c.age}</td>` +
+            `<td class="px-2 py-1 text-slate-500">${formatDateTimeTh(m.last_loaded_at)}</td><td class="px-2 py-1 text-slate-600">${escapeHtml(c.reason)}</td></tr>`;
+        }).join("") + `</tbody>`;
+    }
+
+    const et = byId("healthEventTable");
+    if (et) {
+      const srcLabel = { fred: "FRED", rule: "คำนวณจากกฎ", curated: "ไฟล์ที่รวบรวมไว้", manual: "กรอกเอง" };
+      et.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${["สถานะ", "Event", "แหล่งข้อมูล", "จำนวน", "ตั้งแต่", "ครั้งล่าสุด", "ครั้งถัดไป", "หมายเหตุ"].map((h) => `<th class="text-left font-medium px-2 py-1.5">${h}</th>`).join("")}</tr></thead><tbody>` +
+        (data.events || []).map((e) => {
+          const c = classifyEventTypeHealth(e);
+          return `<tr class="border-t border-slate-100"><td class="px-2 py-1">${healthBadge(c.status)}</td>` +
+            `<td class="px-2 py-1 font-medium">${escapeHtml(e.name_th)}</td><td class="px-2 py-1 text-slate-500">${escapeHtml(srcLabel[e.source] || e.source)}</td>` +
+            `<td class="px-2 py-1 text-right">${e.count}</td><td class="px-2 py-1">${e.first_date ? formatThaiDate(e.first_date) : "–"}</td>` +
+            `<td class="px-2 py-1">${e.last_past ? formatThaiDate(e.last_past) : "–"}</td><td class="px-2 py-1">${e.next_date ? formatThaiDate(e.next_date) : "–"}</td>` +
+            `<td class="px-2 py-1 text-slate-600">${escapeHtml(c.reason)}</td></tr>`;
+        }).join("") + `</tbody>`;
+    }
+  }
+
+  function bindHealthUIHandlers() {
+    const btn = byId("tabBtnHealth");
+    if (btn) btn.addEventListener("click", () => switchTab("health"));
+    const refresh = byId("healthRefreshBtn");
+    if (refresh) refresh.addEventListener("click", () => loadDataHealth());
+    const only = byId("healthOnlyProblems");
+    if (only) only.addEventListener("change", (e) => { state.health.onlyProblems = e.target.checked; renderDataHealth(); });
   }
 
   // ---------------------------------------------------------------------
@@ -4091,6 +4541,7 @@ window.QD = (function () {
     bindMomentumUIHandlers();
     bindMergedTableUIHandlers();
     bindCorrelationUIHandlers();
+    bindHealthUIHandlers();
     renderStatGlossary();
     renderMomentumGlossary();
     initTableLayout();
@@ -4170,6 +4621,11 @@ window.QD = (function () {
     // Correlation Explorer -- data + flows
     ensureCorrelationSeries, runCorrelationCalculate, recomputeCorrelation, corrSelectedItems,
     renderCorrCheckboxPanel, renderCorrelationMatrix, selectCorrelationPair, renderCorrPairChart, renderCorrAvgChart,
+    // Market events + Data Health (2026-09-21)
+    EVENT_TYPE_STYLE, eventStyle, fetchMarketEvents, eventTypesFromRows, eventPeriodKey, mapEventsToPeriods,
+    buildEventMarkers, drawEventMarkers, eventMarkersPlugin, ensureMarketEvents, renderEventToggles, escapeHtml,
+    HEALTH_ERROR_DAYS, HEALTH_STALE_DAYS, MACRO_SERIES_INFO, classifyInstrumentHealth, classifyMacroHealth,
+    classifyEventTypeHealth, summarizeHealth, sortHealthRows, fetchDataHealth, loadDataHealth, renderDataHealth,
     init
   };
 })();
