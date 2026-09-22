@@ -1504,9 +1504,9 @@ async function main() {
   assert.strictEqual(window.document.getElementById("tabVolume"), null, "Volume tab removed");
   assert.strictEqual(window.document.getElementById("tabBtnVolume"), null);
   assert.strictEqual(window.document.getElementById("volMetricPicker"), null, "the redundant metric picker is gone");
-  // 2026-09-21: Data Health is the 3rd tab
-  assert.strictEqual(window.document.querySelectorAll("nav .qd-tab-btn").length, 3, "Seasonality + Momentum & Rotation + Data Health");
-  console.log("[ok] Volume tab folded into Momentum & Rotation -- no duplicated controls left behind (3 tabs incl. Data Health)");
+  // 2026-09-21: Data Health is the 3rd tab · 2026-09-22 (round 2): Events is the 4th
+  assert.strictEqual(window.document.querySelectorAll("nav .qd-tab-btn").length, 4, "Seasonality + Momentum & Rotation + Data Health + Events");
+  console.log("[ok] Volume tab folded into Momentum & Rotation -- no duplicated controls left behind (4 tabs incl. Data Health + Events)");
 
   // =====================================================================
   const plain = (x) => JSON.parse(JSON.stringify(x));
