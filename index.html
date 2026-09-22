@@ -596,8 +596,12 @@
     <!-- Events Calendar + Table + Forms -->
     <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <h2 class="text-sm font-semibold text-slate-800">Events Calendar</h2>
-        <div class="flex items-center gap-3 text-xs">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-slate-800">Events Calendar</h2>
+          <button id="eventsCollapseBtn" type="button" aria-expanded="true" aria-controls="eventsBody"
+            class="text-xs text-blue-600 hover:underline">พับ ▲</button>
+        </div>
+        <div id="eventsControls" class="flex items-center gap-3 text-xs">
           <select id="eventsYearFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
             <option value="">All Years</option>
           </select>
@@ -607,11 +611,13 @@
           <button id="eventsRefreshBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
         </div>
       </div>
-      <div id="eventsCalendarStrip" class="flex gap-1 overflow-x-auto pb-2 mb-3"></div>
-      <p id="eventsError" class="text-xs text-red-600 hidden mb-2"></p>
-      <div id="eventsLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
-      <div class="overflow-x-auto border border-slate-200 rounded-lg">
-        <table id="eventsTable" class="text-xs w-full"></table>
+      <div id="eventsBody">
+        <div id="eventsCalendarStrip" class="flex gap-1 overflow-x-auto pb-2 mb-3"></div>
+        <p id="eventsError" class="text-xs text-red-600 hidden mb-2"></p>
+        <div id="eventsLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table id="eventsTable" class="text-xs w-full"></table>
+        </div>
       </div>
     </section>
 
@@ -826,6 +832,8 @@ window.QD = (function () {
       pendingDrafts: [],       // admin: all pending drafts
       yearFilter: null,        // selected year_group key or null
       calendarYear: new Date().getFullYear(),
+      sort: { key: "date", dir: "desc" }, // Events table column sort (default = newest first, as before)
+      collapsed: false,        // Events Calendar section folded?
     },
     seasonal: {
       loaded: false,
@@ -4147,8 +4155,60 @@ window.QD = (function () {
   };
   const EVENT_DEFAULT_STYLE = { color: "#6b7280" };
 
+  // Custom events are drawn one checkbox per event *name* (same name across
+  // years = one series), using the colour the creator picked. Their codes are
+  // "custom:<name>"; styles are filled in when the rows are loaded.
+  const CUSTOM_EVENT_CODE_PREFIX = "custom:";
+  const CUSTOM_EVENT_LABEL_MAX = 18;
+  let customEventStyles = {};
+
   function eventStyle(code) {
-    return EVENT_TYPE_STYLE[code] || Object.assign({ short: code }, EVENT_DEFAULT_STYLE);
+    return EVENT_TYPE_STYLE[code] || customEventStyles[code] || Object.assign({ short: code }, EVENT_DEFAULT_STYLE);
+  }
+
+  // Raw market_events_between rows -> rows for the drill-down chart. System
+  // events pass through untouched; each custom row gets code "custom:<name>"
+  // and name_th = its own name (so toggles + tooltip show the real name).
+  // Returns { rows, styles } -- styles keyed by code, colour of the earliest row.
+  function toDrilldownEventRows(rows) {
+    const styles = {};
+    const out = (rows || []).map((r) => {
+      if (r.event_type !== "custom") return r;
+      const name = String(r.event_name || "").trim() || "Custom Event";
+      const code = CUSTOM_EVENT_CODE_PREFIX + name;
+      if (!styles[code]) {
+        const short = name.length > CUSTOM_EVENT_LABEL_MAX ? name.slice(0, CUSTOM_EVENT_LABEL_MAX - 1) + "…" : name;
+        styles[code] = { short, color: /^#[0-9a-f]{6}$/i.test(r.color || "") ? r.color : EVENT_DEFAULT_STYLE.color, firstDate: r.event_date };
+      } else if (r.event_date && r.event_date < styles[code].firstDate && /^#[0-9a-f]{6}$/i.test(r.color || "")) {
+        styles[code].color = r.color;
+        styles[code].firstDate = r.event_date;
+      }
+      return Object.assign({}, r, { event_type: code, name_th: name, name_en: name, show_default: false });
+    });
+    Object.keys(styles).forEach((c) => { delete styles[c].firstDate; });
+    return { rows: out, styles };
+  }
+
+  // Single place that (re)loads the drill-down's event state from raw rows --
+  // used by ensureMarketEvents and by the Events tab after every fetch, so a
+  // new/approved/deleted custom event shows on the chart without a page reload.
+  // Existing on/off choices are kept; new types start off (show_default).
+  function applyMarketEventRows(rawRows) {
+    const ev = state.events;
+    const conv = toDrilldownEventRows(rawRows);
+    customEventStyles = conv.styles;
+    ev.rows = conv.rows;
+    ev.types = eventTypesFromRows(conv.rows);
+    if (!ev.enabledInitialized) {
+      ev.enabled = ev.types.filter((t) => t.showDefault).map((t) => t.code);
+      ev.enabledInitialized = true;
+    } else {
+      const known = new Set(ev.types.map((t) => t.code));
+      ev.enabled = ev.enabled.filter((c) => known.has(c));
+    }
+    ev.error = "";
+    ev.loaded = true;
+    renderEventToggles();
   }
 
   async function fetchMarketEvents() {
@@ -4280,22 +4340,15 @@ window.QD = (function () {
     if (ev.loading) return ev.loading;
     ev.loading = (async () => {
       try {
-        const rows = await fetchMarketEvents();
-        ev.rows = rows;
-        ev.types = eventTypesFromRows(rows);
-        if (!ev.enabledInitialized) {
-          ev.enabled = ev.types.filter((t) => t.showDefault).map((t) => t.code);
-          ev.enabledInitialized = true;
-        }
-        ev.error = "";
+        applyMarketEventRows(await fetchMarketEvents());
       } catch (e) {
         ev.rows = [];
         ev.types = [];
         ev.error = (e && e.message) || String(e);
+        ev.loaded = true;
+        renderEventToggles();
       }
-      ev.loaded = true;
       ev.loading = null;
-      renderEventToggles();
       return ev.rows;
     })();
     return ev.loading;
@@ -4349,9 +4402,8 @@ window.QD = (function () {
     // Show custom event form if logged in
     if (state.session) show(byId("customEventSection"));
     // Show admin panel if admin
-    if (state.session && state.session.user && state.session.user.email === "mehresix@gmail.com") {
-      show(byId("adminEventSection"));
-    }
+    if (isAdminSession()) show(byId("adminEventSection"));
+    applyEventsCollapsed();
 
     if (state.eventsTab.loading) return;
     state.eventsTab.loading = true;
@@ -4362,13 +4414,20 @@ window.QD = (function () {
       const rows = await fetchMarketEvents();
       state.eventsTab.customEvents = rows;
       state.eventsTab.loaded = true;
+      // keep the filters the user had picked across a reload
+      const prevYear = (byId("eventsYearFilter") || {}).value || "";
+      const prevType = (byId("eventsTypeFilter") || {}).value || "";
       renderEventsCalendarStrip(rows);
-      renderEventsTable(rows, null, null);
       populateEventsFilters(rows);
+      const yEl = byId("eventsYearFilter"), tEl = byId("eventsTypeFilter");
+      if (yEl && prevYear && Array.from(yEl.options).some((o) => o.value === prevYear)) yEl.value = prevYear;
+      if (tEl && prevType && Array.from(tEl.options).some((o) => o.value === prevType)) tEl.value = prevType;
+      rerenderEventsTable();
+      // Same rows feed the Momentum drill-down markers -> no page reload needed
+      applyMarketEventRows(rows);
+      if (state.momentum.drilldownInstrumentId != null) renderMomDrilldown();
       // Load admin pending drafts (separate query)
-      if (state.session && state.session.user && state.session.user.email === "mehresix@gmail.com") {
-        await loadAdminPendingDrafts();
-      }
+      if (isAdminSession()) await loadAdminPendingDrafts();
     } catch (e) {
       showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
     } finally {
@@ -4425,6 +4484,68 @@ window.QD = (function () {
     }).join("");
   }
 
+  function isAdminSession() {
+    return !!(state.session && state.session.user && state.session.user.email === "mehresix@gmail.com");
+  }
+
+  // Events table columns: key -> header label, sort value, alignment
+  const EVENTS_TABLE_COLUMNS = [
+    { key: "date",    label: "Date",        align: "left",   value: (r) => String(r.event_date || r.market_date || "") },
+    { key: "type",    label: "Type",        align: "left",   value: (r) => String(r.event_type || "") },
+    { key: "name",    label: "Name / Note", align: "left",   value: (r) => String(r.event_name || r.name_th || r.event_type || "").toLowerCase() },
+    { key: "status",  label: "Status",      align: "center", value: (r) => String(r.status || "system") },
+    { key: "creator", label: "Creator",     align: "left",   value: (r) => String(r.creator_email || "system").toLowerCase() }
+  ];
+
+  // Pure: returns a new array sorted by column key/dir; ties fall back to
+  // date (newest first) so the order is stable and predictable.
+  function sortEventRows(rows, key, dir) {
+    const col = EVENTS_TABLE_COLUMNS.find((c) => c.key === key) || EVENTS_TABLE_COLUMNS[0];
+    const dateOf = EVENTS_TABLE_COLUMNS[0].value;
+    const sign = dir === "asc" ? 1 : -1;
+    return (rows || []).slice().sort((a, b) => {
+      const va = col.value(a), vb = col.value(b);
+      if (va !== vb) {
+        if (va === "") return 1; // blanks always last
+        if (vb === "") return -1;
+        return (va < vb ? -1 : 1) * sign;
+      }
+      const da = dateOf(a), db = dateOf(b);
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+  }
+
+  function rerenderEventsTable() {
+    renderEventsTable(state.eventsTab.customEvents,
+      (byId("eventsYearFilter") || {}).value || null,
+      (byId("eventsTypeFilter") || {}).value || null);
+  }
+
+  // Header click: same column flips direction; new column starts desc for
+  // date (newest first) and asc for text columns.
+  function setEventsSort(key) {
+    const s = state.eventsTab.sort;
+    if (s.key === key) s.dir = s.dir === "asc" ? "desc" : "asc";
+    else { s.key = key; s.dir = key === "date" ? "desc" : "asc"; }
+    rerenderEventsTable();
+  }
+
+  function applyEventsCollapsed() {
+    const collapsed = !!state.eventsTab.collapsed;
+    const body = byId("eventsBody"), ctl = byId("eventsControls"), btn = byId("eventsCollapseBtn");
+    if (body) body.classList.toggle("hidden", collapsed);
+    if (ctl) ctl.classList.toggle("hidden", collapsed);
+    if (btn) {
+      btn.textContent = collapsed ? "ขยาย ▼" : "พับ ▲";
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+  }
+
+  function toggleEventsCollapsed() {
+    state.eventsTab.collapsed = !state.eventsTab.collapsed;
+    applyEventsCollapsed();
+  }
+
   function renderEventsTable(rows, yearFilter, typeFilter) {
     const el = byId("eventsTable");
     if (!el) return;
@@ -4444,41 +4565,43 @@ window.QD = (function () {
     if (typeFilter) {
       filtered = filtered.filter((r) => r.event_type === typeFilter);
     }
-    // Sort by date descending
-    filtered.sort((a, b) => {
-      const da = a.event_date || a.market_date || "";
-      const db = b.event_date || b.market_date || "";
-      return da < db ? 1 : da > db ? -1 : 0;
-    });
+    const sortState = state.eventsTab.sort || { key: "date", dir: "desc" };
+    filtered = sortEventRows(filtered, sortState.key, sortState.dir);
+    const admin = isAdminSession();
     const statusBadge = (s) => {
       if (s === "approved") return '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>';
       if (s === "draft") return '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>';
       if (s === "rejected") return '<span class="qd-badge-fail text-[10px] px-1.5 py-0.5 rounded">rejected</span>';
       return '<span class="text-[10px] text-slate-400">' + escapeHtml(s || "system") + '</span>';
     };
+    const headerCells = EVENTS_TABLE_COLUMNS.map((c) => {
+      const active = c.key === sortState.key;
+      const arrow = active ? (sortState.dir === "asc" ? " ▲" : " ▼") : "";
+      const aria = active ? (sortState.dir === "asc" ? "ascending" : "descending") : "none";
+      return `<th class="text-${c.align} px-3 py-2 font-medium text-slate-600 cursor-pointer select-none hover:bg-slate-100" ` +
+        `data-sort="${c.key}" aria-sort="${aria}" title="คลิกเพื่อเรียง">${c.label}<span class="text-blue-600">${arrow}</span></th>`;
+    }).join("") + (admin ? '<th class="text-center px-3 py-2 font-medium text-slate-600">จัดการ</th>' : "");
+    const colCount = EVENTS_TABLE_COLUMNS.length + (admin ? 1 : 0);
     el.innerHTML =
-      '<thead class="bg-slate-50"><tr>' +
-      '<th class="text-left px-3 py-2 font-medium text-slate-600">Date</th>' +
-      '<th class="text-left px-3 py-2 font-medium text-slate-600">Type</th>' +
-      '<th class="text-left px-3 py-2 font-medium text-slate-600">Name / Note</th>' +
-      '<th class="text-center px-3 py-2 font-medium text-slate-600">Status</th>' +
-      '<th class="text-left px-3 py-2 font-medium text-slate-600">Creator</th>' +
-      '</tr></thead><tbody>' +
+      '<thead class="bg-slate-50"><tr>' + headerCells + '</tr></thead><tbody>' +
       filtered.map((r) => {
-        const color = r.color || "#64748b";
+        const color = /^#[0-9a-f]{6}$/i.test(r.color || "") ? r.color : "#64748b";
         const name = r.event_name || r.name_th || r.event_type || "";
         const creator = r.creator_email ? maskEmail(r.creator_email) : "system";
+        const canDelete = admin && r.event_type === "custom" && r.status === "approved" && r.event_id != null;
         return `<tr class="border-t border-slate-100 hover:bg-slate-50">` +
           `<td class="px-3 py-1.5"><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${color}"></span>${escapeHtml(r.event_date || r.market_date || "")}</td>` +
           `<td class="px-3 py-1.5">${escapeHtml(r.event_type || "")}</td>` +
           `<td class="px-3 py-1.5">${escapeHtml(name)}</td>` +
           `<td class="px-3 py-1.5 text-center">${statusBadge(r.status)}</td>` +
-          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(creator)}</td></tr>`;
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(creator)}</td>` +
+          (admin ? `<td class="px-3 py-1.5 text-center">` +
+            (canDelete ? `<button type="button" class="text-red-600 hover:underline" data-delete-event="${escapeHtml(String(r.event_id))}" data-event-label="${escapeHtml(name + " (" + (r.event_date || "") + ")")}">ลบ</button>` : "") +
+            `</td>` : "") +
+          `</tr>`;
       }).join("") +
+      (filtered.length === 0 ? `<tr><td colspan="${colCount}" class="px-3 py-4 text-center text-slate-400">ไม่พบ event</td></tr>` : "") +
       '</tbody>';
-    if (filtered.length === 0) {
-      el.innerHTML += '<tr><td colspan="5" class="px-3 py-4 text-center text-slate-400">ไม่พบ event</td></tr>';
-    }
   }
 
   function maskEmail(email) {
@@ -4517,6 +4640,7 @@ window.QD = (function () {
       if (el) { el.textContent = "ส่ง draft สำเร็จ — รอ admin อนุมัติ"; show(el); }
       byId("ceDate").value = "";
       byId("ceName").value = "";
+      await loadEventsTab(); // the owner sees the draft in the table + chart right away
     } catch (e) {
       showError(byId("ceError"), "ส่งไม่สำเร็จ: " + (e.message || e));
     }
@@ -4557,6 +4681,7 @@ window.QD = (function () {
       byId("ceCsvInput").value = "";
       hide(byId("ceCsvPreview"));
       hide(byId("ceCsvSubmitBtn"));
+      await loadEventsTab();
     } catch (e) {
       showError(byId("ceCsvError"), "นำเข้าไม่สำเร็จ: " + (e.message || e));
     }
@@ -4627,9 +4752,27 @@ window.QD = (function () {
     try {
       const { error } = await sb.rpc("reject_custom_event", { p_event_id: eventId });
       if (error) throw error;
-      await loadAdminPendingDrafts();
+      // loadEventsTab also reloads the pending list + drill-down markers
+      await loadEventsTab();
     } catch (e) {
       showError(byId("adminError"), "Reject ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // Admin: delete an approved custom event (DB refuses non-custom types).
+  // confirmFn is injectable for tests; defaults to window.confirm.
+  async function deleteCustomEvent(eventId, label, confirmFn) {
+    hide(byId("eventsError"));
+    const ask = confirmFn || ((msg) => window.confirm(msg));
+    if (!ask(`ลบ Custom Event "${label || eventId}" ?\nลบแล้วกู้คืนไม่ได้`)) return false;
+    try {
+      const { error } = await sb.rpc("delete_custom_event", { p_event_id: Number(eventId) });
+      if (error) throw error;
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("eventsError"), "ลบไม่สำเร็จ: " + (e.message || e));
+      return false;
     }
   }
 
@@ -4945,17 +5088,25 @@ window.QD = (function () {
 
     const yearFilter = byId("eventsYearFilter");
     if (yearFilter) yearFilter.addEventListener("change", () => {
-      const val = yearFilter.value;
-      state.eventsTab.yearFilter = val || null;
-      renderEventsTable(state.eventsTab.customEvents, val || null,
-        (byId("eventsTypeFilter") || {}).value || null);
+      state.eventsTab.yearFilter = yearFilter.value || null;
+      rerenderEventsTable();
     });
 
     const typeFilter = byId("eventsTypeFilter");
-    if (typeFilter) typeFilter.addEventListener("change", () => {
-      renderEventsTable(state.eventsTab.customEvents,
-        (byId("eventsYearFilter") || {}).value || null,
-        typeFilter.value || null);
+    if (typeFilter) typeFilter.addEventListener("change", rerenderEventsTable);
+
+    const collapseBtn = byId("eventsCollapseBtn");
+    if (collapseBtn) collapseBtn.addEventListener("click", toggleEventsCollapsed);
+
+    // One delegated listener for the (re-rendered) table: header sort + admin delete
+    const eventsTableEl = byId("eventsTable");
+    if (eventsTableEl) eventsTableEl.addEventListener("click", (ev) => {
+      const target = ev.target && ev.target.closest ? ev.target : null;
+      if (!target) return;
+      const th = target.closest("th[data-sort]");
+      if (th) { setEventsSort(th.getAttribute("data-sort")); return; }
+      const del = target.closest("[data-delete-event]");
+      if (del) deleteCustomEvent(del.getAttribute("data-delete-event"), del.getAttribute("data-event-label"));
     });
 
     // Custom event form
@@ -5516,6 +5667,9 @@ window.QD = (function () {
     loadSeasonalData, computeSeasonalSeries, renderSeasonalChart, renderSeasonalAssetPicker,
     renderSeasonalYearGroupPicker, bindEventsTabHandlers, percentile, populateEventsFilters,
     loadAdminPendingDrafts,
+    // Round 2 close-out (2026-09-22)
+    toDrilldownEventRows, applyMarketEventRows, sortEventRows, setEventsSort, rerenderEventsTable,
+    toggleEventsCollapsed, deleteCustomEvent, isAdminSession, EVENTS_TABLE_COLUMNS,
     init
   };
 })();
