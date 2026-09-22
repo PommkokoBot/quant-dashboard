@@ -66,6 +66,7 @@
         <button id="tabBtnSeasonality" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="seasonality">Seasonality</button>
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
         <button id="tabBtnHealth" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="health">Data Health</button>
+        <button id="tabBtnEvents" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="events">Events</button>
       </nav>
     </div>
     <button id="logoutBtn" class="text-sm text-slate-600 hover:text-red-600 border border-slate-300 rounded-lg px-3 py-1.5">
@@ -544,6 +545,118 @@
     </section>
   </div>
 
+  <!-- ===================== EVENTS / SEASONAL TAB (Round 2) ===================== -->
+  <div id="tabEvents" class="hidden space-y-6">
+    <!-- Seasonal Chart -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">Seasonal Pattern</h2>
+      <div class="flex flex-wrap items-end gap-4 mb-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">สินทรัพย์</label>
+          <select id="seasonalAssetPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]"></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Metric</label>
+          <select id="seasonalMetricPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="cumReturn" selected>Cumulative Return</option>
+            <option value="volume">Daily Volume</option>
+            <option value="volatility">Realized Volatility (20d)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Statistic</label>
+          <select id="seasonalStatPicker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="median" selected>Median</option>
+            <option value="mean">Mean</option>
+            <option value="p25_p75">P25-P75 Band</option>
+            <option value="min_max">Min-Max Band</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ช่วงปี</label>
+          <div class="flex gap-1" id="seasonalYearRangeBtns">
+            <button data-range="5y" class="text-xs border rounded px-2 py-1">5Y</button>
+            <button data-range="10y" class="text-xs border rounded px-2 py-1">10Y</button>
+            <button data-range="20y" class="text-xs border rounded px-2 py-1">20Y</button>
+            <button data-range="all" class="text-xs border rounded px-2 py-1 bg-slate-800 text-white">All</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Year Group Filter</label>
+          <div id="seasonalYearGroupPicker" class="flex flex-wrap gap-1"></div>
+        </div>
+        <button id="seasonalCalcBtn" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg px-4 py-2">คำนวณ</button>
+      </div>
+      <p id="seasonalError" class="text-xs text-red-600 hidden mb-2"></p>
+      <div id="seasonalLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div> กำลังโหลดข้อมูล...</div>
+      <div class="relative" style="height:400px"><canvas id="seasonalChart"></canvas></div>
+      <p id="seasonalNote" class="text-[10px] text-slate-400 mt-1"></p>
+    </section>
+
+    <!-- Events Calendar + Table + Forms -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 class="text-sm font-semibold text-slate-800">Events Calendar</h2>
+        <div class="flex items-center gap-3 text-xs">
+          <select id="eventsYearFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
+            <option value="">All Years</option>
+          </select>
+          <select id="eventsTypeFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
+            <option value="">ทุกประเภท</option>
+          </select>
+          <button id="eventsRefreshBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
+        </div>
+      </div>
+      <div id="eventsCalendarStrip" class="flex gap-1 overflow-x-auto pb-2 mb-3"></div>
+      <p id="eventsError" class="text-xs text-red-600 hidden mb-2"></p>
+      <div id="eventsLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
+      <div class="overflow-x-auto border border-slate-200 rounded-lg">
+        <table id="eventsTable" class="text-xs w-full"></table>
+      </div>
+    </section>
+
+    <!-- Custom Event Form (login required) -->
+    <section id="customEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">เพิ่ม Custom Event</h2>
+      <div class="flex flex-wrap items-end gap-4 mb-3" id="customEventForm">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">วันที่</label>
+          <input type="date" id="ceDate" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ชื่อเหตุการณ์</label>
+          <input type="text" id="ceName" placeholder="เช่น CPI Surprise" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-48" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">สี</label>
+          <input type="color" id="ceColor" value="#3498db" class="border border-slate-300 rounded-lg h-9 w-12" />
+        </div>
+        <button id="ceSubmitBtn" class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg px-4 py-2">ส่ง (draft)</button>
+      </div>
+      <p id="ceError" class="text-xs text-red-600 hidden"></p>
+      <p id="ceSuccess" class="text-xs text-green-600 hidden"></p>
+
+      <!-- CSV Paste -->
+      <details class="mt-3">
+        <summary class="text-xs text-blue-600 cursor-pointer">นำเข้าจาก CSV</summary>
+        <div class="mt-2 space-y-2">
+          <textarea id="ceCsvInput" rows="4" placeholder="YYYY-MM-DD,ชื่อ event&#10;2024-01-15,CPI Release&#10;2024-02-01,FOMC Meeting" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono"></textarea>
+          <button id="ceCsvPreviewBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 text-xs hover:bg-slate-50">ดูตัวอย่าง</button>
+          <div id="ceCsvPreview" class="hidden"></div>
+          <button id="ceCsvSubmitBtn" class="hidden bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg px-4 py-2">ยืนยันนำเข้า</button>
+          <p id="ceCsvError" class="text-xs text-red-600 hidden"></p>
+        </div>
+      </details>
+    </section>
+
+    <!-- Admin Panel (mehresix@gmail.com only) -->
+    <section id="adminEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">Admin — Pending Events</h2>
+      <div id="adminPendingList"></div>
+      <p id="adminError" class="text-xs text-red-600 hidden"></p>
+    </section>
+  </div>
+
   </main>
 </div>
 
@@ -613,6 +726,18 @@ window.QD = (function () {
   ];
 
   const LOOKBACK_OPTIONS = [5, 10, 20, null]; // null = "all"
+
+  // Year-group presets for seasonal / event filtering (Round 2)
+  const YEAR_GROUPS = {
+    "presidential_y1": { "label": "Presidential Cycle Y1", "years": [2001,2005,2009,2013,2017,2021,2025], "color": "#2ecc71" },
+    "presidential_y2": { "label": "Presidential Cycle Y2", "years": [2002,2006,2010,2014,2018,2022,2026], "color": "#e67e22" },
+    "presidential_y3": { "label": "Presidential Cycle Y3", "years": [2003,2007,2011,2015,2019,2023], "color": "#9b59b6" },
+    "presidential_y4": { "label": "Presidential Cycle Y4 (Election)", "years": [2000,2004,2008,2012,2016,2020,2024], "color": "#e74c3c" },
+    "election_years":  { "label": "Election Years", "years": [2000,2004,2008,2012,2016,2020,2024], "color": "#e74c3c" },
+    "fed_hike_cycle":  { "label": "Fed Hike Cycle", "years": [1999,2000,2004,2005,2006,2015,2016,2017,2018,2022,2023], "color": "#c0392b" },
+    "fed_cut_cycle":   { "label": "Fed Cut Cycle", "years": [2001,2002,2003,2007,2008,2019,2020,2024], "color": "#27ae60" },
+    "post_crisis_recovery": { "label": "Post-Crisis Recovery", "years": [2003,2004,2009,2010,2020,2021], "color": "#2980b9" }
+  };
 
   const state = {
     session: null,
@@ -691,6 +816,27 @@ window.QD = (function () {
         selectedPair: null,     // { aId, bId, aTicker, bTicker }
         pairSeries: []          // [{periodEnd, corr}]
       }
+    },
+
+    // ---- Events / Seasonal tab (Round 2) ----
+    eventsTab: {
+      loaded: false,
+      loading: false,
+      customEvents: [],        // user's own drafts + all approved
+      pendingDrafts: [],       // admin: all pending drafts
+      yearFilter: null,        // selected year_group key or null
+      calendarYear: new Date().getFullYear(),
+    },
+    seasonal: {
+      loaded: false,
+      loading: false,
+      assetId: null,           // selected instrument for seasonal chart
+      metric: "cumReturn",     // cumReturn | volume | volatility
+      statistic: "median",     // median | mean | p25_p75 | min_max
+      yearRange: "all",        // '5y' | '10y' | '20y' | 'all'
+      yearGroups: [],          // selected year_group keys (max 3)
+      rawData: [],             // fetched ohlcv rows
+      chartInstance: null
     }
   };
 
@@ -3811,16 +3957,19 @@ window.QD = (function () {
 
   function switchTab(tab) {
     state.activeTab = tab;
-    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth");
-    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth");
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth"), eventsEl = byId("tabEvents");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth"), eventsBtn = byId("tabBtnEvents");
     if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
     if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
     if (healthEl) healthEl.classList.toggle("hidden", tab !== "health");
+    if (eventsEl) eventsEl.classList.toggle("hidden", tab !== "events");
     if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
     if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
     if (healthBtn) healthBtn.classList.toggle("qd-tab-active", tab === "health");
+    if (eventsBtn) eventsBtn.classList.toggle("qd-tab-active", tab === "events");
     if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
     if (tab === "health" && !state.health.loaded && !state.health.loading && state.session) loadDataHealth();
+    if (tab === "events" && !state.eventsTab.loaded) loadEventsTab();
   }
 
   function bindMomentumUIHandlers() {
@@ -4183,6 +4332,735 @@ window.QD = (function () {
     });
   }
 
+  // =====================================================================
+  // Events / Seasonal tab (Round 2)
+  // =====================================================================
+
+  const SEASONAL_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2"];
+
+  // ---- Events Tab: load, render, custom events, admin ----
+
+  async function loadEventsTab() {
+    if (state.eventsTab.loading) return;
+    state.eventsTab.loading = true;
+    state.eventsTab.loaded = false;
+    hide(byId("eventsError"));
+    show(byId("eventsLoading"));
+    try {
+      const rows = await fetchMarketEvents();
+      state.eventsTab.customEvents = rows;
+      state.eventsTab.loaded = true;
+      renderEventsCalendarStrip(rows);
+      renderEventsTable(rows, null, null);
+      populateEventsFilters(rows);
+      // Show custom event form if logged in
+      if (state.session) show(byId("customEventSection"));
+      // Show admin panel if admin
+      if (state.session && state.session.user && state.session.user.email === "mehresix@gmail.com") {
+        show(byId("adminEventSection"));
+        await loadAdminPendingDrafts();
+      }
+      // Populate seasonal asset picker
+      renderSeasonalAssetPicker();
+      renderSeasonalYearGroupPicker();
+    } catch (e) {
+      showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
+    } finally {
+      state.eventsTab.loading = false;
+      hide(byId("eventsLoading"));
+    }
+  }
+
+  function populateEventsFilters(rows) {
+    // Year filter
+    const yearEl = byId("eventsYearFilter");
+    if (yearEl) {
+      const years = new Set();
+      rows.forEach((r) => { if (r.event_date || r.market_date) years.add(String(r.event_date || r.market_date).slice(0, 4)); });
+      const sorted = [...years].sort().reverse();
+      yearEl.innerHTML = '<option value="">All Years</option>' +
+        // Year group presets
+        Object.keys(YEAR_GROUPS).map((k) =>
+          `<option value="yg:${k}">${YEAR_GROUPS[k].label}</option>`
+        ).join("") +
+        sorted.map((y) => `<option value="${y}">${y}</option>`).join("");
+    }
+    // Type filter
+    const typeEl = byId("eventsTypeFilter");
+    if (typeEl) {
+      const types = eventTypesFromRows(rows);
+      typeEl.innerHTML = '<option value="">ทุกประเภท</option>' +
+        types.map((t) => `<option value="${t.code}">${escapeHtml(t.nameTh)} (${t.count})</option>`).join("");
+    }
+  }
+
+  function renderEventsCalendarStrip(rows) {
+    const el = byId("eventsCalendarStrip");
+    if (!el) return;
+    const year = state.eventsTab.calendarYear;
+    const byMonth = {};
+    for (let m = 0; m < 12; m++) byMonth[m] = 0;
+    (rows || []).forEach((r) => {
+      const d = r.event_date || r.market_date;
+      if (!d) return;
+      const ds = String(d).slice(0, 10);
+      const y = parseInt(ds.slice(0, 4), 10);
+      if (y !== year) return;
+      const m = parseInt(ds.slice(5, 7), 10) - 1;
+      if (m >= 0 && m < 12) byMonth[m]++;
+    });
+    const shortMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    el.innerHTML = shortMonths.map((label, m) => {
+      const count = byMonth[m] || 0;
+      const bg = count > 5 ? "bg-blue-100 border-blue-300" : count > 0 ? "bg-slate-50 border-slate-200" : "bg-white border-slate-200";
+      return `<div class="flex-shrink-0 border rounded-lg px-3 py-2 text-center min-w-[60px] ${bg}">` +
+        `<div class="text-[10px] text-slate-500">${label}</div>` +
+        `<div class="text-sm font-semibold ${count > 0 ? 'text-blue-700' : 'text-slate-300'}">${count}</div></div>`;
+    }).join("");
+  }
+
+  function renderEventsTable(rows, yearFilter, typeFilter) {
+    const el = byId("eventsTable");
+    if (!el) return;
+    let filtered = rows || [];
+    if (yearFilter) {
+      if (yearFilter.startsWith("yg:")) {
+        const key = yearFilter.slice(3);
+        const yg = YEAR_GROUPS[key];
+        if (yg) {
+          const yearSet = new Set(yg.years.map(String));
+          filtered = filtered.filter((r) => yearSet.has(String(r.event_date || r.market_date).slice(0, 4)));
+        }
+      } else {
+        filtered = filtered.filter((r) => String(r.event_date || r.market_date).slice(0, 4) === yearFilter);
+      }
+    }
+    if (typeFilter) {
+      filtered = filtered.filter((r) => r.event_type === typeFilter);
+    }
+    // Sort by date descending
+    filtered.sort((a, b) => {
+      const da = a.event_date || a.market_date || "";
+      const db = b.event_date || b.market_date || "";
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+    const statusBadge = (s) => {
+      if (s === "approved") return '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>';
+      if (s === "draft") return '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>';
+      if (s === "rejected") return '<span class="qd-badge-fail text-[10px] px-1.5 py-0.5 rounded">rejected</span>';
+      return '<span class="text-[10px] text-slate-400">' + escapeHtml(s || "system") + '</span>';
+    };
+    el.innerHTML =
+      '<thead class="bg-slate-50"><tr>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">Date</th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">Type</th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">Name / Note</th>' +
+      '<th class="text-center px-3 py-2 font-medium text-slate-600">Status</th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">Creator</th>' +
+      '</tr></thead><tbody>' +
+      filtered.map((r) => {
+        const color = r.color || "#64748b";
+        const name = r.event_name || r.name_th || r.event_type || "";
+        const creator = r.creator_email ? maskEmail(r.creator_email) : "system";
+        return `<tr class="border-t border-slate-100 hover:bg-slate-50">` +
+          `<td class="px-3 py-1.5"><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${color}"></span>${escapeHtml(r.event_date || r.market_date || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(r.event_type || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(name)}</td>` +
+          `<td class="px-3 py-1.5 text-center">${statusBadge(r.status)}</td>` +
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(creator)}</td></tr>`;
+      }).join("") +
+      '</tbody>';
+    if (filtered.length === 0) {
+      el.innerHTML += '<tr><td colspan="5" class="px-3 py-4 text-center text-slate-400">ไม่พบ event</td></tr>';
+    }
+  }
+
+  function maskEmail(email) {
+    if (!email) return "";
+    const parts = email.split("@");
+    if (parts.length < 2) return email;
+    const local = parts[0];
+    return local.slice(0, 3) + "***@" + parts[1];
+  }
+
+  function filterEventsByYear(rows, yearGroupKey) {
+    if (!yearGroupKey || !YEAR_GROUPS[yearGroupKey]) return rows;
+    const yearSet = new Set(YEAR_GROUPS[yearGroupKey].years.map(String));
+    return (rows || []).filter((r) => yearSet.has(String(r.event_date || r.market_date).slice(0, 4)));
+  }
+
+  // ---- Custom Event Form ----
+
+  async function submitCustomEvent(date, name, color) {
+    hide(byId("ceError"));
+    hide(byId("ceSuccess"));
+    if (!date || !name) {
+      showError(byId("ceError"), "กรุณากรอกวันที่และชื่อ event");
+      return;
+    }
+    try {
+      const { error } = await sb.from("market_events").insert({
+        event_date: date,
+        event_name: name,
+        event_type: "custom",
+        color: color || "#3498db",
+        status: "draft"
+      });
+      if (error) throw error;
+      const el = byId("ceSuccess");
+      if (el) { el.textContent = "ส่ง draft สำเร็จ — รอ admin อนุมัติ"; show(el); }
+      byId("ceDate").value = "";
+      byId("ceName").value = "";
+    } catch (e) {
+      showError(byId("ceError"), "ส่งไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  function parseCSVEvents(csvText) {
+    if (!csvText) return [];
+    return csvText.trim().split("\n").map((line) => {
+      const idx = line.indexOf(",");
+      if (idx === -1) return null;
+      const date = line.slice(0, idx).trim();
+      const name = line.slice(idx + 1).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      if (!name) return null;
+      return { date, name };
+    }).filter(Boolean);
+  }
+
+  async function submitCSVEvents(events) {
+    hide(byId("ceCsvError"));
+    if (!events || events.length === 0) {
+      showError(byId("ceCsvError"), "ไม่มี event ที่จะนำเข้า");
+      return;
+    }
+    try {
+      const rows = events.map((e) => ({
+        event_date: e.date,
+        event_name: e.name,
+        event_type: "custom",
+        color: "#3498db",
+        status: "draft"
+      }));
+      const { error } = await sb.from("market_events").insert(rows);
+      if (error) throw error;
+      const el = byId("ceCsvError");
+      // Reuse the error element for success too
+      if (el) { el.textContent = `นำเข้า ${events.length} รายการสำเร็จ (draft)`; el.classList.remove("text-red-600"); el.classList.add("text-green-600"); show(el); }
+      byId("ceCsvInput").value = "";
+      hide(byId("ceCsvPreview"));
+      hide(byId("ceCsvSubmitBtn"));
+    } catch (e) {
+      showError(byId("ceCsvError"), "นำเข้าไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // ---- Admin Panel ----
+
+  async function loadAdminPendingDrafts() {
+    hide(byId("adminError"));
+    try {
+      // Fetch all draft events
+      const { data, error } = await sb.from("market_events")
+        .select("*")
+        .eq("status", "draft")
+        .order("event_date", { ascending: false });
+      if (error) throw error;
+      state.eventsTab.pendingDrafts = data || [];
+      renderAdminPanel();
+    } catch (e) {
+      showError(byId("adminError"), "โหลด pending drafts ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  function renderAdminPanel() {
+    const el = byId("adminPendingList");
+    if (!el) return;
+    const drafts = state.eventsTab.pendingDrafts;
+    if (drafts.length === 0) {
+      el.innerHTML = '<p class="text-xs text-slate-400">ไม่มี draft ที่รออนุมัติ</p>';
+      return;
+    }
+    el.innerHTML = '<table class="text-xs w-full"><thead class="bg-slate-50"><tr>' +
+      '<th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Name</th>' +
+      '<th class="text-left px-3 py-2">Creator</th><th class="text-center px-3 py-2">Action</th>' +
+      '</tr></thead><tbody>' +
+      drafts.map((d) => {
+        const eid = d.event_id || d.id;
+        return `<tr class="border-t border-slate-100">` +
+          `<td class="px-3 py-1.5">${escapeHtml(d.event_date || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(d.event_name || "")}</td>` +
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(maskEmail(d.creator_email || ""))}</td>` +
+          `<td class="px-3 py-1.5 text-center">` +
+          `<button class="text-green-600 hover:underline mr-2" data-approve="${eid}">Approve</button>` +
+          `<button class="text-red-600 hover:underline" data-reject="${eid}">Reject</button>` +
+          `</td></tr>`;
+      }).join("") + '</tbody></table>';
+    // Bind approve/reject
+    el.querySelectorAll("[data-approve]").forEach((btn) => {
+      btn.addEventListener("click", () => approveEvent(btn.getAttribute("data-approve")));
+    });
+    el.querySelectorAll("[data-reject]").forEach((btn) => {
+      btn.addEventListener("click", () => rejectEvent(btn.getAttribute("data-reject")));
+    });
+  }
+
+  async function approveEvent(eventId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("approve_custom_event", { p_event_id: eventId });
+      if (error) throw error;
+      await loadAdminPendingDrafts();
+      // Refresh events table too
+      await loadEventsTab();
+    } catch (e) {
+      showError(byId("adminError"), "Approve ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  async function rejectEvent(eventId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("reject_custom_event", { p_event_id: eventId });
+      if (error) throw error;
+      await loadAdminPendingDrafts();
+    } catch (e) {
+      showError(byId("adminError"), "Reject ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // ---- Seasonal Chart ----
+
+  function renderSeasonalAssetPicker() {
+    const el = byId("seasonalAssetPicker");
+    if (!el) return;
+    const byCategory = {};
+    state.instruments.forEach((i) => {
+      byCategory[i.category] = byCategory[i.category] || [];
+      byCategory[i.category].push(i);
+    });
+    el.innerHTML = Object.keys(byCategory).map((cat) => {
+      const opts = byCategory[cat].map((i) =>
+        `<option value="${i.id}">${i.ticker} — ${i.name}</option>`).join("");
+      return `<optgroup label="${cat}">${opts}</optgroup>`;
+    }).join("");
+    // Default to first instrument or current seasonal.assetId
+    if (!state.seasonal.assetId && state.instruments.length > 0) {
+      state.seasonal.assetId = state.instruments[0].id;
+    }
+    if (state.seasonal.assetId) el.value = String(state.seasonal.assetId);
+  }
+
+  function renderSeasonalYearGroupPicker() {
+    const el = byId("seasonalYearGroupPicker");
+    if (!el) return;
+    el.innerHTML = '<button class="text-[10px] border rounded px-2 py-0.5 ' +
+      (state.seasonal.yearGroups.length === 0 ? 'bg-slate-800 text-white' : '') +
+      '" data-yg="">All Years</button>' +
+      Object.keys(YEAR_GROUPS).map((k) => {
+        const active = state.seasonal.yearGroups.includes(k);
+        return `<button class="text-[10px] border rounded px-2 py-0.5 ${active ? 'text-white' : ''}" ` +
+          `style="${active ? 'background:' + YEAR_GROUPS[k].color + ';border-color:' + YEAR_GROUPS[k].color : ''}" ` +
+          `data-yg="${k}">${YEAR_GROUPS[k].label}</button>`;
+      }).join("");
+    el.querySelectorAll("[data-yg]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.getAttribute("data-yg");
+        if (!key) {
+          // "All Years" -- clear selection
+          state.seasonal.yearGroups = [];
+        } else {
+          const idx = state.seasonal.yearGroups.indexOf(key);
+          if (idx !== -1) {
+            state.seasonal.yearGroups.splice(idx, 1);
+          } else if (state.seasonal.yearGroups.length < 3) {
+            state.seasonal.yearGroups.push(key);
+          }
+        }
+        renderSeasonalYearGroupPicker();
+      });
+    });
+  }
+
+  async function loadSeasonalData(assetId) {
+    if (!assetId) return [];
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.from("ohlcv_daily")
+        .select("date,open,high,low,close,adj_close,volume")
+        .eq("instrument_id", assetId)
+        .order("date", { ascending: true })
+        .range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  function computeSeasonalSeries(rawData, metric, statistic, yearRange, yearGroups) {
+    if (!rawData || rawData.length === 0) return { series: [], note: "" };
+
+    const currentYear = new Date().getFullYear();
+    let minYear = 0;
+    if (yearRange === "5y") minYear = currentYear - 5;
+    else if (yearRange === "10y") minYear = currentYear - 10;
+    else if (yearRange === "20y") minYear = currentYear - 20;
+
+    // Group rows by year
+    const byYear = {};
+    rawData.forEach((r) => {
+      const y = parseInt(String(r.date).slice(0, 4), 10);
+      if (y < minYear) return;
+      if (!byYear[y]) byYear[y] = [];
+      byYear[y].push(r);
+    });
+
+    // For each year, compute metric per trading-day-of-year
+    const yearKeys = Object.keys(byYear).map(Number).sort();
+    if (yearKeys.length === 0) return { series: [], note: "ไม่มีข้อมูลในช่วงที่เลือก" };
+
+    // Compute per-year per-trading-day values
+    const yearData = {}; // year -> { tdoy: value }[]
+    yearKeys.forEach((y) => {
+      const days = byYear[y].sort((a, b) => (a.date < b.date ? -1 : 1));
+      const vals = [];
+      if (metric === "cumReturn") {
+        if (days.length === 0) return;
+        const adjFactor0 = (days[0].adj_close && days[0].close) ? days[0].adj_close / days[0].close : 1;
+        const basePrice = days[0].close * adjFactor0;
+        days.forEach((d, i) => {
+          const af = (d.adj_close && d.close) ? d.adj_close / d.close : 1;
+          const adjClose = d.close * af;
+          vals.push({ tdoy: i + 1, value: (adjClose / basePrice - 1) * 100 }); // percent
+        });
+      } else if (metric === "volume") {
+        days.forEach((d, i) => {
+          vals.push({ tdoy: i + 1, value: Number(d.volume) || 0 });
+        });
+      } else if (metric === "volatility") {
+        // 20-day rolling realized volatility
+        const logReturns = [];
+        for (let i = 1; i < days.length; i++) {
+          const prev = days[i - 1].adj_close || days[i - 1].close;
+          const cur = days[i].adj_close || days[i].close;
+          if (prev > 0 && cur > 0) logReturns.push(Math.log(cur / prev));
+          else logReturns.push(0);
+        }
+        const window = 20;
+        for (let i = 0; i < days.length; i++) {
+          if (i < window) {
+            vals.push({ tdoy: i + 1, value: null });
+          } else {
+            const slice = logReturns.slice(i - window, i);
+            const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+            const variance = slice.reduce((a, b) => a + (b - mean) ** 2, 0) / (slice.length - 1);
+            vals.push({ tdoy: i + 1, value: Math.sqrt(variance) * Math.sqrt(252) * 100 }); // annualized %
+          }
+        }
+      }
+      yearData[y] = vals;
+    });
+
+    // Determine which years belong to which group(s)
+    const activeGroups = (yearGroups || []).filter((k) => YEAR_GROUPS[k]);
+
+    const buildAggregated = (filterYears) => {
+      // Collect all values per trading-day-of-year
+      const byTdoy = {};
+      filterYears.forEach((y) => {
+        if (!yearData[y]) return;
+        yearData[y].forEach((v) => {
+          if (v.value === null) return;
+          if (!byTdoy[v.tdoy]) byTdoy[v.tdoy] = [];
+          byTdoy[v.tdoy].push(v.value);
+        });
+      });
+
+      const tdoys = Object.keys(byTdoy).map(Number).sort((a, b) => a - b);
+      const result = { labels: [], main: [], upper: null, lower: null };
+      tdoys.forEach((td) => {
+        const arr = byTdoy[td].sort((a, b) => a - b);
+        result.labels.push(td);
+        if (statistic === "median") {
+          result.main.push(percentile(arr, 50));
+        } else if (statistic === "mean") {
+          result.main.push(arr.reduce((a, b) => a + b, 0) / arr.length);
+        } else if (statistic === "p25_p75") {
+          result.main.push(percentile(arr, 50));
+          if (!result.upper) { result.upper = []; result.lower = []; }
+          result.upper.push(percentile(arr, 75));
+          result.lower.push(percentile(arr, 25));
+        } else if (statistic === "min_max") {
+          result.main.push(percentile(arr, 50));
+          if (!result.upper) { result.upper = []; result.lower = []; }
+          result.upper.push(arr[arr.length - 1]);
+          result.lower.push(arr[0]);
+        }
+      });
+      return result;
+    };
+
+    const series = [];
+    if (activeGroups.length === 0) {
+      // Single line: all years
+      const agg = buildAggregated(yearKeys);
+      series.push({ label: "All Years", color: SEASONAL_COLORS[0], ...agg });
+    } else {
+      // One line per selected group + "Rest"
+      const usedYears = new Set();
+      activeGroups.forEach((gk, gi) => {
+        const g = YEAR_GROUPS[gk];
+        const gy = yearKeys.filter((y) => g.years.includes(y));
+        gy.forEach((y) => usedYears.add(y));
+        const agg = buildAggregated(gy);
+        series.push({ label: g.label, color: g.color || SEASONAL_COLORS[gi + 1], ...agg });
+      });
+      // Rest
+      const restYears = yearKeys.filter((y) => !usedYears.has(y));
+      if (restYears.length > 0) {
+        const agg = buildAggregated(restYears);
+        series.push({ label: "Rest", color: "#94a3b8", ...agg });
+      }
+    }
+
+    const note = `${yearKeys.length} ปี (${yearKeys[0]}–${yearKeys[yearKeys.length - 1]})`;
+    return { series, note };
+  }
+
+  function percentile(sortedArr, p) {
+    if (sortedArr.length === 0) return 0;
+    if (sortedArr.length === 1) return sortedArr[0];
+    const idx = (p / 100) * (sortedArr.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sortedArr[lo];
+    return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
+  }
+
+  function renderSeasonalChart(seriesData) {
+    const canvas = byId("seasonalChart");
+    if (!canvas) return;
+    if (state.seasonal.chartInstance) {
+      state.seasonal.chartInstance.destroy();
+      state.seasonal.chartInstance = null;
+    }
+    if (!seriesData || seriesData.length === 0) return;
+
+    const datasets = [];
+    seriesData.forEach((s) => {
+      // Main line
+      datasets.push({
+        label: s.label,
+        data: s.labels.map((td, i) => ({ x: td, y: s.main[i] })),
+        borderColor: s.color,
+        backgroundColor: s.color + "20",
+        pointRadius: 0,
+        borderWidth: 1.5,
+        fill: false,
+        tension: 0.1
+      });
+      // Band (upper/lower)
+      if (s.upper && s.lower) {
+        datasets.push({
+          label: s.label + " (upper)",
+          data: s.labels.map((td, i) => ({ x: td, y: s.upper[i] })),
+          borderColor: s.color + "40",
+          pointRadius: 0,
+          borderWidth: 0.5,
+          borderDash: [3, 3],
+          fill: false
+        });
+        datasets.push({
+          label: s.label + " (lower)",
+          data: s.labels.map((td, i) => ({ x: td, y: s.lower[i] })),
+          borderColor: s.color + "40",
+          backgroundColor: s.color + "10",
+          pointRadius: 0,
+          borderWidth: 0.5,
+          borderDash: [3, 3],
+          fill: "-1"
+        });
+      }
+    });
+
+    const metricLabels = { cumReturn: "Cumulative Return (%)", volume: "Volume", volatility: "Realized Volatility (%, annualized)" };
+    state.seasonal.chartInstance = new Chart(canvas, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+          x: {
+            type: "linear",
+            title: { display: true, text: "Trading Day of Year" },
+            min: 1,
+            max: 252,
+            ticks: { stepSize: 21 }
+          },
+          y: {
+            title: { display: true, text: metricLabels[state.seasonal.metric] || "" }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: {
+              filter: (item) => !item.text.includes("(upper)") && !item.text.includes("(lower)")
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const ds = ctx.dataset;
+                if (ds.label.includes("(upper)") || ds.label.includes("(lower)")) return null;
+                return `${ds.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : "N/A"}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ---- Bind all Events tab handlers ----
+
+  function bindEventsTabHandlers() {
+    const eventsBtn = byId("tabBtnEvents");
+    if (eventsBtn) eventsBtn.addEventListener("click", () => switchTab("events"));
+
+    const refreshBtn = byId("eventsRefreshBtn");
+    if (refreshBtn) refreshBtn.addEventListener("click", () => {
+      state.eventsTab.loaded = false;
+      loadEventsTab();
+    });
+
+    const yearFilter = byId("eventsYearFilter");
+    if (yearFilter) yearFilter.addEventListener("change", () => {
+      const val = yearFilter.value;
+      state.eventsTab.yearFilter = val || null;
+      renderEventsTable(state.eventsTab.customEvents, val || null,
+        (byId("eventsTypeFilter") || {}).value || null);
+    });
+
+    const typeFilter = byId("eventsTypeFilter");
+    if (typeFilter) typeFilter.addEventListener("change", () => {
+      renderEventsTable(state.eventsTab.customEvents,
+        (byId("eventsYearFilter") || {}).value || null,
+        typeFilter.value || null);
+    });
+
+    // Custom event form
+    const ceSubmit = byId("ceSubmitBtn");
+    if (ceSubmit) ceSubmit.addEventListener("click", () => {
+      const date = (byId("ceDate") || {}).value;
+      const name = (byId("ceName") || {}).value;
+      const color = (byId("ceColor") || {}).value || "#3498db";
+      submitCustomEvent(date, name, color);
+    });
+
+    // CSV preview
+    const csvPreview = byId("ceCsvPreviewBtn");
+    if (csvPreview) csvPreview.addEventListener("click", () => {
+      const text = (byId("ceCsvInput") || {}).value || "";
+      const parsed = parseCSVEvents(text);
+      const previewEl = byId("ceCsvPreview");
+      const submitBtn = byId("ceCsvSubmitBtn");
+      hide(byId("ceCsvError"));
+      if (parsed.length === 0) {
+        showError(byId("ceCsvError"), "ไม่พบข้อมูลที่ถูกต้อง (format: YYYY-MM-DD,ชื่อ)");
+        hide(previewEl);
+        hide(submitBtn);
+        return;
+      }
+      if (previewEl) {
+        previewEl.innerHTML = '<table class="text-xs w-full border border-slate-200 rounded"><thead class="bg-slate-50"><tr>' +
+          '<th class="px-2 py-1 text-left">Date</th><th class="px-2 py-1 text-left">Name</th></tr></thead><tbody>' +
+          parsed.map((e) => `<tr class="border-t border-slate-100"><td class="px-2 py-1">${escapeHtml(e.date)}</td><td class="px-2 py-1">${escapeHtml(e.name)}</td></tr>`).join("") +
+          '</tbody></table>' +
+          `<p class="text-[10px] text-slate-500 mt-1">${parsed.length} รายการ</p>`;
+        show(previewEl);
+      }
+      if (submitBtn) show(submitBtn);
+      // Store parsed for submission
+      if (submitBtn) {
+        submitBtn._parsedEvents = parsed;
+      }
+    });
+
+    const csvSubmit = byId("ceCsvSubmitBtn");
+    if (csvSubmit) csvSubmit.addEventListener("click", () => {
+      submitCSVEvents(csvSubmit._parsedEvents || []);
+    });
+
+    // Seasonal chart controls
+    const assetPicker = byId("seasonalAssetPicker");
+    if (assetPicker) assetPicker.addEventListener("change", (e) => {
+      state.seasonal.assetId = Number(e.target.value);
+    });
+
+    const metricPicker = byId("seasonalMetricPicker");
+    if (metricPicker) metricPicker.addEventListener("change", (e) => {
+      state.seasonal.metric = e.target.value;
+    });
+
+    const statPicker = byId("seasonalStatPicker");
+    if (statPicker) statPicker.addEventListener("change", (e) => {
+      state.seasonal.statistic = e.target.value;
+    });
+
+    // Year range buttons
+    const yearRangeBtns = byId("seasonalYearRangeBtns");
+    if (yearRangeBtns) {
+      yearRangeBtns.querySelectorAll("button[data-range]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.seasonal.yearRange = btn.getAttribute("data-range");
+          // Update button styles
+          yearRangeBtns.querySelectorAll("button[data-range]").forEach((b) => {
+            b.classList.remove("bg-slate-800", "text-white");
+          });
+          btn.classList.add("bg-slate-800", "text-white");
+        });
+      });
+    }
+
+    // Calculate seasonal
+    const calcBtn = byId("seasonalCalcBtn");
+    if (calcBtn) calcBtn.addEventListener("click", async () => {
+      hide(byId("seasonalError"));
+      show(byId("seasonalLoading"));
+      try {
+        const assetId = state.seasonal.assetId;
+        if (!assetId) throw new Error("กรุณาเลือกสินทรัพย์");
+        // Fetch data if needed (different asset or not loaded)
+        if (!state.seasonal.loaded || state.seasonal.rawData.length === 0 ||
+            state.seasonal.rawData._assetId !== assetId) {
+          state.seasonal.rawData = await loadSeasonalData(assetId);
+          state.seasonal.rawData._assetId = assetId;
+          state.seasonal.loaded = true;
+        }
+        const { series, note } = computeSeasonalSeries(
+          state.seasonal.rawData,
+          state.seasonal.metric,
+          state.seasonal.statistic,
+          state.seasonal.yearRange,
+          state.seasonal.yearGroups
+        );
+        renderSeasonalChart(series);
+        setText("seasonalNote", note);
+      } catch (e) {
+        showError(byId("seasonalError"), e.message || String(e));
+      } finally {
+        hide(byId("seasonalLoading"));
+      }
+    });
+  }
+
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
@@ -4542,6 +5420,7 @@ window.QD = (function () {
     bindMergedTableUIHandlers();
     bindCorrelationUIHandlers();
     bindHealthUIHandlers();
+    bindEventsTabHandlers();
     renderStatGlossary();
     renderMomentumGlossary();
     initTableLayout();
@@ -4626,6 +5505,14 @@ window.QD = (function () {
     buildEventMarkers, drawEventMarkers, eventMarkersPlugin, ensureMarketEvents, renderEventToggles, escapeHtml,
     HEALTH_ERROR_DAYS, HEALTH_STALE_DAYS, MACRO_SERIES_INFO, classifyInstrumentHealth, classifyMacroHealth,
     classifyEventTypeHealth, summarizeHealth, sortHealthRows, fetchDataHealth, loadDataHealth, renderDataHealth,
+    // Events / Seasonal tab (Round 2)
+    YEAR_GROUPS, SEASONAL_COLORS,
+    loadEventsTab, renderEventsCalendarStrip, renderEventsTable, renderCustomEventForm: renderSeasonalAssetPicker,
+    submitCustomEvent, parseCSVEvents, submitCSVEvents,
+    renderAdminPanel, approveEvent, rejectEvent, maskEmail, filterEventsByYear,
+    loadSeasonalData, computeSeasonalSeries, renderSeasonalChart, renderSeasonalAssetPicker,
+    renderSeasonalYearGroupPicker, bindEventsTabHandlers, percentile, populateEventsFilters,
+    loadAdminPendingDrafts,
     init
   };
 })();
