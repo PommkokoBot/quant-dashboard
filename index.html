@@ -4567,11 +4567,8 @@ window.QD = (function () {
   async function loadAdminPendingDrafts() {
     hide(byId("adminError"));
     try {
-      // Fetch all draft events
-      const { data, error } = await sb.from("market_events")
-        .select("*")
-        .eq("status", "draft")
-        .order("event_date", { ascending: false });
+      // Admin-only RPC: all users' non-expired drafts + masked creator email
+      const { data, error } = await sb.rpc("admin_pending_drafts");
       if (error) throw error;
       state.eventsTab.pendingDrafts = data || [];
       renderAdminPanel();
@@ -4597,7 +4594,7 @@ window.QD = (function () {
         return `<tr class="border-t border-slate-100">` +
           `<td class="px-3 py-1.5">${escapeHtml(d.event_date || "")}</td>` +
           `<td class="px-3 py-1.5">${escapeHtml(d.name || "")}</td>` +
-          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(maskEmail(d.creator_email || ""))}</td>` +
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(d.creator_email || "—")}</td>` +
           `<td class="px-3 py-1.5 text-center">` +
           `<button class="text-green-600 hover:underline mr-2" data-approve="${eid}">Approve</button>` +
           `<button class="text-red-600 hover:underline" data-reject="${eid}">Reject</button>` +
