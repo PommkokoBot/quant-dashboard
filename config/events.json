@@ -1,0 +1,79 @@
+{
+  "_comment": "Event types for the market_events calendar (2026-09-21). scripts/fetch_events.py upserts these into event_types and keeps market_events in sync for every type whose source is fred/rule/curated. Add a type by adding an entry here; source 'manual' types (Round 2 admin page) are never touched by the script.",
+  "rule_start_year": 1993,
+  "rule_years_ahead": 2,
+  "fred_max_per_year": 16,
+  "types": [
+    {
+      "code": "fomc",
+      "name_th": "ประชุม FOMC (Fed)",
+      "name_en": "FOMC decision",
+      "category": "monetary",
+      "source": "curated",
+      "nontrading_shift": "next",
+      "show_default": true,
+      "sort_order": 10,
+      "source_note": "config/events_curated.json (Federal Reserve Board calendars)"
+    },
+    {
+      "code": "cpi",
+      "name_th": "ประกาศ CPI สหรัฐ",
+      "name_en": "US CPI release",
+      "category": "inflation",
+      "source": "fred",
+      "fred_release_id": 10,
+      "nontrading_shift": "next",
+      "show_default": false,
+      "sort_order": 20,
+      "source_note": "FRED release 10 (Consumer Price Index), release dates incl. scheduled"
+    },
+    {
+      "code": "pce",
+      "name_th": "ประกาศ PCE สหรัฐ",
+      "name_en": "US PCE release (Personal Income and Outlays)",
+      "category": "inflation",
+      "source": "fred",
+      "fred_release_id": 54,
+      "nontrading_shift": "next",
+      "show_default": false,
+      "sort_order": 30,
+      "source_note": "FRED release 54 (Personal Income and Outlays), release dates incl. scheduled"
+    },
+    {
+      "code": "us_election_pres",
+      "name_th": "เลือกตั้งประธานาธิบดีสหรัฐ",
+      "name_en": "US presidential election",
+      "category": "politics",
+      "source": "rule",
+      "rule": "us_election_presidential",
+      "nontrading_shift": "next",
+      "show_default": true,
+      "sort_order": 40,
+      "source_note": "Tuesday after the first Monday of November, years divisible by 4"
+    },
+    {
+      "code": "us_election_mid",
+      "name_th": "เลือกตั้งกลางเทอมสหรัฐ",
+      "name_en": "US midterm election",
+      "category": "politics",
+      "source": "rule",
+      "rule": "us_election_midterm",
+      "nontrading_shift": "next",
+      "show_default": true,
+      "sort_order": 50,
+      "source_note": "Tuesday after the first Monday of November, even years not divisible by 4"
+    },
+    {
+      "code": "opex_monthly",
+      "name_th": "วันหมดอายุออปชันรายเดือน",
+      "name_en": "Monthly options expiration",
+      "category": "options",
+      "source": "rule",
+      "rule": "monthly_opex",
+      "nontrading_shift": "prev",
+      "show_default": false,
+      "sort_order": 60,
+      "source_note": "Third Friday of the month; Thursday when that Friday is an exchange holiday (Good Friday, Juneteenth from 2022)"
+    }
+  ]
+}
