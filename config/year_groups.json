@@ -1,0 +1,42 @@
+{
+  "presidential_y1": {
+    "label": "Presidential Cycle Y1",
+    "years": [2001, 2005, 2009, 2013, 2017, 2021, 2025],
+    "color": "#2ecc71"
+  },
+  "presidential_y2": {
+    "label": "Presidential Cycle Y2",
+    "years": [2002, 2006, 2010, 2014, 2018, 2022, 2026],
+    "color": "#e67e22"
+  },
+  "presidential_y3": {
+    "label": "Presidential Cycle Y3",
+    "years": [2003, 2007, 2011, 2015, 2019, 2023],
+    "color": "#9b59b6"
+  },
+  "presidential_y4": {
+    "label": "Presidential Cycle Y4 (Election)",
+    "years": [2000, 2004, 2008, 2012, 2016, 2020, 2024],
+    "color": "#e74c3c"
+  },
+  "election_years": {
+    "label": "Election Years",
+    "years": [2000, 2004, 2008, 2012, 2016, 2020, 2024],
+    "color": "#e74c3c"
+  },
+  "fed_hike_cycle": {
+    "label": "Fed Hike Cycle",
+    "years": [1999, 2000, 2004, 2005, 2006, 2015, 2016, 2017, 2018, 2022, 2023],
+    "color": "#c0392b"
+  },
+  "fed_cut_cycle": {
+    "label": "Fed Cut Cycle",
+    "years": [2001, 2002, 2003, 2007, 2008, 2019, 2020, 2024],
+    "color": "#27ae60"
+  },
+  "post_crisis_recovery": {
+    "label": "Post-Crisis Recovery",
+    "years": [2003, 2004, 2009, 2010, 2020, 2021],
+    "color": "#2980b9"
+  }
+}
