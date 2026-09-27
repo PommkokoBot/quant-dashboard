@@ -593,34 +593,6 @@
       <p id="seasonalNote" class="text-[10px] text-slate-400 mt-1"></p>
     </section>
 
-    <!-- Events Calendar + Table + Forms -->
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div class="flex items-center gap-2">
-          <h2 class="text-sm font-semibold text-slate-800">Events Calendar</h2>
-          <button id="eventsCollapseBtn" type="button" aria-expanded="true" aria-controls="eventsBody"
-            class="text-xs text-blue-600 hover:underline">พับ ▲</button>
-        </div>
-        <div id="eventsControls" class="flex items-center gap-3 text-xs">
-          <select id="eventsYearFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
-            <option value="">All Years</option>
-          </select>
-          <select id="eventsTypeFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
-            <option value="">ทุกประเภท</option>
-          </select>
-          <button id="eventsRefreshBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
-        </div>
-      </div>
-      <div id="eventsBody">
-        <div id="eventsCalendarStrip" class="flex gap-1 overflow-x-auto pb-2 mb-3"></div>
-        <p id="eventsError" class="text-xs text-red-600 hidden mb-2"></p>
-        <div id="eventsLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
-        <div class="overflow-x-auto border border-slate-200 rounded-lg">
-          <table id="eventsTable" class="text-xs w-full"></table>
-        </div>
-      </div>
-    </section>
-
     <!-- Custom Event Form (login required) -->
     <section id="customEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
       <h2 class="text-sm font-semibold text-slate-800 mb-3">เพิ่ม Custom Event</h2>
@@ -660,6 +632,34 @@
       <h2 class="text-sm font-semibold text-slate-800 mb-3">Admin — Pending Events</h2>
       <div id="adminPendingList"></div>
       <p id="adminError" class="text-xs text-red-600 hidden"></p>
+    </section>
+
+    <!-- Events Calendar + Table (always last in the Events tab) -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-slate-800">Events Calendar</h2>
+          <button id="eventsCollapseBtn" type="button" aria-expanded="true" aria-controls="eventsBody"
+            class="text-xs text-blue-600 hover:underline">พับ ▲</button>
+        </div>
+        <div id="eventsControls" class="flex items-center gap-3 text-xs">
+          <select id="eventsYearFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
+            <option value="">All Years</option>
+          </select>
+          <select id="eventsTypeFilter" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">
+            <option value="">ทุกประเภท</option>
+          </select>
+          <button id="eventsRefreshBtn" class="border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
+        </div>
+      </div>
+      <div id="eventsBody">
+        <div id="eventsCalendarStrip" class="flex gap-1 overflow-x-auto pb-2 mb-3"></div>
+        <p id="eventsError" class="text-xs text-red-600 hidden mb-2"></p>
+        <div id="eventsLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table id="eventsTable" class="text-xs w-full"></table>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -5226,11 +5226,26 @@ window.QD = (function () {
   // 3 consecutive error run-days or 3+ trading days behind = problem.
   const HEALTH_ERROR_DAYS = 3;
   const HEALTH_STALE_DAYS = 3;
+  // maxAgeDays = how old the latest observation may be before it is flagged.
+  // Weekly FRED series are dated the Friday of the week and published the
+  // following week; GDPNow is dated the 1st day of the quarter it nowcasts and
+  // the next quarter's nowcast only starts ~4 weeks into that quarter.
   const MACRO_SERIES_INFO = {
     DGS10:    { label: "US 10Y Treasury Yield", freq: "daily",   maxAgeDays: 7 },
     FEDFUNDS: { label: "Fed Funds Rate",        freq: "monthly", maxAgeDays: 70 },
     CPIAUCSL: { label: "US CPI YoY",            freq: "monthly", maxAgeDays: 70 },
-    UNRATE:   { label: "US Unemployment Rate",  freq: "monthly", maxAgeDays: 70 }
+    UNRATE:   { label: "US Unemployment Rate",  freq: "monthly", maxAgeDays: 70 },
+    // added 2026-09-22
+    DGS2:     { label: "US 2Y Treasury Yield",                    freq: "daily",     maxAgeDays: 7 },
+    DGS30:    { label: "US 30Y Treasury Yield",                   freq: "daily",     maxAgeDays: 7 },
+    T10Y2Y:   { label: "10Y minus 2Y Treasury spread",            freq: "daily",     maxAgeDays: 7 },
+    T5YIE:    { label: "5Y Breakeven Inflation",                  freq: "daily",     maxAgeDays: 7 },
+    T10YIE:   { label: "10Y Breakeven Inflation",                 freq: "daily",     maxAgeDays: 7 },
+    T5YIFR:   { label: "5Y5Y Forward Inflation Expectation",      freq: "daily",     maxAgeDays: 7 },
+    MICH:     { label: "UMich 1Y Inflation Expectation (survey)", freq: "monthly",   maxAgeDays: 100 }, // FRED posts MICH ~1 month late (licensing)
+    NFCI:     { label: "Chicago Fed Financial Conditions (NFCI)", freq: "weekly",    maxAgeDays: 14 },
+    STLFSI4:  { label: "St. Louis Fed Financial Stress Index",    freq: "weekly",    maxAgeDays: 14 },
+    GDPNOW:   { label: "Atlanta Fed GDPNow (real GDP nowcast)",   freq: "quarterly", maxAgeDays: 125 }
   };
   const HEALTH_STATUS_LABEL = { ok: "ปกติ", warn: "ต้องจับตา", error: "มีปัญหา" };
   const HEALTH_STATUS_CLASS = {
