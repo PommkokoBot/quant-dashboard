@@ -62,8 +62,12 @@ const tableRows = (w) => Array.from(w.document.querySelectorAll("#eventsTable tb
 const dateCol = (w) => tableRows(w).map((tr) => tr.children[0].textContent.trim());
 
 async function main() {
-  const beforeFile = process.env.QD_HTML_BEFORE || "../../scratch_before.html";
+  // The "before" file (previous index.html) is only needed for the
+  // before/after comparisons; without it the page is compared with itself.
   const afterFile = process.env.QD_HTML || "../index.html";
+  const beforeFile = process.env.QD_HTML_BEFORE && fs.existsSync(path.resolve(__dirname, process.env.QD_HTML_BEFORE))
+    ? process.env.QD_HTML_BEFORE : afterFile;
+  if (beforeFile === afterFile) console.log("[note] QD_HTML_BEFORE not given -> before/after checks compare the page with itself");
   const Wb = load(beforeFile), Wa = load(afterFile);
   const B = Wb.QD, A = Wa.QD;
 
