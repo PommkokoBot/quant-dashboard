@@ -1,0 +1,24 @@
+-- ============================================================================
+-- Round 3A (block 1), 2026-09-27: event GROUPS — several occurrences of the
+-- same event under one name, so an event study can average across them.
+-- ALREADY APPLIED (migrations round3a_event_groups, round3a_event_group_rpcs,
+-- market_events_between_group_columns). Reference only.
+--
+--   event_groups(id, name, color, kind point|range, user_id, status, expires_at)
+--   market_events + group_id (FK ON DELETE CASCADE) + end_date (range events)
+--
+--   save_event_group(name, color, kind, rows jsonb, group_id) -> id
+--        creates or replaces a whole group; owner-of-draft or admin only;
+--        1..500 rows; rows keep the GROUP's owner/status (the single-event
+--        trigger skips rows that belong to a group).
+--   approve_event_group(id)  admin: group + all its rows -> approved
+--   delete_event_group(id)   admin, or the owner of a draft (cascade)
+--   admin_pending_groups()   admin: draft groups + their rows inline + masked email
+--   list_event_groups()      approved groups + the caller's own drafts
+--   event_group_rows(id)     occurrences of one visible group
+--   market_events_between()  now also returns group_id, group_name, end_date
+--
+-- RLS on event_groups: read approved / own / admin · insert own draft ·
+-- update+delete own draft · admin everything. anon has no access at all.
+-- ============================================================================
+-- (ดูสคริปต์เต็มของแต่ละ migration ได้จาก Supabase > Database > Migrations)
