@@ -702,6 +702,7 @@
           </div>
           <div class="flex items-center gap-3 mt-3">
             <button id="egSaveBtn" class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg px-4 py-2">บันทึกเป็น draft</button>
+            <button id="egDelSelBtn" class="border border-slate-300 rounded-lg px-3 py-2 text-xs text-red-600 hover:bg-red-50">ลบที่เลือก</button>
             <button id="egClearBtn" class="border border-slate-300 rounded-lg px-3 py-2 text-xs hover:bg-slate-50">ล้างรายการ</button>
             <span class="text-[11px] text-slate-500">draft เห็นเฉพาะคุณ และหมดอายุใน 7 วันถ้าไม่ได้รับอนุมัติ</span>
           </div>
@@ -715,8 +716,10 @@
     <!-- Admin Panel (mehresix@gmail.com only) -->
     <section id="adminEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
       <h2 class="text-sm font-semibold text-slate-800 mb-3">Admin — รออนุมัติ</h2>
-      <h3 class="text-xs font-semibold text-slate-600 mb-2">กลุ่ม Event</h3>
+      <h3 class="text-xs font-semibold text-slate-600 mb-2">กลุ่ม Event — รออนุมัติ</h3>
       <div id="adminPendingGroups" class="mb-5"></div>
+      <h3 class="text-xs font-semibold text-slate-600 mb-2">กลุ่ม Event — อนุมัติแล้ว (แก้ไข / ลบได้)</h3>
+      <div id="adminApprovedGroups" class="mb-5"></div>
       <h3 class="text-xs font-semibold text-slate-600 mb-2">Event เดี่ยว</h3>
       <div id="adminPendingList"></div>
       <p id="adminError" class="text-xs text-red-600 hidden"></p>
@@ -927,6 +930,7 @@ window.QD = (function () {
       editingGroupId: null,    // set when re-saving an existing draft group
       groups: [],              // list_event_groups(): approved + own drafts
       pendingGroups: [],       // admin: draft groups with their rows
+      approvedGroups: [],      // admin: approved groups (rows loaded on expand)
       openGroupId: null,       // which admin group is expanded
     },
     seasonal: {
@@ -4522,7 +4526,7 @@ window.QD = (function () {
       if (state.momentum.drilldownInstrumentId != null) renderMomDrilldown();
       if (state.session) await loadEventGroups();
       // Load admin pending drafts (separate query)
-      if (isAdminSession()) { await loadAdminPendingDrafts(); await loadAdminPendingGroups(); }
+      if (isAdminSession()) { await loadAdminPendingDrafts(); await loadAdminPendingGroups(); await loadAdminApprovedGroups(); }
     } catch (e) {
       showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
     } finally {
@@ -4857,11 +4861,13 @@ window.QD = (function () {
       hint.className = problem ? "text-[11px] text-red-600" : "text-[11px] text-slate-500";
     }
     el.innerHTML = '<thead class="bg-slate-50"><tr>' +
+      '<th class="px-3 py-2 w-6"><input type="checkbox" id="egSelAll" title="เลือกทั้งหมด"></th>' +
       '<th class="text-left px-3 py-2 font-medium text-slate-600">#</th>' +
       '<th class="text-left px-3 py-2 font-medium text-slate-600">วันเริ่ม</th>' +
       (isRange ? '<th class="text-left px-3 py-2 font-medium text-slate-600">วันจบ</th><th class="text-left px-3 py-2 font-medium text-slate-600">ยาว</th>' : "") +
       '<th class="text-left px-3 py-2 font-medium text-slate-600">หมายเหตุ</th><th></th></tr></thead><tbody>' +
       rows.map((r, i) => `<tr class="border-t border-slate-100">` +
+        `<td class="px-3 py-1"><input type="checkbox" data-eg-sel="${i}"></td>` +
         `<td class="px-3 py-1">${i + 1}</td>` +
         `<td class="px-3 py-1"><input type="date" data-eg-start="${i}" value="${escapeHtml(r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
         (isRange ? `<td class="px-3 py-1"><input type="date" data-eg-end="${i}" value="${escapeHtml(r.end || r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
@@ -4873,6 +4879,20 @@ window.QD = (function () {
   function calendarDayCount(r) {
     if (!r.end) return 1;
     return Math.round((new Date(r.end + "T00:00:00Z") - new Date(r.start + "T00:00:00Z")) / 86400000) + 1;
+  }
+
+  // remove every ticked row from the builder preview (indices descend so the
+  // splices don't shift each other)
+  function deleteSelectedDraftRows(rootEl) {
+    const root = rootEl || byId("egTable");
+    if (!root) return 0;
+    const picked = Array.from(root.querySelectorAll("[data-eg-sel]"))
+      .filter((c) => c.checked)
+      .map((c) => +c.getAttribute("data-eg-sel"))
+      .sort((a, b) => b - a);
+    picked.forEach((i) => state.eventsTab.groupDraft.splice(i, 1));
+    if (picked.length) renderEventGroupPreview();
+    return picked.length;
   }
 
   function setEventGroupDraft(rows) {
@@ -4952,50 +4972,127 @@ window.QD = (function () {
     renderAdminGroups();
   }
 
-  function renderAdminGroups() {
-    const el = byId("adminPendingGroups");
+  // One renderer for both admin lists. mode "pending" = draft groups waiting for
+  // approval (approve / reject); mode "approved" = already-approved groups the
+  // admin can still fix or delete.
+  function renderGroupAdminList(elId, groups, mode) {
+    const el = byId(elId);
     if (!el) return;
-    const gs = state.eventsTab.pendingGroups || [];
-    if (!gs.length) { el.innerHTML = '<p class="text-xs text-slate-400">ไม่มีกลุ่มที่รออนุมัติ</p>'; return; }
+    const gs = groups || [];
+    if (!gs.length) {
+      el.innerHTML = `<p class="text-xs text-slate-400">${mode === "pending" ? "ไม่มีกลุ่มที่รออนุมัติ" : "ยังไม่มีกลุ่มที่อนุมัติแล้ว"}</p>`;
+      return;
+    }
     el.innerHTML = gs.map((g) => {
       const rows = g.rows || [];
-      const open = state.eventsTab.openGroupId === g.id;
+      const open = String(state.eventsTab.openGroupId) === String(g.id);
+      const color = /^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b";
+      const head = mode === "approved"
+        ? `<div class="flex flex-wrap items-center gap-2 text-xs">
+             <input type="color" value="${color}" data-eg-color="${g.id}" class="border border-slate-300 rounded h-7 w-9" title="สีของกลุ่ม">
+             <input type="text" value="${escapeHtml(g.name)}" data-eg-name="${g.id}" class="border border-slate-300 rounded px-2 py-1 text-xs w-48" title="ชื่อกลุ่ม">
+             <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
+             <span class="text-slate-500">${g.n_events != null ? g.n_events : rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
+           </div>`
+        : `<div class="text-xs">
+             <span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${color}"></span>
+             <b>${escapeHtml(g.name)}</b>
+             <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded ml-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
+             <span class="text-slate-500"> · ${rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
+           </div>`;
+      const buttons = mode === "pending"
+        ? `<button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "ดูรายการ"}</button>
+           <button class="bg-green-600 hover:bg-green-700 text-white rounded-lg px-3 py-1" data-eg-approve="${g.id}">อนุมัติทั้งกลุ่ม</button>
+           <button class="text-red-600 hover:underline px-1" data-eg-reject="${g.id}">ปฏิเสธ</button>`
+        : `<button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "แก้ไขรายการ"}</button>
+           <button class="text-red-600 hover:underline px-1" data-eg-delete="${g.id}">ลบทั้งกลุ่ม</button>`;
+      const body = open
+        ? `<table class="text-xs w-full"><thead><tr>
+             <th class="px-2 py-1 w-6"><input type="checkbox" data-eg-selall="${g.id}" title="เลือกทั้งหมด"></th>
+             <th class="text-left px-2 py-1 font-medium text-slate-600">#</th>
+             <th class="text-left px-2 py-1 font-medium text-slate-600">วันเริ่ม</th>
+             ${g.kind === "range" ? '<th class="text-left px-2 py-1 font-medium text-slate-600">วันจบ</th>' : ""}
+             <th></th></tr></thead><tbody>
+             ${rows.map((r, ri) => `<tr class="border-t border-slate-100">
+               <td class="px-2 py-1"><input type="checkbox" data-egsel="${g.id}:${ri}"></td>
+               <td class="px-2 py-1">${ri + 1}</td>
+               <td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.start || ""))}" data-egrow="${g.id}:${ri}:start" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>
+               ${g.kind === "range" ? `<td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.end || r.start || ""))}" data-egrow="${g.id}:${ri}:end" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>` : ""}
+               <td class="px-2 py-1 text-right"><button class="text-red-600 hover:underline" data-egrow-del="${g.id}:${ri}">ลบแถวนี้</button></td></tr>`).join("")}
+           </tbody></table>
+           <div class="mt-2 flex flex-wrap items-center gap-2">
+             <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs hover:bg-slate-50" data-eg-save="${g.id}">บันทึกการแก้ไข</button>
+             <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs text-red-600 hover:bg-red-50" data-eg-delsel="${g.id}">ลบที่เลือก</button>
+             <span class="text-[11px] text-slate-500">${mode === "pending" ? "แก้วันที่ผิดแล้วกดบันทึก ก่อนอนุมัติทั้งกลุ่ม" : "แก้ชื่อ สี หรือวันที่ แล้วกดบันทึก — มีผลกับทุกคนทันที"}</span>
+           </div>`
+        : "";
       return `<div class="border border-slate-200 rounded-xl mb-2">
         <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 rounded-t-xl">
-          <div class="text-xs">
-            <span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${/^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b"}"></span>
-            <b>${escapeHtml(g.name)}</b>
-            <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded ml-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
-            <span class="text-slate-500"> · ${rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
-          </div>
-          <div class="flex gap-2 text-xs">
-            <button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "ดูรายการ"}</button>
-            <button class="bg-green-600 hover:bg-green-700 text-white rounded-lg px-3 py-1" data-eg-approve="${g.id}">อนุมัติทั้งกลุ่ม</button>
-            <button class="text-red-600 hover:underline px-1" data-eg-reject="${g.id}">ปฏิเสธ</button>
-          </div>
+          ${head}<div class="flex gap-2 text-xs">${buttons}</div>
         </div>
-        <div class="${open ? "" : "hidden"} px-3 py-2">
-          <table class="text-xs w-full"><thead><tr>
-            <th class="text-left px-2 py-1 font-medium text-slate-600">#</th>
-            <th class="text-left px-2 py-1 font-medium text-slate-600">วันเริ่ม</th>
-            ${g.kind === "range" ? '<th class="text-left px-2 py-1 font-medium text-slate-600">วันจบ</th>' : ""}
-            <th></th></tr></thead><tbody>
-            ${rows.map((r, ri) => `<tr class="border-t border-slate-100">
-              <td class="px-2 py-1">${ri + 1}</td>
-              <td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.start || ""))}" data-egrow="${g.id}:${ri}:start" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>
-              ${g.kind === "range" ? `<td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.end || r.start || ""))}" data-egrow="${g.id}:${ri}:end" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>` : ""}
-              <td class="px-2 py-1 text-right"><button class="text-red-600 hover:underline" data-egrow-del="${g.id}:${ri}">ลบแถวนี้</button></td></tr>`).join("")}
-          </tbody></table>
-          <div class="mt-2 flex items-center gap-2">
-            <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs hover:bg-slate-50" data-eg-save="${g.id}">บันทึกการแก้ไข</button>
-            <span class="text-[11px] text-slate-500">แก้วันที่ผิดแล้วกดบันทึก ก่อนอนุมัติทั้งกลุ่ม</span>
-          </div>
-        </div>
+        <div class="${open ? "" : "hidden"} px-3 py-2">${body}</div>
       </div>`;
     }).join("");
   }
 
-  function adminGroupById(id) { return (state.eventsTab.pendingGroups || []).find((g) => String(g.id) === String(id)); }
+  function renderAdminGroups() {
+    renderGroupAdminList("adminPendingGroups", state.eventsTab.pendingGroups, "pending");
+    renderGroupAdminList("adminApprovedGroups", state.eventsTab.approvedGroups, "approved");
+  }
+
+  function adminGroupById(id) {
+    return (state.eventsTab.pendingGroups || []).concat(state.eventsTab.approvedGroups || [])
+      .find((g) => String(g.id) === String(id));
+  }
+
+  // Approved groups come from list_event_groups (no rows); their occurrences are
+  // fetched the first time the admin opens one.
+  async function loadAdminApprovedGroups() {
+    if (!isAdminSession()) { state.eventsTab.approvedGroups = []; return []; }
+    const known = {};
+    (state.eventsTab.approvedGroups || []).forEach((g) => { known[g.id] = g.rows; });
+    state.eventsTab.approvedGroups = (state.eventsTab.groups || [])
+      .filter((g) => g.status === "approved")
+      .map((g) => Object.assign({}, g, { rows: known[g.id] || null }));
+    renderAdminGroups();
+    return state.eventsTab.approvedGroups;
+  }
+
+  // both admin lists share one refresh: pending comes from its own RPC, approved
+  // is derived from list_event_groups
+  async function refreshAdminGroupLists() {
+    await loadAdminPendingGroups();
+    await loadEventGroups();
+    await loadAdminApprovedGroups();
+  }
+
+  async function loadGroupRows(groupId) {
+    const g = adminGroupById(groupId);
+    if (!g || g.rows) return g && g.rows;
+    try {
+      const { data, error } = await sb.rpc("event_group_rows", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      g.rows = (data || []).map((r) => ({ id: r.id, start: r.start_date, end: r.end_date }));
+    } catch (e) {
+      g.rows = [];
+      showError(byId("adminError"), "โหลดรายการในกลุ่มไม่สำเร็จ: " + (e.message || e));
+    }
+    renderAdminGroups();
+    return g.rows;
+  }
+
+  // checkbox state lives in the DOM; read it when "ลบที่เลือก" is pressed
+  function deleteSelectedGroupRows(groupId, rootEl) {
+    const g = adminGroupById(groupId);
+    if (!g || !g.rows) return 0;
+    const picked = Array.from((rootEl || document).querySelectorAll(`[data-egsel^="${groupId}:"]`))
+      .filter((c) => c.checked)
+      .map((c) => +c.getAttribute("data-egsel").split(":")[1])
+      .sort((a, b) => b - a);
+    picked.forEach((i) => g.rows.splice(i, 1));
+    if (picked.length) renderAdminGroups();
+    return picked.length;
+  }
 
   async function saveAdminGroupEdits(groupId) {
     const g = adminGroupById(groupId);
@@ -5009,7 +5106,10 @@ window.QD = (function () {
         p_rows: (g.rows || []).map((r) => (g.kind === "range" ? { start: r.start, end: r.end || r.start } : { start: r.start }))
       });
       if (error) throw error;
-      await loadAdminPendingGroups();
+      g.rows = null;                    // row ids are re-created by save_event_group
+      await refreshAdminGroupLists();
+      if (String(state.eventsTab.openGroupId) === String(groupId)) await loadGroupRows(groupId);
+      await loadEventsTab();
       return true;
     } catch (e) {
       showError(byId("adminError"), "บันทึกการแก้ไขไม่สำเร็จ: " + (e.message || e));
@@ -5022,8 +5122,7 @@ window.QD = (function () {
     try {
       const { error } = await sb.rpc("approve_event_group", { p_group_id: Number(groupId) });
       if (error) throw error;
-      await loadAdminPendingGroups();
-      await loadEventGroups();
+      await refreshAdminGroupLists();
       await loadEventsTab();
       return true;
     } catch (e) {
@@ -5039,8 +5138,9 @@ window.QD = (function () {
     try {
       const { error } = await sb.rpc("delete_event_group", { p_group_id: Number(groupId) });
       if (error) throw error;
-      await loadAdminPendingGroups();
-      await loadEventGroups();
+      state.eventsTab.approvedGroups = (state.eventsTab.approvedGroups || []).filter((x) => String(x.id) !== String(groupId));
+      if (String(state.eventsTab.openGroupId) === String(groupId)) state.eventsTab.openGroupId = null;
+      await refreshAdminGroupLists();
       await loadEventsTab();
       return true;
     } catch (e) {
@@ -5493,6 +5593,8 @@ window.QD = (function () {
       const e = egKindIsRange() ? ((byId("egEnd") || {}).value || s) : null;
       setEventGroupDraft(state.eventsTab.groupDraft.concat([{ start: s, end: e, flag: "" }]));
     });
+    const egDelSel = byId("egDelSelBtn");
+    if (egDelSel) egDelSel.addEventListener("click", () => deleteSelectedDraftRows());
     const egClear = byId("egClearBtn");
     if (egClear) egClear.addEventListener("click", () => { state.eventsTab.editingGroupId = null; setEventGroupDraft([]); });
     const egSave = byId("egSaveBtn");
@@ -5503,6 +5605,10 @@ window.QD = (function () {
       egTable.addEventListener("change", (ev) => {
         const t = ev.target;
         if (!t || !t.getAttribute) return;
+        if (t.id === "egSelAll") {
+          egTable.querySelectorAll("[data-eg-sel]").forEach((c) => { c.checked = t.checked; });
+          return;
+        }
         const si = t.getAttribute("data-eg-start"), ei = t.getAttribute("data-eg-end");
         if (si != null) { state.eventsTab.groupDraft[+si].start = t.value; state.eventsTab.groupDraft[+si].flag = ""; renderEventGroupPreview(); }
         else if (ei != null) { state.eventsTab.groupDraft[+ei].end = t.value; renderEventGroupPreview(); }
@@ -5516,38 +5622,56 @@ window.QD = (function () {
     }
 
     // ---- Admin group review (delegated: the list is re-rendered often) ----
-    const agEl = byId("adminPendingGroups");
-    if (agEl) {
+    ["adminPendingGroups", "adminApprovedGroups"].forEach((elId) => {
+      const agEl = byId(elId);
+      if (!agEl) return;
       agEl.addEventListener("click", (ev) => {
         const t = ev.target && ev.target.closest ? ev.target : null;
         if (!t) return;
         const tg = t.closest("[data-eg-toggle]");
         if (tg) { const id = tg.getAttribute("data-eg-toggle");
-          state.eventsTab.openGroupId = String(state.eventsTab.openGroupId) === String(id) ? null : id;
-          renderAdminGroups(); return; }
+          const opening = String(state.eventsTab.openGroupId) !== String(id);
+          state.eventsTab.openGroupId = opening ? id : null;
+          renderAdminGroups();
+          if (opening) loadGroupRows(id);   // approved groups arrive without rows
+          return; }
         const ap = t.closest("[data-eg-approve]");
         if (ap) { approveEventGroup(ap.getAttribute("data-eg-approve")); return; }
         const rj = t.closest("[data-eg-reject]");
         if (rj) { const g = adminGroupById(rj.getAttribute("data-eg-reject"));
           deleteEventGroup(rj.getAttribute("data-eg-reject"), g && g.name); return; }
+        const dg = t.closest("[data-eg-delete]");
+        if (dg) { const g = adminGroupById(dg.getAttribute("data-eg-delete"));
+          deleteEventGroup(dg.getAttribute("data-eg-delete"), g && g.name); return; }
         const sv = t.closest("[data-eg-save]");
         if (sv) { saveAdminGroupEdits(sv.getAttribute("data-eg-save")); return; }
+        const ds = t.closest("[data-eg-delsel]");
+        if (ds) { deleteSelectedGroupRows(ds.getAttribute("data-eg-delsel"), agEl); return; }
         const dl = t.closest("[data-egrow-del]");
         if (dl) {
           const [gid, ri] = dl.getAttribute("data-egrow-del").split(":");
           const g = adminGroupById(gid);
-          if (g) { g.rows.splice(+ri, 1); renderAdminGroups(); }
+          if (g && g.rows) { g.rows.splice(+ri, 1); renderAdminGroups(); }
         }
       });
       agEl.addEventListener("change", (ev) => {
         const t = ev.target;
-        const key = t && t.getAttribute ? t.getAttribute("data-egrow") : null;
+        if (!t || !t.getAttribute) return;
+        const all = t.getAttribute("data-eg-selall");
+        if (all != null) {
+          agEl.querySelectorAll(`[data-egsel^="${all}:"]`).forEach((c) => { c.checked = t.checked; });
+          return;
+        }
+        const nm = t.getAttribute("data-eg-name"), cl = t.getAttribute("data-eg-color");
+        if (nm != null) { const g = adminGroupById(nm); if (g) g.name = t.value; return; }
+        if (cl != null) { const g = adminGroupById(cl); if (g) g.color = t.value; return; }
+        const key = t.getAttribute("data-egrow");
         if (!key) return;
         const [gid, ri, field] = key.split(":");
         const g = adminGroupById(gid);
-        if (g && g.rows[+ri]) g.rows[+ri][field] = t.value;
+        if (g && g.rows && g.rows[+ri]) g.rows[+ri][field] = t.value;
       });
-    }
+    });
 
     // One delegated listener for the (re-rendered) table: header sort + admin delete
     const eventsTableEl = byId("eventsTable");
@@ -6141,6 +6265,8 @@ window.QD = (function () {
     validateEventGroupRows, setEventGroupDraft, renderEventGroupPreview, saveEventGroup,
     loadEventGroups, renderMyEventGroups, loadAdminPendingGroups, renderAdminGroups,
     saveAdminGroupEdits, approveEventGroup, deleteEventGroup, EG_MAX_ROWS,
+    loadAdminApprovedGroups, refreshAdminGroupLists, loadGroupRows,
+    deleteSelectedGroupRows, deleteSelectedDraftRows, renderGroupAdminList, adminGroupById,
     init
   };
 })();
