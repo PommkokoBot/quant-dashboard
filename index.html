@@ -593,6 +593,66 @@
       <p id="seasonalNote" class="text-[10px] text-slate-400 mt-1"></p>
     </section>
 
+    <!-- Event Study: before / during / after an event -->
+    <section id="eventStudySection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">Event Study — พฤติกรรมตลาดก่อน / ระหว่าง / หลัง event</h2>
+      <p class="text-[11px] text-slate-500 mb-3">ผลตอบแทนสะสม โดยให้ราคาปิดของวันทำการล่าสุดที่ไม่เกินวันเกิดเหตุเป็น 0% · ทุกเหตุการณ์มีน้ำหนักเท่ากัน</p>
+      <div class="flex flex-wrap items-end gap-4 mb-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">สินทรัพย์</label>
+          <select id="esAsset" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]"></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ชุด event</label>
+          <select id="esSource" class="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[220px]"></select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">สถิติ</label>
+          <select id="esStat" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <option value="med" selected>Median</option>
+            <option value="mean">Mean</option>
+            <option value="p25p75">Median + แถบ P25–P75</option>
+            <option value="minmax">Median + แถบ Min–Max</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">ช่วง ±N วันทำการ</label>
+          <div class="flex gap-1" id="esPresets"></div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">กำหนดเอง</label>
+          <input type="number" id="esN" min="5" max="250" value="60" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" />
+        </div>
+        <button id="esCalcBtn" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg px-4 py-2">คำนวณ</button>
+      </div>
+      <div class="flex flex-wrap items-end gap-4 mb-2 text-xs text-slate-600">
+        <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" id="esUnlock"> ยอมรับการทับซ้อน (ปลดล็อกเพดาน)</label>
+        <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" id="esBaseline" checked> แสดงเส้นอ้างอิง (ช่วงปกติ)</label>
+        <div id="esDuringBox" class="hidden">
+          <label class="block text-xs font-medium text-slate-500 mb-1">ท่อนระหว่าง</label>
+          <select id="esDuring" class="border border-slate-300 rounded-lg px-2 py-1.5 text-xs">
+            <option value="raw" selected>นับวันทำการจริง (ตัดที่ครั้งสั้นสุด)</option>
+            <option value="norm">ยืดเป็น 0–100% ของแต่ละครั้ง</option>
+          </select>
+        </div>
+        <div id="esDurFilterBox" class="hidden flex items-end gap-2">
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ความยาวขั้นต่ำ</label>
+            <input type="number" id="esDurMin" min="0" class="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-20" /></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">สูงสุด</label>
+            <input type="number" id="esDurMax" min="0" class="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-20" /></div>
+        </div>
+      </div>
+      <p id="esCapWarn" class="hidden text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2"></p>
+      <p id="esNWarn" class="hidden text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2"></p>
+      <p id="esError" class="text-xs text-red-600 hidden mb-2"></p>
+      <div id="esLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div> กำลังโหลดราคา...</div>
+      <div class="relative" style="height:400px"><canvas id="esChart"></canvas></div>
+      <div class="grid md:grid-cols-2 gap-3 mt-3">
+        <p id="esInfo" class="text-[11px] text-slate-500 leading-6"></p>
+        <div id="esDurInfo" class="text-[11px]"></div>
+      </div>
+    </section>
+
     <!-- Custom Event Form (login required) -->
     <section id="customEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
       <h2 class="text-sm font-semibold text-slate-800 mb-3">เพิ่ม Custom Event</h2>
@@ -932,6 +992,19 @@ window.QD = (function () {
       pendingGroups: [],       // admin: draft groups with their rows
       approvedGroups: [],      // admin: approved groups (rows loaded on expand)
       openGroupId: null,       // which admin group is expanded
+    },
+    eventStudy: {
+      assetId: null,           // instrument for the study
+      sourceKey: "",           // "t:<event_type>" or "g<group_id>"
+      sources: [],
+      stat: "med",             // med | mean | p25p75 | minmax
+      n: 60,                   // window in trading days
+      unlock: false,           // accept overlapping windows (lifts the cap)
+      duringMode: "raw",       // raw trading days | norm 0-100%
+      minDur: null, maxDur: null,
+      showBaseline: true,
+      pricesByAsset: {},       // instrument_id -> price index (session cache)
+      result: null, chart: null, ran: false,
     },
     seasonal: {
       loaded: false,
@@ -4523,6 +4596,7 @@ window.QD = (function () {
       rerenderEventsTable();
       // Same rows feed the Momentum drill-down markers -> no page reload needed
       applyMarketEventRows(rows);
+      renderEsPickers();
       if (state.momentum.drilldownInstrumentId != null) renderMomDrilldown();
       if (state.session) await loadEventGroups();
       // Load admin pending drafts (separate query)
@@ -4956,6 +5030,487 @@ window.QD = (function () {
         `<td class="px-3 py-1 text-slate-500">${escapeHtml(String(g.first_date || "").slice(0, 4))}–${escapeHtml(String(g.last_date || "").slice(0, 4))}</td>` +
         `<td class="px-3 py-1">${g.status === "approved" ? '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>' : '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>'}</td>` +
         `<td class="px-3 py-1 text-slate-400">${escapeHtml(g.creator_email || "—")}</td></tr>`).join("") + "</tbody></table>";
+  }
+
+  // ===================== Event Study (round 3A block 2) =====================
+  // Everything above the render layer is pure: prices + event dates in, series
+  // out. Day 0 = the close of the last trading day on or before the event date,
+  // so a holiday event (4 Jul on a Saturday) anchors on the previous session.
+  const ES_MIN_N = 5, ES_MAX_N = 250, ES_NORM_STEPS = 20, ES_MIN_EVENTS_WARN = 10;
+  const ES_PRESETS = [20, 60, 120];
+
+  // ohlcv rows (ascending) -> { dates, closes, idx }; adj_close preferred so
+  // splits/dividends don't show up as event effects
+  function buildPriceIndex(rows) {
+    const dates = [], closes = [], idx = Object.create(null);
+    (rows || []).forEach((r) => {
+      const d = String(r.date || "").slice(0, 10);
+      const c = Number(r.adj_close != null ? r.adj_close : r.close);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !isFinite(c) || c <= 0) return;
+      idx[d] = dates.length; dates.push(d); closes.push(c);
+    });
+    return { dates, closes, idx };
+  }
+
+  // last trading day on or before `date`; -1 when it precedes the first bar
+  function tradingIndexOnOrBefore(px, date) {
+    const d = String(date || "").slice(0, 10);
+    if (!d || !px || !px.dates.length) return -1;
+    if (px.idx[d] != null) return px.idx[d];
+    let lo = 0, hi = px.dates.length - 1, ans = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (px.dates[m] <= d) { ans = m; lo = m + 1; } else hi = m - 1;
+    }
+    return ans;
+  }
+
+  // [{start,end}] -> anchors sorted by start; occurrences with no price history
+  // are dropped and reported so the UI can say how many were usable
+  function eventAnchors(px, events, kind) {
+    const anchors = [], dropped = [];
+    (events || []).slice()
+      .sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")))
+      .forEach((e) => {
+        // a scheduled-but-not-yet-happened event would otherwise anchor on the
+        // last bar and invent a day 0, so it is dropped
+        const last = px.dates[px.dates.length - 1];
+        if (String(e.start || "") > last) { dropped.push(String(e.start || "")); return; }
+        const i0 = tradingIndexOnOrBefore(px, e.start);
+        const i1 = kind === "range" ? tradingIndexOnOrBefore(px, e.end || e.start) : i0;
+        if (i0 < 0 || i1 < i0) { dropped.push(String(e.start || "")); return; }
+        anchors.push({ start: e.start, end: e.end || e.start, i0, i1, dur: i1 - i0 });
+      });
+    return { anchors, dropped };
+  }
+
+  // trading days from one occurrence's end to the next one's start
+  function eventGapStats(anchors) {
+    const gaps = [];
+    for (let i = 1; i < anchors.length; i++) gaps.push(anchors[i].i0 - anchors[i - 1].i1);
+    if (!gaps.length) return { min: null, med: null, max: null, n: 0 };
+    const s = gaps.slice().sort((a, b) => a - b);
+    return { min: s[0], med: Math.round(percentile(s, 50)), max: s[s.length - 1], n: s.length };
+  }
+
+  // hard ceiling for N: one trading day short of the typical gap, so a window
+  // never reaches the neighbouring occurrence
+  function capFromGaps(gap) {
+    if (!gap || gap.med == null) return ES_MAX_N;
+    return Math.max(ES_MIN_N, Math.min(ES_MAX_N, gap.med - 1));
+  }
+
+  function esColumnStats(values) {
+    const v = values.filter((x) => isFinite(x)).sort((a, b) => a - b);
+    if (!v.length) return { n: 0, med: null, mean: null, p25: null, p75: null, min: null, max: null };
+    let sum = 0; for (let i = 0; i < v.length; i++) sum += v[i];
+    return { n: v.length, med: percentile(v, 50), mean: sum / v.length,
+      p25: percentile(v, 25), p75: percentile(v, 75), min: v[0], max: v[v.length - 1] };
+  }
+
+  const esPct = (px, from, to) => (px.closes[to] / px.closes[from] - 1) * 100;
+
+  // one column of the study: the same offset across every occurrence
+  function esStatsAtOffset(px, anchors, baseKey, offKey, k) {
+    const vals = [];
+    anchors.forEach((a) => {
+      const base = a[baseKey], i = a[offKey] + k;
+      if (i < 0 || i >= px.closes.length) return;
+      vals.push(esPct(px, base, i));
+    });
+    return esColumnStats(vals);
+  }
+
+  // average return over EVERY window of the same shape in the price history —
+  // the "is this different from an ordinary stretch of market?" reference
+  function esBaselineCurve(px, offsets) {
+    const T = px.closes.length;
+    const lo = Math.min.apply(null, offsets), hi = Math.max.apply(null, offsets);
+    return offsets.map((k) => {
+      let sum = 0, n = 0;
+      for (let t = Math.max(0, -lo); t < T - Math.max(0, hi); t++) {
+        const i = t + k;
+        if (i < 0 || i >= T) continue;
+        sum += esPct(px, t, i); n += 1;
+      }
+      return n ? sum / n : null;
+    });
+  }
+
+  // linear interpolation of one occurrence's during-window onto 0..100 %
+  function esNormalisedPath(px, a, steps) {
+    const out = [];
+    for (let s = 0; s <= steps; s++) {
+      const pos = (a.dur * s) / steps;
+      const lo = Math.floor(pos), hi = Math.ceil(pos);
+      const vLo = esPct(px, a.i0, a.i0 + lo);
+      const v = lo === hi ? vLo : vLo + (esPct(px, a.i0, a.i0 + hi) - vLo) * (pos - lo);
+      out.push(v);
+    }
+    return out;
+  }
+
+  function esDurationStats(anchors) {
+    if (!anchors.length) return { min: null, med: null, max: null };
+    const s = anchors.map((a) => a.dur).sort((x, y) => x - y);
+    return { min: s[0], med: percentile(s, 50), max: s[s.length - 1] };
+  }
+
+  // Main entry. opts: { kind, n, duringMode: "raw"|"norm", stat, minDur, maxDur }
+  // Returns labels + one value per column for each statistic, plus n(t), the
+  // boundary indices (start / end of the during block) and the baseline.
+  function computeEventStudy(px, events, opts) {
+    const o = opts || {};
+    const kind = o.kind === "range" ? "range" : "point";
+    const n = Math.max(ES_MIN_N, Math.min(ES_MAX_N, Math.round(o.n || 60)));
+    const res = eventAnchors(px, events, kind);
+    let anchors = res.anchors;
+    const totalWithPrices = anchors.length;
+    if (kind === "range") {
+      if (o.minDur != null) anchors = anchors.filter((a) => a.dur >= o.minDur);
+      if (o.maxDur != null) anchors = anchors.filter((a) => a.dur <= o.maxDur);
+    }
+    const gap = eventGapStats(anchors);
+    const out = {
+      kind, n, nEvents: anchors.length, dropped: res.dropped, totalWithPrices,
+      gap, cap: capFromGaps(gap), duration: esDurationStats(anchors),
+      labels: [], offsets: [], med: [], mean: [], p25: [], p75: [], min: [], max: [], nAt: [],
+      boundaries: [], baseline: [], anchors
+    };
+    if (!anchors.length) return out;
+
+    const push = (label, st) => {
+      out.labels.push(label); out.med.push(st.med); out.mean.push(st.mean);
+      out.p25.push(st.p25); out.p75.push(st.p75); out.min.push(st.min); out.max.push(st.max);
+      out.nAt.push(st.n);
+    };
+
+    if (kind === "point") {
+      const offsets = [];
+      for (let k = -n; k <= n; k++) offsets.push(k);
+      offsets.forEach((k) => push(k === 0 ? "วันเกิดเหตุ" : (k > 0 ? "+" : "") + k,
+        esStatsAtOffset(px, anchors, "i0", "i0", k)));
+      out.offsets = offsets;
+      out.boundaries = [n];                       // index of day 0
+      out.baseline = esBaselineCurve(px, offsets);
+      return out;
+    }
+
+    // ---- range: before (anchored on the start) ----
+    for (let k = -n; k <= 0; k++) push(k === 0 ? "เริ่ม" : String(k), esStatsAtOffset(px, anchors, "i0", "i0", k));
+    out.boundaries.push(out.labels.length - 1);
+
+    // elapsed trading days from the start anchor, for the baseline's x-grid;
+    // inside the during block a typical (median-length) occurrence is assumed
+    const medDur = Math.round(out.duration.med || 0);
+    const elapsed = []; for (let k = -n; k <= 0; k++) elapsed.push(k);
+
+    // ---- during ----
+    if (o.duringMode === "norm") {
+      const paths = anchors.map((a) => esNormalisedPath(px, a, ES_NORM_STEPS));
+      for (let s = 1; s <= ES_NORM_STEPS; s++) {
+        push(Math.round((s * 100) / ES_NORM_STEPS) + "%", esColumnStats(paths.map((p) => p[s])));
+        elapsed.push(Math.round((medDur * s) / ES_NORM_STEPS));
+      }
+      out.duringLen = ES_NORM_STEPS;
+    } else {
+      // raw trading days, truncated at the shortest occurrence so every point
+      // comes from all of them
+      const shortest = Math.min.apply(null, anchors.map((a) => a.dur));
+      for (let k = 1; k <= shortest; k++) {
+        push("วันที่ " + k, esStatsAtOffset(px, anchors, "i0", "i0", k));
+        elapsed.push(k);
+      }
+      out.duringLen = shortest;
+    }
+    out.boundaries.push(out.labels.length - 1);
+
+    // ---- after (anchored on the end) ----
+    for (let k = 1; k <= n; k++) {
+      push("+" + k, esStatsAtOffset(px, anchors, "i1", "i1", k));
+      elapsed.push(medDur + k);
+    }
+
+    // the three blocks are measured from different bases; shift the later ones
+    // so the drawn line is continuous
+    esJoinBlocks(out);
+    out.offsets = elapsed;
+    out.baseline = esBaselineCurve(px, elapsed);
+    return out;
+  }
+
+  // during/after are each re-based to 0 at their own anchor; add the level the
+  // previous block ended on so the line joins instead of jumping back to 0
+  function esJoinBlocks(out) {
+    const keys = ["med", "mean", "p25", "p75", "min", "max"];
+    const b0 = out.boundaries[0], b1 = out.boundaries[1];
+    const shiftRange = (from, to, by) => keys.forEach((k) => {
+      for (let i = from; i <= to && i < out[k].length; i++) if (out[k][i] != null) out[k][i] += by[k] || 0;
+    });
+    const levelAt = (i) => { const o = {}; keys.forEach((k) => { o[k] = out[k][i] || 0; }); return o; };
+    const lvl0 = levelAt(b0);
+    shiftRange(b0 + 1, b1, lvl0);
+    const lvl1 = levelAt(b1);
+    shiftRange(b1 + 1, out.med.length - 1, lvl1);
+  }
+
+  // ---- Event Study: sources, prices, render ----
+
+  const esShow = (el, on) => { if (el) el.classList.toggle("hidden", !on); };
+
+  // every selectable source comes from the rows the Events tab already fetched:
+  // one per system event type, one per approved/own group
+  function esSourcesFromRows(rows) {
+    const groups = {}, types = {}, out = [];
+    (rows || []).forEach((r) => {
+      const start = String(r.event_date || r.market_date || "").slice(0, 10);
+      if (!start) return;
+      if (r.group_id != null) {
+        const k = "g" + r.group_id;
+        if (!groups[k]) groups[k] = { key: k, label: r.group_name || r.event_name || "กลุ่ม " + r.group_id,
+          kind: "point", color: r.color || "#7c3aed", isGroup: true, events: [] };
+        if (r.end_date) { groups[k].kind = "range"; }
+        groups[k].events.push({ start, end: r.end_date ? String(r.end_date).slice(0, 10) : null });
+      } else if (r.event_type && r.event_type !== "custom") {
+        const k = "t:" + r.event_type;
+        if (!types[k]) types[k] = { key: k, label: r.name_th || r.event_type, kind: "point",
+          color: eventStyle(r.event_type).color || "#2563eb", isGroup: false, events: [] };
+        types[k].events.push({ start, end: null });
+      }
+    });
+    Object.keys(types).forEach((k) => out.push(types[k]));
+    Object.keys(groups).forEach((k) => out.push(groups[k]));
+    out.forEach((s) => { s.n = s.events.length; });
+    return out.filter((s) => s.n >= 2).sort((a, b) => (a.isGroup - b.isGroup) || b.n - a.n);
+  }
+
+  function esCurrentSource() {
+    const es = state.eventStudy;
+    return (es.sources || []).find((s) => s.key === es.sourceKey) || (es.sources || [])[0] || null;
+  }
+
+  function renderEsPickers() {
+    const es = state.eventStudy;
+    const aEl = byId("esAsset");
+    if (aEl) {
+      aEl.innerHTML = state.instruments.map((i) =>
+        `<option value="${i.id}">${escapeHtml(i.ticker)} — ${escapeHtml(i.name || "")}</option>`).join("");
+      if (es.assetId == null) es.assetId = state.assetId;
+      if (es.assetId != null) aEl.value = String(es.assetId);
+    }
+    const sEl = byId("esSource");
+    if (sEl) {
+      es.sources = esSourcesFromRows(state.eventsTab.customEvents);
+      sEl.innerHTML = es.sources.map((s) =>
+        `<option value="${s.key}">${escapeHtml(s.label)} — ${s.n} ครั้ง${s.kind === "range" ? " (มีช่วง)" : ""}</option>`).join("");
+      if (!es.sources.some((s) => s.key === es.sourceKey)) es.sourceKey = es.sources[0] ? es.sources[0].key : "";
+      if (es.sourceKey) sEl.value = es.sourceKey;
+    }
+    const src = esCurrentSource();
+    esShow(byId("esDuringBox"), !!(src && src.kind === "range"));
+    esShow(byId("esDurFilterBox"), !!(src && src.kind === "range"));
+    renderEsPresetButtons();
+  }
+
+  function renderEsPresetButtons() {
+    const el = byId("esPresets");
+    if (!el) return;
+    el.innerHTML = ES_PRESETS.map((v) =>
+      `<button type="button" data-es-n="${v}" class="text-xs border rounded px-2 py-1 ${state.eventStudy.n === v ? "bg-slate-800 text-white" : ""}">±${v}</button>`).join("");
+  }
+
+  // prices are fetched once per instrument and kept for the session
+  async function ensureEsPrices(assetId) {
+    const es = state.eventStudy;
+    if (es.pricesByAsset[assetId]) return es.pricesByAsset[assetId];
+    const rows = await loadSeasonalData(assetId);
+    es.pricesByAsset[assetId] = buildPriceIndex(rows);
+    return es.pricesByAsset[assetId];
+  }
+
+  function esReadControls() {
+    const es = state.eventStudy;
+    es.assetId = (byId("esAsset") || {}).value || es.assetId;
+    es.sourceKey = (byId("esSource") || {}).value || es.sourceKey;
+    es.stat = (byId("esStat") || {}).value || "med";
+    es.duringMode = (byId("esDuring") || {}).value || "raw";
+    es.unlock = !!(byId("esUnlock") || {}).checked;
+    es.showBaseline = !!(byId("esBaseline") || {}).checked;
+    const num = (id) => { const v = (byId(id) || {}).value; return v === "" || v == null ? null : Number(v); };
+    es.minDur = num("esDurMin");
+    es.maxDur = num("esDurMax");
+    const n = num("esN");
+    if (n != null && isFinite(n)) es.n = Math.max(ES_MIN_N, Math.min(ES_MAX_N, Math.round(n)));
+  }
+
+  function onEsControlChange(id) {
+    esReadControls();
+    if (id === "esSource" || id === "esAsset") renderEsPickers();
+    if (id === "esN") renderEsPresetButtons();
+    if (state.eventStudy.ran) runEventStudy();
+  }
+
+  async function runEventStudy() {
+    const es = state.eventStudy;
+    esReadControls();
+    const src = esCurrentSource();
+    hide(byId("esError"));
+    if (!src) { showError(byId("esError"), "ยังไม่มีชุด event ให้เลือก"); return null; }
+    if (es.assetId == null) { showError(byId("esError"), "ยังไม่ได้เลือกสินทรัพย์"); return null; }
+    show(byId("esLoading"));
+    try {
+      const px = await ensureEsPrices(es.assetId);
+      // the cap depends on the source, so compute once to learn it, clamp N,
+      // then compute the series the user actually sees
+      const probe = computeEventStudy(px, src.events, { kind: src.kind, n: ES_MIN_N, duringMode: es.duringMode,
+        minDur: es.minDur, maxDur: es.maxDur });
+      const cap = probe.cap;
+      let n = es.n, capped = false;
+      if (!es.unlock && n > cap) { n = cap; capped = true; }
+      es.n = n;
+      const nEl = byId("esN"); if (nEl) nEl.value = String(n);
+      renderEsPresetButtons();
+      const res = computeEventStudy(px, src.events, { kind: src.kind, n, duringMode: es.duringMode,
+        minDur: es.minDur, maxDur: es.maxDur });
+      es.result = res; es.ran = true;
+      renderEventStudy(res, src, { capped, cap });
+      return res;
+    } catch (e) {
+      showError(byId("esError"), "คำนวณไม่สำเร็จ: " + (e.message || e));
+      return null;
+    } finally {
+      hide(byId("esLoading"));
+    }
+  }
+
+  function esWarnTexts(res, src, meta) {
+    const w = [];
+    if (meta.capped) {
+      w.push(`จำกัดไว้ที่ <b>±${meta.cap} วันทำการ</b> เพราะ ${escapeHtml(src.label)} ห่างกันโดยทั่วไป ${res.gap.med} วันทำการ ` +
+        `ถ้ายาวกว่านี้หน้าต่างของแต่ละครั้งจะกินเหตุการณ์ครั้งถัดไป ข้อมูลจะถูกนับซ้ำ · ติ๊ก "ยอมรับการทับซ้อน" ถ้าต้องการดูยาวกว่านี้`);
+    } else if (state.eventStudy.unlock && res.gap.med != null && res.n > meta.cap) {
+      w.push(`กำลังดูแบบทับซ้อน — ±${res.n} ยาวกว่าระยะห่างปกติ (${res.gap.med} วันทำการ) ข้อมูลบางช่วงถูกนับมากกว่าหนึ่งครั้ง ตีความอย่างระมัดระวัง`);
+    }
+    return w;
+  }
+
+  function renderEventStudy(res, src, meta) {
+    const m = meta || {};
+    const capEl = byId("esCapWarn"), nEl = byId("esNWarn");
+    const warns = esWarnTexts(res, src, m);
+    if (capEl) { capEl.innerHTML = warns.join("<br>"); esShow(capEl, warns.length > 0); }
+    if (nEl) {
+      const few = res.nEvents > 0 && res.nEvents < ES_MIN_EVENTS_WARN;
+      nEl.innerHTML = few
+        ? `มีเพียง <b>${res.nEvents} ครั้ง</b> — น้อยกว่า ${ES_MIN_EVENTS_WARN} ค่ากลางที่ได้จึงอ่อนไหวต่อเหตุการณ์เดียวมาก ใช้เป็นภาพประกอบ ไม่ควรใช้สรุปทางสถิติ`
+        : "";
+      esShow(nEl, few);
+    }
+    const info = byId("esInfo");
+    if (info) {
+      const nMin = res.nAt.length ? Math.min.apply(null, res.nAt) : 0;
+      const nMax = res.nAt.length ? Math.max.apply(null, res.nAt) : 0;
+      const bits = [`<b>${escapeHtml(src.label)}</b> · ใช้ได้ ${res.nEvents} ครั้ง` +
+        (res.dropped.length ? ` (ข้าม ${res.dropped.length} ครั้งที่ไม่มีข้อมูลราคา)` : "")];
+      if (res.gap.med != null) bits.push(`ห่างกันโดยทั่วไป ${res.gap.med} วันทำการ (สั้นสุด ${res.gap.min} ยาวสุด ${res.gap.max}) · เพดานแนะนำ ±${res.cap}`);
+      bits.push(`จำนวนครั้งต่อจุด: ${nMin}–${nMax} (ปลายกราฟเหลือน้อยลงเมื่อข้อมูลราคาไม่ครบ)`);
+      bits.push(`เส้นอ้างอิง = ผลตอบแทนเฉลี่ยของทุกช่วงเวลายาวเท่ากันตลอดประวัติราคา`);
+      info.innerHTML = bits.join("<br>");
+    }
+    const durEl = byId("esDurInfo");
+    if (durEl) {
+      if (src.kind !== "range" || !res.nEvents) { durEl.innerHTML = ""; }
+      else {
+        const d = res.duration;
+        const note = state.eventStudy.duringMode === "norm"
+          ? "โหมดยืด 0–100%: ความยาวถูกปรับสัดส่วน เหตุการณ์สั้นกับยาวจึงมีน้ำหนักเท่ากัน และความผันผวนของครั้งสั้นจะดูนิ่งกว่าความจริง"
+          : `โหมดวันทำการจริง: ท่อนระหว่างตัดที่ ${res.duringLen} วัน ซึ่งเป็นความยาวของครั้งที่สั้นที่สุด ทุกจุดจึงมาจากทุกเหตุการณ์ครบ`;
+        durEl.innerHTML = `<div class="border border-slate-200 rounded-lg p-2 bg-slate-50">
+          <div class="text-slate-600">ความยาวเหตุการณ์ (วันทำการ) — สั้นสุด ${d.min} · กลาง ${Number(d.med).toFixed(1)} · ยาวสุด ${d.max}</div>
+          <div class="mt-1 text-slate-500">${res.anchors.slice(0, 8).map((a) => `${escapeHtml(a.start)} → ${escapeHtml(a.end)} (${a.dur} วัน)`).join("<br>")}${res.anchors.length > 8 ? "<br>…" : ""}</div>
+          <div class="mt-1 text-amber-700">${note}</div></div>`;
+      }
+    }
+    renderEventStudyChart(res, src);
+  }
+
+  const esBoundaryPlugin = {
+    id: "esBoundaries",
+    afterDatasetsDraw(chart, _a, opts) {
+      const marks = (opts && opts.marks) || [];
+      const { ctx, chartArea: ar, scales } = chart;
+      if (!ar || !scales || !scales.x) return;
+      ctx.save();
+      const y0 = scales.y.getPixelForValue(0);
+      ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ar.left, y0); ctx.lineTo(ar.right, y0); ctx.stroke();
+      ctx.font = "11px sans-serif";
+      marks.forEach((mk) => {
+        if (mk.index == null || mk.index < 0) return;
+        const x = scales.x.getPixelForValue(mk.index);
+        if (x == null || isNaN(x)) return;
+        ctx.strokeStyle = "#94a3b8"; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x, ar.top); ctx.lineTo(x, ar.bottom); ctx.stroke();
+        ctx.setLineDash([]); ctx.fillStyle = "#475569";
+        ctx.fillText(mk.label, Math.min(x + 3, ar.right - 30), ar.top + 12);
+      });
+      ctx.restore();
+    }
+  };
+
+  function renderEventStudyChart(res, src) {
+    const canvas = byId("esChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    const es = state.eventStudy;
+    if (es.chart) { es.chart.destroy(); es.chart = null; }
+    if (!res.labels.length) return;
+    const stat = es.stat;
+    const main = stat === "mean" ? res.mean : res.med;
+    const wantBand = stat === "p25p75" || stat === "minmax";
+    const lo = stat === "minmax" ? res.min : res.p25;
+    const hi = stat === "minmax" ? res.max : res.p75;
+    const color = /^#[0-9a-f]{6}$/i.test(src.color) ? src.color : "#2563eb";
+    const ds = [];
+    if (wantBand) {
+      ds.push({ label: stat === "minmax" ? "Min" : "P25", data: lo, borderColor: "transparent",
+        backgroundColor: color + "22", pointRadius: 0, fill: "+1" });
+      ds.push({ label: stat === "minmax" ? "Max" : "P75", data: hi, borderColor: "transparent",
+        backgroundColor: color + "22", pointRadius: 0, fill: false });
+    }
+    ds.push({ label: stat === "mean" ? "Mean" : "Median", data: main, borderColor: color,
+      borderWidth: 2, pointRadius: 0, fill: false, tension: 0.12 });
+    if (es.showBaseline) {
+      ds.push({ label: "ช่วงปกติ (อ้างอิง)", data: res.baseline, borderColor: "#94a3b8", borderWidth: 1.5,
+        borderDash: [5, 4], pointRadius: 0, fill: false });
+    }
+    const marks = res.kind === "point"
+      ? [{ index: res.boundaries[0], label: "วันเกิดเหตุ" }]
+      : [{ index: res.boundaries[0], label: "เริ่ม" }, { index: res.boundaries[1], label: "จบ" }];
+    es.chart = new Chart(canvas, {
+      type: "line",
+      data: { labels: res.labels, datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { title: { display: true, text: "ผลตอบแทนสะสม (%)" }, grid: { color: "#f1f5f9" } },
+          x: { ticks: { maxTicksLimit: 14, autoSkip: true }, grid: { display: false } }
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: {
+            label: (c) => `${c.dataset.label}: ${c.parsed.y == null ? "-" : c.parsed.y.toFixed(2)}%`,
+            afterBody: (items) => {
+              const i = items && items[0] ? items[0].dataIndex : -1;
+              return i >= 0 && res.nAt[i] != null ? `จำนวนครั้ง ณ จุดนี้: ${res.nAt[i]}` : "";
+            }
+          } },
+          esBoundaries: { marks }
+        }
+      },
+      plugins: [esBoundaryPlugin]
+    });
+    return es.chart;
   }
 
   // ---- Admin: group review ----
@@ -5586,6 +6141,21 @@ window.QD = (function () {
     const egGenNth = byId("egGenNthBtn");
     if (egGenNth) egGenNth.addEventListener("click", () => setEventGroupDraft(generateNthWeekdayDates(
       +byId("egOrd").value, +byId("egDow").value, +byId("egNthMonth").value, +byId("egNthFrom").value, +byId("egNthTo").value)));
+    // ---- Event Study controls ----
+    const esCalc = byId("esCalcBtn");
+    if (esCalc) esCalc.addEventListener("click", () => runEventStudy());
+    ["esAsset", "esSource", "esStat", "esDuring", "esUnlock", "esBaseline", "esDurMin", "esDurMax", "esN"]
+      .forEach((id) => { const el = byId(id); if (el) el.addEventListener("change", () => onEsControlChange(id)); });
+    const esPre = byId("esPresets");
+    if (esPre) esPre.addEventListener("click", (ev) => {
+      const b = ev.target && ev.target.closest ? ev.target.closest("[data-es-n]") : null;
+      if (!b) return;
+      state.eventStudy.n = +b.getAttribute("data-es-n");
+      const nEl = byId("esN"); if (nEl) nEl.value = String(state.eventStudy.n);
+      renderEsPresetButtons();
+      if (state.eventStudy.ran) runEventStudy();
+    });
+
     const egAdd = byId("egAddBtn");
     if (egAdd) egAdd.addEventListener("click", () => {
       const s = (byId("egStart") || {}).value;
@@ -6265,6 +6835,11 @@ window.QD = (function () {
     validateEventGroupRows, setEventGroupDraft, renderEventGroupPreview, saveEventGroup,
     loadEventGroups, renderMyEventGroups, loadAdminPendingGroups, renderAdminGroups,
     saveAdminGroupEdits, approveEventGroup, deleteEventGroup, EG_MAX_ROWS,
+    buildPriceIndex, tradingIndexOnOrBefore, eventAnchors, eventGapStats, capFromGaps,
+    esColumnStats, esStatsAtOffset, esBaselineCurve, esNormalisedPath, esDurationStats,
+    computeEventStudy, esSourcesFromRows, esCurrentSource, renderEsPickers, renderEsPresetButtons,
+    ensureEsPrices, esReadControls, runEventStudy, renderEventStudy, renderEventStudyChart,
+    onEsControlChange, ES_MIN_N, ES_MAX_N, ES_NORM_STEPS, ES_PRESETS,
     loadAdminApprovedGroups, refreshAdminGroupLists, loadGroupRows,
     deleteSelectedGroupRows, deleteSelectedDraftRows, renderGroupAdminList, adminGroupById,
     init
