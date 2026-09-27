@@ -625,11 +625,99 @@
           <p id="ceCsvError" class="text-xs text-red-600 hidden"></p>
         </div>
       </details>
+
+      <!-- Event Group builder (Round 3A) -->
+      <div class="border-t border-slate-200 mt-5 pt-4">
+        <h3 class="text-sm font-semibold text-slate-800 mb-1">สร้างกลุ่ม Event</h3>
+        <p class="text-xs text-slate-500 mb-3">กลุ่มคือเหตุการณ์เดียวกันที่เกิดหลายครั้ง เช่น วันชาติสหรัฐฯ หรือ Government shutdown — ใช้หาค่าเฉลี่ยพฤติกรรมตลาดได้</p>
+        <div class="flex flex-wrap items-end gap-3 mb-3">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">ชื่อกลุ่ม</label>
+            <input type="text" id="egName" placeholder="เช่น วันชาติสหรัฐฯ" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-52" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">สี</label>
+            <input type="color" id="egColor" value="#e11d48" class="border border-slate-300 rounded-lg h-9 w-12" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">ประเภท</label>
+            <select id="egKind" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="point">วันเดียว</option>
+              <option value="range">มีช่วง (เริ่ม–จบ)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">วิธีสร้างวัน</label>
+            <select id="egMode" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="yearly">วันที่ตายตัวทุกปี</option>
+              <option value="nth">วันในสัปดาห์ที่ n ของเดือน</option>
+              <option value="manual">ใส่เองทีละครั้ง</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-end gap-3 mb-3" id="egCtlYearly">
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">วันที่</label>
+            <input type="number" id="egDay" value="4" min="1" max="31" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-20" /></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">เดือน</label>
+            <select id="egMonth" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ปีเริ่ม</label>
+            <input type="number" id="egFrom" value="1995" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" /></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ปีจบ</label>
+            <input type="number" id="egTo" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" /></div>
+          <button id="egGenBtn" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg px-4 py-2">สร้างรายการ</button>
+        </div>
+
+        <div class="flex flex-wrap items-end gap-3 mb-3 hidden" id="egCtlNth">
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ลำดับ</label>
+            <select id="egOrd" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="1">ที่ 1</option><option value="2">ที่ 2</option><option value="3" selected>ที่ 3</option>
+              <option value="4">ที่ 4</option><option value="-1">สุดท้าย</option></select></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">วัน</label>
+            <select id="egDow" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"></select></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">เดือน</label>
+            <select id="egNthMonth" class="border border-slate-300 rounded-lg px-3 py-2 text-sm"><option value="0">ทุกเดือน</option></select></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ปีเริ่ม</label>
+            <input type="number" id="egNthFrom" value="2015" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" /></div>
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">ปีจบ</label>
+            <input type="number" id="egNthTo" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-24" /></div>
+          <button id="egGenNthBtn" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg px-4 py-2">สร้างรายการ</button>
+        </div>
+
+        <div class="flex flex-wrap items-end gap-3 mb-3 hidden" id="egCtlManual">
+          <div><label class="block text-xs font-medium text-slate-500 mb-1">วันเริ่ม</label>
+            <input type="date" id="egStart" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" /></div>
+          <div id="egEndBox" class="hidden"><label class="block text-xs font-medium text-slate-500 mb-1">วันจบ</label>
+            <input type="date" id="egEnd" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" /></div>
+          <button id="egAddBtn" class="border border-slate-300 rounded-lg px-3 py-2 text-xs hover:bg-slate-50">+ เพิ่มครั้ง</button>
+        </div>
+
+        <div id="egPreviewBox" class="hidden">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs font-medium text-slate-700">ตรวจก่อนบันทึก — <span id="egCount">0</span> ครั้ง</p>
+            <p class="text-[11px] text-slate-500" id="egHint">แก้วันที่ได้ในตาราง หรือกดลบเฉพาะแถวที่ไม่ต้องการ</p>
+          </div>
+          <div class="overflow-auto border border-slate-200 rounded-lg" style="max-height:260px">
+            <table id="egTable" class="text-xs w-full"></table>
+          </div>
+          <div class="flex items-center gap-3 mt-3">
+            <button id="egSaveBtn" class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg px-4 py-2">บันทึกเป็น draft</button>
+            <button id="egClearBtn" class="border border-slate-300 rounded-lg px-3 py-2 text-xs hover:bg-slate-50">ล้างรายการ</button>
+            <span class="text-[11px] text-slate-500">draft เห็นเฉพาะคุณ และหมดอายุใน 7 วันถ้าไม่ได้รับอนุมัติ</span>
+          </div>
+        </div>
+        <p id="egError" class="text-xs text-red-600 hidden mt-2"></p>
+        <p id="egSuccess" class="text-xs text-green-600 hidden mt-2"></p>
+        <div id="egMyGroups" class="mt-4"></div>
+      </div>
     </section>
 
     <!-- Admin Panel (mehresix@gmail.com only) -->
     <section id="adminEventSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hidden">
-      <h2 class="text-sm font-semibold text-slate-800 mb-3">Admin — Pending Events</h2>
+      <h2 class="text-sm font-semibold text-slate-800 mb-3">Admin — รออนุมัติ</h2>
+      <h3 class="text-xs font-semibold text-slate-600 mb-2">กลุ่ม Event</h3>
+      <div id="adminPendingGroups" class="mb-5"></div>
+      <h3 class="text-xs font-semibold text-slate-600 mb-2">Event เดี่ยว</h3>
       <div id="adminPendingList"></div>
       <p id="adminError" class="text-xs text-red-600 hidden"></p>
     </section>
@@ -834,6 +922,12 @@ window.QD = (function () {
       calendarYear: new Date().getFullYear(),
       sort: { key: "date", dir: "desc" }, // Events table column sort (default = newest first, as before)
       collapsed: false,        // Events Calendar section folded?
+      // Event groups (round 3A)
+      groupDraft: [],          // rows being built in the form: [{start, end, flag}]
+      editingGroupId: null,    // set when re-saving an existing draft group
+      groups: [],              // list_event_groups(): approved + own drafts
+      pendingGroups: [],       // admin: draft groups with their rows
+      openGroupId: null,       // which admin group is expanded
     },
     seasonal: {
       loaded: false,
@@ -4426,8 +4520,9 @@ window.QD = (function () {
       // Same rows feed the Momentum drill-down markers -> no page reload needed
       applyMarketEventRows(rows);
       if (state.momentum.drilldownInstrumentId != null) renderMomDrilldown();
+      if (state.session) await loadEventGroups();
       // Load admin pending drafts (separate query)
-      if (isAdminSession()) await loadAdminPendingDrafts();
+      if (isAdminSession()) { await loadAdminPendingDrafts(); await loadAdminPendingGroups(); }
     } catch (e) {
       showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
     } finally {
@@ -4684,6 +4779,273 @@ window.QD = (function () {
       await loadEventsTab();
     } catch (e) {
       showError(byId("ceCsvError"), "นำเข้าไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // =====================================================================
+  // Event groups (Round 3A) -- several occurrences of the same event filed
+  // under one name, so an event study can average across them.
+  // =====================================================================
+
+  const EG_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+  const EG_DOWS = ["อาทิตย์","จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์"];
+  const EG_MAX_ROWS = 500;
+
+  function isoUTC(d) { return d.toISOString().slice(0, 10); }
+
+  // The nth (1..4, or -1 = last) <dow> of that month; null when the month has
+  // no such week (e.g. a 4th Monday that falls into the next month).
+  function nthWeekdayOfMonth(year, month, dow, ord) {
+    if (ord === -1) {
+      const d = new Date(Date.UTC(year, month, 0));
+      while (d.getUTCDay() !== dow) d.setUTCDate(d.getUTCDate() - 1);
+      return d;
+    }
+    const d = new Date(Date.UTC(year, month - 1, 1));
+    while (d.getUTCDay() !== dow) d.setUTCDate(d.getUTCDate() + 1);
+    d.setUTCDate(d.getUTCDate() + (ord - 1) * 7);
+    return d.getUTCMonth() === month - 1 ? d : null;
+  }
+
+  // Pure date generators -> [{start, end, flag}]. The calendar date is kept as
+  // is; market_events_between maps it to the trading day when it is drawn.
+  function generateYearlyDates(day, month, fromY, toY) {
+    const out = [];
+    for (let y = fromY; y <= toY; y++) {
+      const d = new Date(Date.UTC(y, month - 1, day));
+      if (d.getUTCMonth() !== month - 1) continue; // 29 Feb in a non-leap year
+      out.push({ start: isoUTC(d), end: null,
+        flag: [0, 6].includes(d.getUTCDay()) ? "ตรงวันหยุดสุดสัปดาห์ — กราฟจะเลื่อนไปวันทำการถัดไป" : "" });
+    }
+    return out;
+  }
+  function generateNthWeekdayDates(ord, dow, month, fromY, toY) {
+    const out = [];
+    for (let y = fromY; y <= toY; y++) {
+      const months = month === 0 ? [1,2,3,4,5,6,7,8,9,10,11,12] : [month];
+      months.forEach((m) => { const d = nthWeekdayOfMonth(y, m, dow, ord); if (d) out.push({ start: isoUTC(d), end: null, flag: "" }); });
+    }
+    return out;
+  }
+  function sortEventGroupRows(rows) {
+    return (rows || []).slice().sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  }
+  // -> "" when valid, otherwise the reason (Thai)
+  function validateEventGroupRows(rows, kind) {
+    if (!rows || !rows.length) return "ต้องมีอย่างน้อย 1 ครั้ง";
+    if (rows.length > EG_MAX_ROWS) return `มีได้ไม่เกิน ${EG_MAX_ROWS} ครั้ง (ตอนนี้ ${rows.length})`;
+    for (const r of rows) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(r.start || "")) return "มีวันเริ่มที่ยังไม่ได้กรอก";
+      if (kind === "range" && r.end && r.end < r.start) return `วันจบก่อนวันเริ่ม (${r.start})`;
+    }
+    return "";
+  }
+
+  function egKindIsRange() { return (byId("egKind") || {}).value === "range"; }
+
+  function renderEventGroupPreview() {
+    const box = byId("egPreviewBox"), el = byId("egTable");
+    if (!box || !el) return;
+    const rows = state.eventsTab.groupDraft;
+    box.classList.toggle("hidden", rows.length === 0);
+    setText("egCount", rows.length);
+    const isRange = egKindIsRange();
+    const problem = validateEventGroupRows(rows, isRange ? "range" : "point");
+    const hint = byId("egHint");
+    if (hint) {
+      hint.textContent = problem || "แก้วันที่ได้ในตาราง หรือกดลบเฉพาะแถวที่ไม่ต้องการ";
+      hint.className = problem ? "text-[11px] text-red-600" : "text-[11px] text-slate-500";
+    }
+    el.innerHTML = '<thead class="bg-slate-50"><tr>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">#</th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">วันเริ่ม</th>' +
+      (isRange ? '<th class="text-left px-3 py-2 font-medium text-slate-600">วันจบ</th><th class="text-left px-3 py-2 font-medium text-slate-600">ยาว</th>' : "") +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">หมายเหตุ</th><th></th></tr></thead><tbody>' +
+      rows.map((r, i) => `<tr class="border-t border-slate-100">` +
+        `<td class="px-3 py-1">${i + 1}</td>` +
+        `<td class="px-3 py-1"><input type="date" data-eg-start="${i}" value="${escapeHtml(r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
+        (isRange ? `<td class="px-3 py-1"><input type="date" data-eg-end="${i}" value="${escapeHtml(r.end || r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
+                   `<td class="px-3 py-1 text-slate-500">${calendarDayCount(r)} วัน</td>` : "") +
+        `<td class="px-3 py-1 text-[11px] text-amber-700">${escapeHtml(r.flag || "")}</td>` +
+        `<td class="px-3 py-1 text-right"><button class="text-red-600 hover:underline" data-eg-del="${i}">ลบ</button></td></tr>`).join("") +
+      "</tbody>";
+  }
+  function calendarDayCount(r) {
+    if (!r.end) return 1;
+    return Math.round((new Date(r.end + "T00:00:00Z") - new Date(r.start + "T00:00:00Z")) / 86400000) + 1;
+  }
+
+  function setEventGroupDraft(rows) {
+    state.eventsTab.groupDraft = sortEventGroupRows(rows);
+    if (egKindIsRange()) state.eventsTab.groupDraft.forEach((r) => { if (!r.end) r.end = r.start; });
+    renderEventGroupPreview();
+  }
+
+  async function saveEventGroup() {
+    hide(byId("egError")); hide(byId("egSuccess"));
+    const name = ((byId("egName") || {}).value || "").trim();
+    const kind = egKindIsRange() ? "range" : "point";
+    const rows = state.eventsTab.groupDraft;
+    if (!name) { showError(byId("egError"), "กรุณาตั้งชื่อกลุ่ม"); return false; }
+    const problem = validateEventGroupRows(rows, kind);
+    if (problem) { showError(byId("egError"), problem); return false; }
+    try {
+      const payload = rows.map((r) => (kind === "range" ? { start: r.start, end: r.end || r.start } : { start: r.start }));
+      const { data, error } = await sb.rpc("save_event_group", {
+        p_name: name, p_color: (byId("egColor") || {}).value || "#3498db",
+        p_kind: kind, p_rows: payload, p_group_id: state.eventsTab.editingGroupId || null
+      });
+      if (error) throw error;
+      const el = byId("egSuccess");
+      if (el) { el.textContent = `บันทึกกลุ่ม "${name}" (${rows.length} ครั้ง) เป็น draft แล้ว — รอ admin อนุมัติ`; show(el); }
+      state.eventsTab.groupDraft = []; state.eventsTab.editingGroupId = null;
+      renderEventGroupPreview();
+      await loadEventGroups();
+      await loadEventsTab();
+      return data;
+    } catch (e) {
+      showError(byId("egError"), "บันทึกไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function loadEventGroups() {
+    try {
+      const { data, error } = await sb.rpc("list_event_groups");
+      if (error) throw error;
+      state.eventsTab.groups = data || [];
+    } catch (e) {
+      state.eventsTab.groups = [];
+    }
+    renderMyEventGroups();
+    return state.eventsTab.groups;
+  }
+
+  function renderMyEventGroups() {
+    const el = byId("egMyGroups");
+    if (!el) return;
+    const gs = state.eventsTab.groups || [];
+    if (!gs.length) { el.innerHTML = '<p class="text-xs text-slate-400">ยังไม่มีกลุ่ม</p>'; return; }
+    el.innerHTML = '<p class="text-xs font-medium text-slate-600 mb-1">กลุ่มที่มีอยู่</p>' +
+      '<table class="text-xs w-full"><thead class="bg-slate-50"><tr>' +
+      ["ชื่อ", "ประเภท", "จำนวน", "ช่วงปี", "สถานะ", "ผู้สร้าง"].map((h) => `<th class="text-left px-3 py-1.5 font-medium text-slate-600">${h}</th>`).join("") +
+      '</tr></thead><tbody>' + gs.map((g) => `<tr class="border-t border-slate-100">` +
+        `<td class="px-3 py-1"><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${/^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b"}"></span>${escapeHtml(g.name)}</td>` +
+        `<td class="px-3 py-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</td>` +
+        `<td class="px-3 py-1">${g.n_events}</td>` +
+        `<td class="px-3 py-1 text-slate-500">${escapeHtml(String(g.first_date || "").slice(0, 4))}–${escapeHtml(String(g.last_date || "").slice(0, 4))}</td>` +
+        `<td class="px-3 py-1">${g.status === "approved" ? '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>' : '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>'}</td>` +
+        `<td class="px-3 py-1 text-slate-400">${escapeHtml(g.creator_email || "—")}</td></tr>`).join("") + "</tbody></table>";
+  }
+
+  // ---- Admin: group review ----
+
+  async function loadAdminPendingGroups() {
+    try {
+      const { data, error } = await sb.rpc("admin_pending_groups");
+      if (error) throw error;
+      state.eventsTab.pendingGroups = data || [];
+    } catch (e) {
+      state.eventsTab.pendingGroups = [];
+      showError(byId("adminError"), "โหลดกลุ่มที่รออนุมัติไม่สำเร็จ: " + (e.message || e));
+    }
+    renderAdminGroups();
+  }
+
+  function renderAdminGroups() {
+    const el = byId("adminPendingGroups");
+    if (!el) return;
+    const gs = state.eventsTab.pendingGroups || [];
+    if (!gs.length) { el.innerHTML = '<p class="text-xs text-slate-400">ไม่มีกลุ่มที่รออนุมัติ</p>'; return; }
+    el.innerHTML = gs.map((g) => {
+      const rows = g.rows || [];
+      const open = state.eventsTab.openGroupId === g.id;
+      return `<div class="border border-slate-200 rounded-xl mb-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 rounded-t-xl">
+          <div class="text-xs">
+            <span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${/^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b"}"></span>
+            <b>${escapeHtml(g.name)}</b>
+            <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded ml-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
+            <span class="text-slate-500"> · ${rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
+          </div>
+          <div class="flex gap-2 text-xs">
+            <button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "ดูรายการ"}</button>
+            <button class="bg-green-600 hover:bg-green-700 text-white rounded-lg px-3 py-1" data-eg-approve="${g.id}">อนุมัติทั้งกลุ่ม</button>
+            <button class="text-red-600 hover:underline px-1" data-eg-reject="${g.id}">ปฏิเสธ</button>
+          </div>
+        </div>
+        <div class="${open ? "" : "hidden"} px-3 py-2">
+          <table class="text-xs w-full"><thead><tr>
+            <th class="text-left px-2 py-1 font-medium text-slate-600">#</th>
+            <th class="text-left px-2 py-1 font-medium text-slate-600">วันเริ่ม</th>
+            ${g.kind === "range" ? '<th class="text-left px-2 py-1 font-medium text-slate-600">วันจบ</th>' : ""}
+            <th></th></tr></thead><tbody>
+            ${rows.map((r, ri) => `<tr class="border-t border-slate-100">
+              <td class="px-2 py-1">${ri + 1}</td>
+              <td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.start || ""))}" data-egrow="${g.id}:${ri}:start" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>
+              ${g.kind === "range" ? `<td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.end || r.start || ""))}" data-egrow="${g.id}:${ri}:end" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>` : ""}
+              <td class="px-2 py-1 text-right"><button class="text-red-600 hover:underline" data-egrow-del="${g.id}:${ri}">ลบแถวนี้</button></td></tr>`).join("")}
+          </tbody></table>
+          <div class="mt-2 flex items-center gap-2">
+            <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs hover:bg-slate-50" data-eg-save="${g.id}">บันทึกการแก้ไข</button>
+            <span class="text-[11px] text-slate-500">แก้วันที่ผิดแล้วกดบันทึก ก่อนอนุมัติทั้งกลุ่ม</span>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function adminGroupById(id) { return (state.eventsTab.pendingGroups || []).find((g) => String(g.id) === String(id)); }
+
+  async function saveAdminGroupEdits(groupId) {
+    const g = adminGroupById(groupId);
+    if (!g) return false;
+    hide(byId("adminError"));
+    const problem = validateEventGroupRows((g.rows || []).map((r) => ({ start: r.start, end: r.end })), g.kind);
+    if (problem) { showError(byId("adminError"), problem); return false; }
+    try {
+      const { error } = await sb.rpc("save_event_group", {
+        p_name: g.name, p_color: g.color, p_kind: g.kind, p_group_id: g.id,
+        p_rows: (g.rows || []).map((r) => (g.kind === "range" ? { start: r.start, end: r.end || r.start } : { start: r.start }))
+      });
+      if (error) throw error;
+      await loadAdminPendingGroups();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "บันทึกการแก้ไขไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function approveEventGroup(groupId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("approve_event_group", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      await loadAdminPendingGroups();
+      await loadEventGroups();
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "อนุมัติกลุ่มไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function deleteEventGroup(groupId, label, confirmFn) {
+    hide(byId("adminError"));
+    const ask = confirmFn || ((m) => window.confirm(m));
+    if (!ask(`ลบกลุ่ม "${label || groupId}" พร้อมทุกวันในกลุ่ม?\nลบแล้วกู้คืนไม่ได้`)) return false;
+    try {
+      const { error } = await sb.rpc("delete_event_group", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      await loadAdminPendingGroups();
+      await loadEventGroups();
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "ลบกลุ่มไม่สำเร็จ: " + (e.message || e));
+      return false;
     }
   }
 
@@ -5097,6 +5459,95 @@ window.QD = (function () {
 
     const collapseBtn = byId("eventsCollapseBtn");
     if (collapseBtn) collapseBtn.addEventListener("click", toggleEventsCollapsed);
+
+    // ---- Event group builder ----
+    const mSel = byId("egMonth"), nmSel = byId("egNthMonth"), dowSel = byId("egDow");
+    if (mSel && !mSel.options.length) EG_MONTHS.forEach((m, i) => mSel.insertAdjacentHTML("beforeend", `<option value="${i + 1}" ${i === 6 ? "selected" : ""}>${m}</option>`));
+    if (nmSel && nmSel.options.length <= 1) EG_MONTHS.forEach((m, i) => nmSel.insertAdjacentHTML("beforeend", `<option value="${i + 1}">${m}</option>`));
+    if (dowSel && !dowSel.options.length) EG_DOWS.forEach((d, i) => dowSel.insertAdjacentHTML("beforeend", `<option value="${i}" ${i === 5 ? "selected" : ""}>${d}</option>`));
+    const thisYear = new Date().getFullYear();
+    if (byId("egTo") && !byId("egTo").value) byId("egTo").value = thisYear;
+    if (byId("egNthTo") && !byId("egNthTo").value) byId("egNthTo").value = thisYear;
+
+    const egMode = byId("egMode");
+    if (egMode) egMode.addEventListener("change", () => {
+      byId("egCtlYearly").classList.toggle("hidden", egMode.value !== "yearly");
+      byId("egCtlNth").classList.toggle("hidden", egMode.value !== "nth");
+      byId("egCtlManual").classList.toggle("hidden", egMode.value !== "manual");
+    });
+    const egKind = byId("egKind");
+    if (egKind) egKind.addEventListener("change", () => {
+      byId("egEndBox").classList.toggle("hidden", egKind.value !== "range");
+      setEventGroupDraft(state.eventsTab.groupDraft);
+    });
+    const egGen = byId("egGenBtn");
+    if (egGen) egGen.addEventListener("click", () => setEventGroupDraft(generateYearlyDates(
+      +byId("egDay").value, +byId("egMonth").value, +byId("egFrom").value, +byId("egTo").value)));
+    const egGenNth = byId("egGenNthBtn");
+    if (egGenNth) egGenNth.addEventListener("click", () => setEventGroupDraft(generateNthWeekdayDates(
+      +byId("egOrd").value, +byId("egDow").value, +byId("egNthMonth").value, +byId("egNthFrom").value, +byId("egNthTo").value)));
+    const egAdd = byId("egAddBtn");
+    if (egAdd) egAdd.addEventListener("click", () => {
+      const s = (byId("egStart") || {}).value;
+      if (!s) return;
+      const e = egKindIsRange() ? ((byId("egEnd") || {}).value || s) : null;
+      setEventGroupDraft(state.eventsTab.groupDraft.concat([{ start: s, end: e, flag: "" }]));
+    });
+    const egClear = byId("egClearBtn");
+    if (egClear) egClear.addEventListener("click", () => { state.eventsTab.editingGroupId = null; setEventGroupDraft([]); });
+    const egSave = byId("egSaveBtn");
+    if (egSave) egSave.addEventListener("click", () => saveEventGroup());
+
+    const egTable = byId("egTable");
+    if (egTable) {
+      egTable.addEventListener("change", (ev) => {
+        const t = ev.target;
+        if (!t || !t.getAttribute) return;
+        const si = t.getAttribute("data-eg-start"), ei = t.getAttribute("data-eg-end");
+        if (si != null) { state.eventsTab.groupDraft[+si].start = t.value; state.eventsTab.groupDraft[+si].flag = ""; renderEventGroupPreview(); }
+        else if (ei != null) { state.eventsTab.groupDraft[+ei].end = t.value; renderEventGroupPreview(); }
+      });
+      egTable.addEventListener("click", (ev) => {
+        const b = ev.target && ev.target.closest ? ev.target.closest("[data-eg-del]") : null;
+        if (!b) return;
+        state.eventsTab.groupDraft.splice(+b.getAttribute("data-eg-del"), 1);
+        renderEventGroupPreview();
+      });
+    }
+
+    // ---- Admin group review (delegated: the list is re-rendered often) ----
+    const agEl = byId("adminPendingGroups");
+    if (agEl) {
+      agEl.addEventListener("click", (ev) => {
+        const t = ev.target && ev.target.closest ? ev.target : null;
+        if (!t) return;
+        const tg = t.closest("[data-eg-toggle]");
+        if (tg) { const id = tg.getAttribute("data-eg-toggle");
+          state.eventsTab.openGroupId = String(state.eventsTab.openGroupId) === String(id) ? null : id;
+          renderAdminGroups(); return; }
+        const ap = t.closest("[data-eg-approve]");
+        if (ap) { approveEventGroup(ap.getAttribute("data-eg-approve")); return; }
+        const rj = t.closest("[data-eg-reject]");
+        if (rj) { const g = adminGroupById(rj.getAttribute("data-eg-reject"));
+          deleteEventGroup(rj.getAttribute("data-eg-reject"), g && g.name); return; }
+        const sv = t.closest("[data-eg-save]");
+        if (sv) { saveAdminGroupEdits(sv.getAttribute("data-eg-save")); return; }
+        const dl = t.closest("[data-egrow-del]");
+        if (dl) {
+          const [gid, ri] = dl.getAttribute("data-egrow-del").split(":");
+          const g = adminGroupById(gid);
+          if (g) { g.rows.splice(+ri, 1); renderAdminGroups(); }
+        }
+      });
+      agEl.addEventListener("change", (ev) => {
+        const t = ev.target;
+        const key = t && t.getAttribute ? t.getAttribute("data-egrow") : null;
+        if (!key) return;
+        const [gid, ri, field] = key.split(":");
+        const g = adminGroupById(gid);
+        if (g && g.rows[+ri]) g.rows[+ri][field] = t.value;
+      });
+    }
 
     // One delegated listener for the (re-rendered) table: header sort + admin delete
     const eventsTableEl = byId("eventsTable");
@@ -5685,6 +6136,11 @@ window.QD = (function () {
     // Round 2 close-out (2026-09-22)
     toDrilldownEventRows, applyMarketEventRows, sortEventRows, setEventsSort, rerenderEventsTable,
     toggleEventsCollapsed, deleteCustomEvent, isAdminSession, EVENTS_TABLE_COLUMNS,
+    // Event groups (round 3A)
+    nthWeekdayOfMonth, generateYearlyDates, generateNthWeekdayDates, sortEventGroupRows,
+    validateEventGroupRows, setEventGroupDraft, renderEventGroupPreview, saveEventGroup,
+    loadEventGroups, renderMyEventGroups, loadAdminPendingGroups, renderAdminGroups,
+    saveAdminGroupEdits, approveEventGroup, deleteEventGroup, EG_MAX_ROWS,
     init
   };
 })();
