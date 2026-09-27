@@ -35,6 +35,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -49,6 +50,14 @@ FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 # any "units" transform (e.g. pc1) on its own full series first, then filters by
 # observation_start -- so an early start date here does not distort the transformed values.
 FULL_HISTORY_START = "1990-01-01"
+
+# 2026-09-27: the first run with 14 series backfilled ~25k rows in under two
+# minutes and FRED reset three connections ("[Errno 104] Connection reset by
+# peer"), losing DGS30 / T10Y2Y / T10YIE for that run. Same retry policy as
+# fetch_prices.py, plus a short pause between series on backfill runs.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 5
+BACKFILL_PAUSE_SECONDS = 1
 
 
 def get_client():
@@ -72,15 +81,24 @@ def fetch_fred_series(series_id: str, units: str, api_key: str, start_date: str)
         "units": units,
         "observation_start": start_date,
     }
-    resp = requests.get(FRED_BASE, params=params, timeout=30)
-    resp.raise_for_status()
-    payload = resp.json()
-    rows = []
-    for obs in payload.get("observations", []):
-        if obs["value"] in (".", "", None):
-            continue  # FRED uses "." for missing observations
-        rows.append({"series_id": series_id, "date": obs["date"], "value": float(obs["value"]), "source": "FRED"})
-    return rows
+    last_err = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.get(FRED_BASE, params=params, timeout=30)
+            resp.raise_for_status()
+            payload = resp.json()
+            rows = []
+            for obs in payload.get("observations", []):
+                if obs["value"] in (".", "", None):
+                    continue  # FRED uses "." for missing observations
+                rows.append({"series_id": series_id, "date": obs["date"], "value": float(obs["value"]), "source": "FRED"})
+            return rows
+        except Exception as e:  # noqa: BLE001 - connection resets, timeouts, 5xx
+            last_err = e
+            if attempt < RETRY_ATTEMPTS:
+                print(f"[retry] {series_id}: attempt {attempt} failed ({e}); retrying", file=sys.stderr)
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+    raise RuntimeError(f"FRED fetch failed for {series_id} after {RETRY_ATTEMPTS} attempts: {last_err}")
 
 
 def upsert_macro(client, rows):
@@ -134,6 +152,8 @@ def run(lookback_days: int, full_history: bool = False):
             start_date, why = resolve_start_date(series, lookback_days, full_history, has_rows, today)
             rows = fetch_fred_series(series_id, series.get("units", "lin"), fred_key, start_date)
             upsert_macro(client, rows)
+            if start_date == FULL_HISTORY_START:
+                time.sleep(BACKFILL_PAUSE_SECONDS)  # don't hammer FRED on a multi-series backfill
             last = rows[-1]["date"] if rows else "-"
             print(f"[ok]  {series_id} ({series.get('label', '')}): {len(rows)} rows from {start_date} ({why}), latest {last}")
             ok += 1

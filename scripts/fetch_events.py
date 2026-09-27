@@ -197,11 +197,15 @@ def upsert_types(client, types: list):
 
 
 def write_type(client, code: str, source: str, wanted: list, remove: list, notes: dict):
-    # every wanted row is upserted (not only new ones) so a changed note/source is refreshed
+    # Every wanted row is written (not only new ones) so a changed note/source is
+    # refreshed. The merge goes through the upsert_system_events() RPC: round 2
+    # made the unique index on (event_type, event_date) PARTIAL (it skips
+    # source='manual' so several users can file a custom event on one day), and
+    # PostgREST's own upsert cannot name a partial index -- it fails with 42P10.
     rows = [{"event_type": code, "event_date": d.isoformat(), "source": source,
              "note": notes.get(d.isoformat())} for d in wanted]
     for i in range(0, len(rows), 500):
-        client.table("market_events").upsert(rows[i:i + 500], on_conflict="event_type,event_date").execute()
+        client.rpc("upsert_system_events", {"p_rows": rows[i:i + 500]}).execute()
     rm = [d.isoformat() for d in remove]
     for i in range(0, len(rm), 200):
         client.table("market_events").delete().eq("event_type", code).in_("event_date", rm[i:i + 200]).execute()

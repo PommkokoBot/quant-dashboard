@@ -352,6 +352,7 @@ class TestFredParsing(unittest.TestCase):
             fetch_macro.fetch_bot_series()
 
 
+@patch("fetch_macro.time.sleep", lambda *_: None)
 class TestMacroFullHistory(unittest.TestCase):
     """Pins down the fix for the macro backfill gap: a --full-history run must send
     FULL_HISTORY_START as observation_start instead of the 10-day lookback window,
@@ -388,6 +389,7 @@ class TestMacroFullHistory(unittest.TestCase):
             self.assertNotEqual(start_date, fetch_macro.FULL_HISTORY_START)
 
 
+@patch("fetch_macro.time.sleep", lambda *_: None)
 class TestMacroFetchWindow(unittest.TestCase):
     """2026-09-22 fix: monthly FRED observations are dated the 1st of the month and
     published weeks later, so a 10-day window never picked them up (CPI stuck at
@@ -457,6 +459,62 @@ class TestMacroFetchWindow(unittest.TestCase):
                 fetch_macro.run(lookback_days=10, full_history=False)
         fetched = [c.args[0] for c in mock_fetch.call_args_list]
         self.assertIn("GDPNOW", fetched, "series after the failing one are still fetched")
+
+
+@patch("fetch_macro.time.sleep", lambda *_: None)
+class TestMacroRetry(unittest.TestCase):
+    """2026-09-27: the first 14-series backfill lost DGS30 / T10Y2Y / T10YIE to
+    "[Errno 104] Connection reset by peer" -- fetch_macro had no retry."""
+
+    OBS = {"observations": [{"date": "2026-09-01", "value": "1.5"}]}
+
+    def _resp(self):
+        r = MagicMock()
+        r.raise_for_status.return_value = None
+        r.json.return_value = self.OBS
+        return r
+
+    @patch("fetch_macro.requests.get")
+    def test_retries_then_succeeds(self, get):
+        get.side_effect = [ConnectionResetError(104, "Connection reset by peer"), self._resp()]
+        rows = fetch_macro.fetch_fred_series("DGS30", "lin", "k", "1990-01-01")
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(rows, [{"series_id": "DGS30", "date": "2026-09-01", "value": 1.5, "source": "FRED"}])
+
+    @patch("fetch_macro.requests.get")
+    def test_gives_up_after_three_attempts(self, get):
+        get.side_effect = ConnectionResetError(104, "Connection reset by peer")
+        with self.assertRaises(RuntimeError) as cm:
+            fetch_macro.fetch_fred_series("T10Y2Y", "lin", "k", "1990-01-01")
+        self.assertEqual(get.call_count, fetch_macro.RETRY_ATTEMPTS)
+        self.assertIn("T10Y2Y", str(cm.exception))
+
+    @patch("fetch_macro.requests.get")
+    def test_backoff_grows(self, get):
+        get.side_effect = ConnectionResetError(104, "reset")
+        with patch("fetch_macro.time.sleep") as sleep:
+            with self.assertRaises(RuntimeError):
+                fetch_macro.fetch_fred_series("X", "lin", "k", "1990-01-01")
+        self.assertEqual([c.args[0] for c in sleep.call_args_list],
+                         [fetch_macro.RETRY_BACKOFF_SECONDS, fetch_macro.RETRY_BACKOFF_SECONDS * 2])
+
+    @patch("fetch_macro.get_client")
+    @patch("fetch_macro.requests.get")
+    def test_one_dead_series_does_not_lose_the_others(self, get, mock_get_client):
+        mock_get_client.return_value = MagicMock()
+        calls = {"n": 0}
+        def side_effect(*_a, **kw):
+            calls["n"] += 1
+            if kw["params"]["series_id"] == "T10YIE":
+                raise ConnectionResetError(104, "reset")
+            return self._resp()
+        get.side_effect = side_effect
+        with patch.dict(os.environ, {"FRED_API_KEY": "k"}):
+            with self.assertRaises(SystemExit):  # the job still reports the failure
+                fetch_macro.run(lookback_days=10, full_history=False)
+        asked = [c.kwargs["params"]["series_id"] for c in get.call_args_list]
+        self.assertEqual(asked.count("T10YIE"), fetch_macro.RETRY_ATTEMPTS, "retried 3x")
+        self.assertIn("GDPNOW", asked, "series after the dead one still fetched")
 
 
 class TestMacroConfig(unittest.TestCase):

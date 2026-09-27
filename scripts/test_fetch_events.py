@@ -122,7 +122,17 @@ def fake_client(existing):
         return t
     c._tables = {}
     c.table.side_effect = table
+    c._rpc = []
+    def rpc(fn, args):
+        c._rpc.append((fn, args))
+        return MagicMock()
+    c.rpc.side_effect = rpc
     return c
+
+
+def written_rows(c):
+    """(event_type, event_date) pairs sent to the upsert_system_events RPC."""
+    return [r for fn, args in c._rpc if fn == "upsert_system_events" for r in args["p_rows"]]
 
 
 def calls(c, name, method):
@@ -148,8 +158,8 @@ class TestRun(unittest.TestCase):
         ff.return_value = [date(2025, m, 12) for m in range(1, 13)]
         c = fake_client({"us_election_pres": ["2020-11-03", "2024-11-05"], "cpi": ["2025-01-12", "2025-01-13"]})
         fe.run(False, client=c, today=date(2025, 6, 1), config=CFG, fred_key="k")
-        ups = [call.args[0] for m in calls(c, "market_events", "upsert") for call in m.call_args_list]
-        written = {(r["event_type"], r["event_date"]) for rows in ups for r in rows}
+        rows_sent = written_rows(c)
+        written = {(r["event_type"], r["event_date"]) for r in rows_sent}
         self.assertIn(("us_election_pres", "2024-11-05"), written)
         self.assertNotIn(("us_election_pres", "2020-11-03"), written, "outside rule range")
         self.assertEqual(len([w for w in written if w[0] == "cpi"]), 12)
@@ -158,7 +168,11 @@ class TestRun(unittest.TestCase):
         # manual type: never read, never written
         types_upsert = calls(c, "event_types", "upsert")[0].call_args.args[0]
         self.assertEqual([t["code"] for t in types_upsert], ["us_election_pres", "cpi", "my_manual"])
-        self.assertFalse(any(r["event_type"] == "my_manual" for rows in ups for r in rows))
+        self.assertFalse(any(r["event_type"] == "my_manual" for r in rows_sent))
+        # the partial-index fix: the table upsert is never used any more (it raises 42P10)
+        self.assertEqual(calls(c, "market_events", "upsert"), [], "market_events is written through the RPC only")
+        self.assertTrue(all(set(r) == {"event_type", "event_date", "source", "note"} for r in rows_sent))
+        self.assertTrue(all(r["source"] != "manual" for r in rows_sent))
 
     @patch("fetch_events.fetch_fred_release_dates")
     def test_dry_run_writes_nothing(self, ff):
@@ -168,6 +182,7 @@ class TestRun(unittest.TestCase):
         for name in ("market_events", "event_types"):
             for method in ("upsert", "delete", "insert", "update"):
                 self.assertEqual(calls(c, name, method), [], f"{name}.{method}")
+        self.assertEqual(c._rpc, [], "dry-run calls no RPC either")
 
     @patch("fetch_events.fetch_fred_release_dates")
     def test_refused_fred_list_writes_nothing_for_that_type_and_fails(self, ff):
@@ -175,11 +190,22 @@ class TestRun(unittest.TestCase):
         c = fake_client({"cpi": ["2025-01-12"], "us_election_pres": ["2020-11-03"]})
         with self.assertRaises(SystemExit):
             fe.run(False, client=c, today=date(2025, 6, 1), config=CFG, fred_key="k")
-        ups = [call.args[0] for m in calls(c, "market_events", "upsert") for call in m.call_args_list]
-        self.assertFalse(any(r["event_type"] == "cpi" for rows in ups for r in rows))
-        self.assertTrue(any(r["event_type"] == "us_election_pres" for rows in ups for r in rows),
+        rows_sent = written_rows(c)
+        self.assertFalse(any(r["event_type"] == "cpi" for r in rows_sent))
+        self.assertTrue(any(r["event_type"] == "us_election_pres" for r in rows_sent),
                         "other types still sync")
         self.assertEqual(len(calls(c, "market_events", "delete")), 1, "only the election type deletes its stale row; the refused cpi keeps its rows")
+
+    @patch("fetch_events.fetch_fred_release_dates")
+    def test_rpc_payload_is_chunked_at_500(self, ff):
+        ff.return_value = [date(2025, 1, 1) + timedelta(days=i * 7) for i in range(60)]
+        big = dict(CFG, fred_max_per_year=999, rule_start_year=1990, rule_years_ahead=1)
+        c = fake_client({})
+        fe.run(False, client=c, today=date(2025, 6, 1), config=big, fred_key="k")
+        for fn, args in c._rpc:
+            self.assertEqual(fn, "upsert_system_events")
+            self.assertLessEqual(len(args["p_rows"]), 500)
+        self.assertGreater(len(written_rows(c)), 0)
 
     def test_missing_fred_key_fails_that_type_only(self):
         c = fake_client({})
