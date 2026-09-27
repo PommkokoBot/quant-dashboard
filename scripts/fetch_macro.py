@@ -21,6 +21,15 @@ Usage:
   python scripts/fetch_macro.py
   python scripts/fetch_macro.py --lookback-days 30
   python scripts/fetch_macro.py --full-history    # pull max available history (first run / backfill)
+
+Fetch window per series (2026-09-22):
+  - A series may set "lookback_days" in config/macro_series.json. The window
+    used is max(--lookback-days, series lookback_days). Monthly/weekly/quarterly
+    FRED observations are dated at the START of their period and published weeks
+    later (and revised), so a 10-day window never catches them -- they use ~400.
+  - A series with no rows in macro_series yet is backfilled from
+    FULL_HISTORY_START automatically, so adding a series to the config needs no
+    manual --full-history run.
 """
 import argparse
 import json
@@ -82,6 +91,21 @@ def upsert_macro(client, rows):
         client.table("macro_series").upsert(rows[i : i + CHUNK], on_conflict="series_id,date").execute()
 
 
+def series_has_rows(client, series_id: str) -> bool:
+    res = client.table("macro_series").select("date").eq("series_id", series_id).limit(1).execute()
+    return bool(getattr(res, "data", None))
+
+
+def resolve_start_date(series: dict, cli_lookback_days: int, full_history: bool, has_rows: bool, today: date):
+    """-> (start_date_iso, reason). Pure so the window rules can be unit-tested."""
+    if full_history:
+        return FULL_HISTORY_START, "full-history"
+    if not has_rows:
+        return FULL_HISTORY_START, "new series -> backfill"
+    days = max(int(cli_lookback_days), int(series.get("lookback_days") or 0))
+    return (today - timedelta(days=days)).isoformat(), f"lookback {days}d"
+
+
 def fetch_bot_series(*_args, **_kwargs):
     raise NotImplementedError(
         "Bank of Thailand macro fetch is not implemented yet. "
@@ -96,8 +120,7 @@ def run(lookback_days: int, full_history: bool = False):
     config = load_config()
     client = get_client()
     fred_key = os.environ.get("FRED_API_KEY")
-
-    start_date = FULL_HISTORY_START if full_history else (date.today() - timedelta(days=lookback_days)).isoformat()
+    today = date.today()
     ok, errored = 0, 0
 
     for series in config.get("fred", []):
@@ -107,9 +130,12 @@ def run(lookback_days: int, full_history: bool = False):
             errored += 1
             break
         try:
+            has_rows = True if full_history else series_has_rows(client, series_id)
+            start_date, why = resolve_start_date(series, lookback_days, full_history, has_rows, today)
             rows = fetch_fred_series(series_id, series.get("units", "lin"), fred_key, start_date)
             upsert_macro(client, rows)
-            print(f"[ok]  {series_id} ({series.get('label', '')}): {len(rows)} rows")
+            last = rows[-1]["date"] if rows else "-"
+            print(f"[ok]  {series_id} ({series.get('label', '')}): {len(rows)} rows from {start_date} ({why}), latest {last}")
             ok += 1
         except Exception as e:  # noqa: BLE001
             print(f"[ERROR] {series_id}: {e}", file=sys.stderr)

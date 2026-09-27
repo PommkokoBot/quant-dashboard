@@ -372,16 +372,108 @@ class TestMacroFullHistory(unittest.TestCase):
     @patch("fetch_macro.get_client")
     @patch("fetch_macro.fetch_fred_series")
     def test_full_history_false_uses_lookback_window(self, mock_fetch, mock_get_client):
+        # 2026-09-22: the window is now max(--lookback-days, series lookback_days).
+        # Daily series keep the plain CLI window (unchanged); monthly/weekly/quarterly
+        # series use their longer config window. mock client -> series already has rows.
         mock_get_client.return_value = MagicMock()
+        mock_fetch.return_value = []
+        cfg = {s["series_id"]: s for s in fetch_macro.load_config()["fred"]}
+        with patch.dict(os.environ, {"FRED_API_KEY": "fake_key"}):
+            fetch_macro.run(lookback_days=10, full_history=False)
+        self.assertEqual(mock_fetch.call_count, len(cfg))
+        for call in mock_fetch.call_args_list:
+            series_id, _, _, start_date = call.args
+            days = max(10, cfg[series_id].get("lookback_days") or 0)
+            self.assertEqual(start_date, (date.today() - timedelta(days=days)).isoformat(), series_id)
+            self.assertNotEqual(start_date, fetch_macro.FULL_HISTORY_START)
+
+
+class TestMacroFetchWindow(unittest.TestCase):
+    """2026-09-22 fix: monthly FRED observations are dated the 1st of the month and
+    published weeks later, so a 10-day window never picked them up (CPI stuck at
+    2026-07-01 while August CPI was already out)."""
+
+    TODAY = date(2026, 9, 22)
+
+    def test_daily_series_keeps_cli_window(self):
+        start, why = fetch_macro.resolve_start_date({"series_id": "DGS10"}, 10, False, True, self.TODAY)
+        self.assertEqual(start, "2026-09-12")
+        self.assertEqual(why, "lookback 10d")
+
+    def test_monthly_series_uses_config_window_and_catches_last_month(self):
+        start, _ = fetch_macro.resolve_start_date({"series_id": "CPIAUCSL", "lookback_days": 400}, 10, False, True, self.TODAY)
+        self.assertLessEqual(start, "2026-08-01", "August CPI (dated 2026-08-01, released mid-Sept) must be inside the window")
+        self.assertLessEqual(start, "2025-09-01", "about a year of revisions is re-fetched too")
+
+    def test_cli_window_wins_when_larger(self):
+        start, _ = fetch_macro.resolve_start_date({"lookback_days": 400}, 1000, False, True, self.TODAY)
+        self.assertEqual(start, (self.TODAY - timedelta(days=1000)).isoformat())
+
+    def test_new_series_is_backfilled_from_full_history_start(self):
+        start, why = fetch_macro.resolve_start_date({"series_id": "NFCI", "lookback_days": 400}, 10, False, False, self.TODAY)
+        self.assertEqual(start, fetch_macro.FULL_HISTORY_START)
+        self.assertIn("backfill", why)
+
+    def test_full_history_flag_overrides_everything(self):
+        start, _ = fetch_macro.resolve_start_date({"lookback_days": 400}, 10, True, True, self.TODAY)
+        self.assertEqual(start, fetch_macro.FULL_HISTORY_START)
+
+    @patch("fetch_macro.get_client")
+    @patch("fetch_macro.fetch_fred_series")
+    def test_run_backfills_only_series_missing_from_db(self, mock_fetch, mock_get_client):
+        existing = {"DGS10", "FEDFUNDS", "CPIAUCSL", "UNRATE"}
+        client = MagicMock()
+        def table(_name):
+            q = MagicMock()
+            def eq(_col, sid):
+                r = MagicMock()
+                r.limit.return_value.execute.return_value = MagicMock(data=[{"date": "2026-01-01"}] if sid in existing else [])
+                return r
+            q.select.return_value.eq.side_effect = eq
+            q.upsert.return_value.execute.return_value = MagicMock()
+            return q
+        client.table.side_effect = table
+        mock_get_client.return_value = client
         mock_fetch.return_value = []
         with patch.dict(os.environ, {"FRED_API_KEY": "fake_key"}):
             fetch_macro.run(lookback_days=10, full_history=False)
-        expected_start = (date.today() - timedelta(days=10)).isoformat()
-        for call in mock_fetch.call_args_list:
-            _, _, _, start_date = call.args
-            self.assertEqual(start_date, expected_start)
-            self.assertNotEqual(start_date, fetch_macro.FULL_HISTORY_START)
+        starts = {c.args[0]: c.args[3] for c in mock_fetch.call_args_list}
+        for sid in ["DGS2", "DGS30", "T10Y2Y", "T5YIE", "T10YIE", "T5YIFR", "MICH", "NFCI", "STLFSI4", "GDPNOW"]:
+            self.assertEqual(starts[sid], fetch_macro.FULL_HISTORY_START, sid + " is new -> full backfill")
+        self.assertEqual(starts["DGS10"], (date.today() - timedelta(days=10)).isoformat(), "existing daily series unchanged")
+        self.assertEqual(starts["CPIAUCSL"], (date.today() - timedelta(days=400)).isoformat())
 
+    @patch("fetch_macro.get_client")
+    @patch("fetch_macro.fetch_fred_series")
+    def test_one_bad_series_does_not_stop_the_others(self, mock_fetch, mock_get_client):
+        mock_get_client.return_value = MagicMock()
+        def fake(sid, *_):
+            if sid == "NFCI":
+                raise RuntimeError("FRED 500")
+            return [{"series_id": sid, "date": "2026-09-01", "value": 1.0, "source": "FRED"}]
+        mock_fetch.side_effect = fake
+        with patch.dict(os.environ, {"FRED_API_KEY": "fake_key"}):
+            with self.assertRaises(SystemExit):  # job still reports failure
+                fetch_macro.run(lookback_days=10, full_history=False)
+        fetched = [c.args[0] for c in mock_fetch.call_args_list]
+        self.assertIn("GDPNOW", fetched, "series after the failing one are still fetched")
+
+
+class TestMacroConfig(unittest.TestCase):
+    def test_config_is_valid(self):
+        cfg = fetch_macro.load_config()["fred"]
+        ids = [s["series_id"] for s in cfg]
+        self.assertEqual(len(ids), len(set(ids)), "no duplicate series")
+        for s in cfg:
+            self.assertIn(s.get("units", "lin"), ("lin", "pc1", "chg", "ch1", "pch", "pca", "log"), s["series_id"])
+            if s.get("frequency") in ("monthly", "weekly", "quarterly"):
+                self.assertGreaterEqual(s.get("lookback_days", 0), 365, s["series_id"] + " needs a long re-fetch window")
+        for sid in ["DGS2", "DGS30", "T10Y2Y", "T5YIE", "T10YIE", "T5YIFR", "MICH", "NFCI", "STLFSI4", "GDPNOW"]:
+            self.assertIn(sid, ids)
+
+    def test_cpi_still_yoy(self):
+        cpi = [s for s in fetch_macro.load_config()["fred"] if s["series_id"] == "CPIAUCSL"][0]
+        self.assertEqual(cpi["units"], "pc1", "CPIAUCSL keeps being stored as YoY %")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
