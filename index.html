@@ -2,15 +2,16 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-LZMu3a7/p8pEZ+t2kCkoge6dYZQ+0TxCNm+IV7Yagp8='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src https://nsbreucmgfmphmfewnbw.supabase.co; base-uri 'none'; form-action 'none'" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Quant-Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="assets/tailwind.css">
+<script src="vendor/chart.umd.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
 <style>
   html, body { font-family: 'Sarabun', sans-serif; background:#f8fafc; }
   .stat-group-returns { background:#eff6ff; }
@@ -54,6 +55,15 @@
         เข้าสู่ระบบ
       </button>
     </form>
+    <p id="privacyNotice" class="text-[11px] leading-5 text-slate-500 mt-5 border-t border-slate-200 pt-4">
+      <b class="text-slate-600">ข้อมูลส่วนบุคคล:</b> ระบบเก็บอีเมลของคุณเพื่อยืนยันตัวตนและจำกัดสิทธิ์การเข้าใช้งาน
+      และบันทึกการใช้งาน (เมนู/ฟังก์ชันที่เปิด) เพื่อปรับปรุงเครื่องมือ · ข้อมูลเก็บที่ Supabase (สิงคโปร์)
+      · ต้องการลบบัญชีและข้อมูลของคุณ ติดต่อ mehresix@gmail.com
+    </p>
+    <p id="authDisclaimer" class="text-[11px] leading-5 text-slate-500 mt-3">
+      <b class="text-slate-600">คำเตือน:</b> เครื่องมือนี้จัดทำเพื่อการศึกษาและวิเคราะห์เชิงสถิติเท่านั้น
+      <b>ไม่ใช่คำแนะนำการลงทุน</b> · ผลในอดีตไม่ได้รับประกันผลในอนาคต
+    </p>
   </div>
 </div>
 
@@ -61,7 +71,7 @@
 <div id="dashboardScreen" class="hidden min-h-screen">
   <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
     <div class="flex items-center gap-6">
-      <h1 class="text-lg font-semibold text-slate-800">Quant-Dashboard</h1>
+      <h1 class="text-lg font-semibold text-slate-800">Quant-Dashboard <span id="appVersionChip" class="align-middle text-[10px] font-normal text-slate-400 border border-slate-200 rounded px-1.5 py-0.5 ml-1"></span></h1>
       <nav class="flex items-center gap-1" role="tablist">
         <button id="tabBtnSeasonality" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="seasonality">Seasonality</button>
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
@@ -815,6 +825,20 @@
   </div>
 
   </main>
+
+  <footer id="appFooter" class="border-t border-slate-200 bg-white px-6 py-4 mt-6">
+    <p id="appDisclaimer" class="text-[11px] leading-5 text-slate-500 max-w-5xl">
+      <b class="text-slate-600">คำเตือน:</b> เครื่องมือนี้จัดทำเพื่อการศึกษาและวิเคราะห์เชิงสถิติเท่านั้น
+      <b>ไม่ใช่คำแนะนำการลงทุน หรือการเชิญชวนให้ซื้อขายหลักทรัพย์ใด ๆ</b> ·
+      ข้อมูลราคาและตัวเลขเศรษฐกิจมาจากแหล่งสาธารณะ (Yahoo Finance, FRED) อาจคลาดเคลื่อน ล่าช้า หรือถูกแก้ย้อนหลังได้ ·
+      สถิติทั้งหมดคำนวณจากข้อมูลในอดีต <b>ผลในอดีตไม่ได้รับประกันผลในอนาคต</b> ·
+      ผู้ใช้ควรตรวจสอบข้อมูลกับแหล่งต้นทางก่อนนำไปใช้ตัดสินใจลงทุน
+    </p>
+    <p class="text-[11px] text-slate-400 mt-2">
+      <b class="text-slate-500">ข้อมูลส่วนบุคคล:</b> ระบบเก็บอีเมลเพื่อยืนยันตัวตนและจำกัดสิทธิ์ และบันทึกการใช้งานเพื่อปรับปรุงเครื่องมือ
+      · เก็บที่ Supabase (สิงคโปร์) · ขอลบบัญชีและข้อมูลได้ที่ mehresix@gmail.com
+    </p>
+  </footer>
 </div>
 
 <script>
@@ -824,6 +848,11 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Config
   // ---------------------------------------------------------------------
+  // Version is shown in the header and written into every Excel export, so a
+  // report can always be traced back to the build that produced it.
+  const APP_VERSION = "1.0.0";
+  const APP_BUILD_DATE = "2026-10-30";
+
   const SUPABASE_URL = "https://nsbreucmgfmphmfewnbw.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_7KHllF7ZjELjitvKTo0-ag_3GWgKtZp";
 
@@ -1493,6 +1522,22 @@ window.QD = (function () {
     return columns;
   }
 
+  // Every workbook carries the build that produced it plus the disclaimer, so a
+  // file that leaves the dashboard still says what it is and what it is not.
+  function buildAboutSheet(context) {
+    return [
+      ["Quant-Dashboard"],
+      ["Version", APP_VERSION],
+      ["Build date", APP_BUILD_DATE],
+      ["Exported at", new Date().toISOString().slice(0, 19).replace("T", " ") + " (UTC)"],
+      ["Section", String(context || "")],
+      [],
+      ["คำเตือน", "เครื่องมือนี้จัดทำเพื่อการศึกษาและวิเคราะห์เชิงสถิติเท่านั้น ไม่ใช่คำแนะนำการลงทุน"],
+      ["", "ข้อมูลมาจากแหล่งสาธารณะ (Yahoo Finance, FRED) อาจคลาดเคลื่อน ล่าช้า หรือถูกแก้ย้อนหลัง"],
+      ["", "ผลในอดีตไม่ได้รับประกันผลในอนาคต"]
+    ];
+  }
+
   function buildExportSheets(selections) {
     const columns = buildExportColumns();
     const sheets = {};
@@ -1570,6 +1615,7 @@ window.QD = (function () {
     if (sheets.overview) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.overview), "Overview");
     if (sheets.rolling) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rolling), "Rolling");
     if (sheets.compare) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.compare), "Compare");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAboutSheet("Seasonality")), "About");
 
     const ticker = tickerFor(state.assetId);
     const stamp = new Date().toISOString().slice(0, 10);
@@ -3383,6 +3429,7 @@ window.QD = (function () {
     if (sheets.corrMatrix) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrMatrix), "Correlation Matrix");
     if (sheets.corrAvg) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrAvg), "Correlation Avg");
     if (sheets.drilldown) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.drilldown), "Volume History");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAboutSheet("Momentum & Rotation")), "About");
     const stamp = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `momentum-${state.momentum.universeMode}-${state.momentum.timeframe}-${stamp}.xlsx`);
     return sheets;
@@ -6378,7 +6425,9 @@ window.QD = (function () {
   const MACRO_SERIES_INFO = {
     DGS10:    { label: "US 10Y Treasury Yield", freq: "daily",   maxAgeDays: 7 },
     FEDFUNDS: { label: "Fed Funds Rate",        freq: "monthly", maxAgeDays: 70 },
-    CPIAUCSL: { label: "US CPI YoY",            freq: "monthly", maxAgeDays: 70 },
+    // CPI ลงวันที่ต้นงวดแล้วประกาศกลางเดือนถัดไป อายุของแถวล่าสุดจึงแกว่งถึง ~75 วันตามปกติ
+    // เกณฑ์ 70 วันเดิมทำให้ติดธง "มีปัญหา" ทุกเดือนทั้งที่ pipeline ปกติ (เหตุผลเดียวกับ MICH)
+    CPIAUCSL: { label: "US CPI YoY",            freq: "monthly", maxAgeDays: 100 },
     UNRATE:   { label: "US Unemployment Rate",  freq: "monthly", maxAgeDays: 70 },
     // added 2026-09-22
     DGS2:     { label: "US 2Y Treasury Yield",                    freq: "daily",     maxAgeDays: 7 },
@@ -6729,6 +6778,7 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   async function init(overrideClient) {
     sb = overrideClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    setText("appVersionChip", "v" + APP_VERSION);
     bindStaticUIHandlers();
     bindMomentumUIHandlers();
     bindMergedTableUIHandlers();
@@ -6835,6 +6885,7 @@ window.QD = (function () {
     validateEventGroupRows, setEventGroupDraft, renderEventGroupPreview, saveEventGroup,
     loadEventGroups, renderMyEventGroups, loadAdminPendingGroups, renderAdminGroups,
     saveAdminGroupEdits, approveEventGroup, deleteEventGroup, EG_MAX_ROWS,
+    APP_VERSION, APP_BUILD_DATE, buildAboutSheet,
     buildPriceIndex, tradingIndexOnOrBefore, eventAnchors, eventGapStats, capFromGaps,
     esColumnStats, esStatsAtOffset, esBaselineCurve, esNormalisedPath, esDurationStats,
     computeEventStudy, esSourcesFromRows, esCurrentSource, renderEsPickers, renderEsPresetButtons,

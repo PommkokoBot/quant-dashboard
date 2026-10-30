@@ -1,0 +1,17 @@
+{
+  "name": "quant-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Quant Dashboard (ETF) — static page on GitHub Pages, Supabase backend",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i tw-input.css -o assets/tailwind.css --minify",
+    "csp": "node tools/build-csp.js",
+    "browser-check": "node tools/browser-check.js",
+    "test": "node tests/test_security.js && node tests/test_tailwind_build.js && node tests/test_app.js && node tests/test_round2_closeout.js && node tests/test_layout_macro_health.js && node tests/test_event_groups.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0",
+    "playwright-core": "^1.49.0",
+    "tailwindcss": "3.4.19"
+  }
+}
