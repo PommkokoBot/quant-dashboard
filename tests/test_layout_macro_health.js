@@ -41,8 +41,11 @@ assert.strictEqual(c("DGS2", "2026-09-10").status, "warn", "daily 12 days old");
 assert.strictEqual(c("NFCI", "2026-08-28").status, "warn", "weekly 25 days old");
 assert.strictEqual(QD.classifyMacroHealth({ series_id: "GDPNOW", last_date: "2026-07-01" }, "2026-11-20").status, "warn", "Q4 nowcast should exist by late Nov");
 // existing four unchanged
-assert.deepStrictEqual(JSON.parse(JSON.stringify(["DGS10", "FEDFUNDS", "CPIAUCSL", "UNRATE"].map((k) => QD.MACRO_SERIES_INFO[k].maxAgeDays))), [7, 70, 70, 70]);
-assert.strictEqual(c("CPIAUCSL", "2026-07-01").status, "warn", "CPI stuck at July is still flagged (the bug this round fixes)");
-assert.strictEqual(c("CPIAUCSL", "2026-08-01").status, "ok", "…and clears once August arrives");
+// CPIAUCSL widened 70 -> 100 on 2026-10-30 (ดูเหตุผลใน tool-quant-dashboard.md ข้อ 8.3); the other three are unchanged
+assert.deepStrictEqual(JSON.parse(JSON.stringify(["DGS10", "FEDFUNDS", "CPIAUCSL", "UNRATE"].map((k) => QD.MACRO_SERIES_INFO[k].maxAgeDays))), [7, 70, 100, 70]);
+// 2026-07-01 at today = 83 days: a NORMAL pre-release gap since the widening, no longer a flag
+assert.strictEqual(c("CPIAUCSL", "2026-07-01").status, "ok", "the monthly cycle's own gap is not a problem any more");
+assert.strictEqual(c("CPIAUCSL", "2026-06-01").status, "warn", "but a CPI that really is stuck (113 days) is still flagged");
+assert.strictEqual(c("CPIAUCSL", "2026-08-01").status, "ok");
 console.log("[ok] Data Health: freshness rules for 10 new FRED series (daily 7d, weekly 14d, MICH 100d, GDPNow 125d); old four unchanged");
 console.log("\nALL LAYOUT + MACRO HEALTH TESTS PASSED");

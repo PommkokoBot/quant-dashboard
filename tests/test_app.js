@@ -1605,8 +1605,12 @@ async function main() {
   assert.strictEqual(QD.classifyInstrumentHealth({ rows: 10, days_behind: 0, missing_1y: 0, error_streak: 3, last_status: "error" }).status, "error");
   assert.strictEqual(QD.classifyInstrumentHealth({ rows: 0 }).status, "error");
   assert.strictEqual(QD.HEALTH_ERROR_DAYS, 3); assert.strictEqual(QD.HEALTH_STALE_DAYS, 3);
+  // CPI threshold widened 70 -> 100 on 2026-10-30 (it is dated at the start of
+  // its period and published mid-next-month, so a normal gap reaches ~75 days).
+  // 82 days is now normal; 101+ still raises the flag.
   const cpiH = QD.classifyMacroHealth(MOCK_HEALTH.macro[0], "2026-09-21");
-  assert.strictEqual(cpiH.status, "warn"); assert.strictEqual(cpiH.age, 82);
+  assert.strictEqual(cpiH.status, "ok"); assert.strictEqual(cpiH.age, 82);
+  assert.strictEqual(QD.classifyMacroHealth(MOCK_HEALTH.macro[0], "2026-10-10").status, "warn", "a CPI that really is stuck (101 days) still flags");
   assert.strictEqual(QD.classifyMacroHealth(MOCK_HEALTH.macro[1], "2026-09-21").status, "ok");
   assert.strictEqual(QD.classifyMacroHealth({ series_id: "DGS10", last_date: "2026-09-10" }, "2026-09-21").status, "warn", "daily series older than 7 days");
   assert.strictEqual(QD.classifyMacroHealth({ series_id: "X", last_date: null }, "2026-09-21").status, "error");
@@ -1637,7 +1641,7 @@ async function main() {
   assert.strictEqual(window.document.querySelectorAll("#healthInstrumentTable tbody tr").length, 2, "only-problems filter");
   only.checked = false; change(only);
   const macroText = window.document.getElementById("healthMacroTable").textContent;
-  assert.ok(/CPIAUCSL/.test(macroText) && /ต้องจับตา/.test(macroText) && /เกณฑ์ 70 วัน/.test(macroText), macroText);
+  assert.ok(/CPIAUCSL/.test(macroText) && /ต้องจับตา/.test(macroText) && /เกณฑ์ 100 วัน/.test(macroText), macroText);
   const evText = window.document.getElementById("healthEventTable").textContent;
   assert.ok(/ประชุม FOMC/.test(evText) && /28 ต.ค. 2026/.test(evText) && /รอ workflow ดึงครั้งแรก/.test(evText), evText);
   QD.switchTab("seasonality"); QD.switchTab("health");
