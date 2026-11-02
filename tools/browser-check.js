@@ -7,7 +7,7 @@ const path = require("path");
 const { chromium } = require("playwright-core");
 
 const ROOT = path.resolve(__dirname, "..");
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
 
 const server = http.createServer((req, res) => {
   const f = path.join(ROOT, decodeURIComponent(req.url.split("?")[0]) === "/" ? "index.html" : decodeURIComponent(req.url.split("?")[0]));
@@ -20,7 +20,12 @@ const server = http.createServer((req, res) => {
   await new Promise((r) => server.listen(8099, "127.0.0.1", r));
   const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const violations = [], errors = [], consoleErr = [];
+  const violations = [], errors = [], consoleErr = [], offsite = [], fontReqs = [];
+  page.on("request", (req) => {
+    const u = req.url();
+    if (!u.startsWith("http://127.0.0.1:8099/")) offsite.push(u);
+    if (/\.woff2?$/.test(u)) fontReqs.push(u.split("/").pop());
+  });
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error") consoleErr.push(m.text()); });
   await page.addInitScript(() => {
@@ -58,6 +63,8 @@ const server = http.createServer((req, res) => {
     };
   });
   console.log(r);
+  console.log("font files requested:", fontReqs.length ? fontReqs : "(none)");
+  console.log("requests that left our origin:", offsite.length ? offsite : "(none)");
   await page.screenshot({ path: path.join(ROOT, "shot-login.png") });
 
   // dashboard chrome: show it and shoot the footer + version chip
@@ -69,7 +76,7 @@ const server = http.createServer((req, res) => {
   await page.locator("header").screenshot({ path: path.join(ROOT, "shot-header.png") });
   await page.locator("#appFooter").screenshot({ path: path.join(ROOT, "shot-footer.png") });
 
-  const ok = r.qdLoaded && r.chartJs && r.supabaseJs && String(r.xlsx).startsWith("ok")
+  const ok = offsite.length === 0 && fontReqs.length > 0 && r.qdLoaded && r.chartJs && r.supabaseJs && String(r.xlsx).startsWith("ok")
     && r.cardBg === "rgb(255, 255, 255)" && r.btnBg === "rgb(37, 99, 235)"
     && r.violations.length === 0 && errors.length === 0;
   await browser.close();

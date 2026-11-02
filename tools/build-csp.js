@@ -30,8 +30,8 @@ function policyFor(html) {
     "default-src 'none'",
     `script-src 'self' 'sha256-${hash}'`,
     // inline <style> block + style="" attributes + the styles Chart.js sets on its canvas
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data: blob:",
     `connect-src ${SUPABASE}`,
     "base-uri 'none'",
