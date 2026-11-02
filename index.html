@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-LZMu3a7/p8pEZ+t2kCkoge6dYZQ+0TxCNm+IV7Yagp8='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src https://nsbreucmgfmphmfewnbw.supabase.co; base-uri 'none'; form-action 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-AdBMqO6VO944WXVZwHrbZy02KHrhlo2CYxQtVvINTmQ='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src https://nsbreucmgfmphmfewnbw.supabase.co; base-uri 'none'; form-action 'none'" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Quant-Dashboard</title>
 <link rel="stylesheet" href="assets/tailwind.css">
@@ -419,6 +419,32 @@
         <canvas id="momDrilldownChart"></canvas>
       </div>
       <p id="momDrilldownNote" class="text-[10px] text-slate-400 mt-2">คลิกแถวในตารางด้านบนเพื่อเลือก instrument</p>
+    </section>
+
+    <!-- ---------- Market Breadth (2026-11-02) ---------- -->
+    <section id="breadthSection" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-end justify-between gap-3 mb-1">
+        <div>
+          <h2 class="text-sm font-semibold text-slate-800">Market Breadth — ทั้งกระดานไปทางเดียวกันหรือเปล่า</h2>
+          <p class="text-[11px] text-slate-500 mt-1">นับจาก instrument ที่ใช้งานอยู่ทั้งหมด ไม่ใช่เฉพาะ universe ที่เลือกไว้ด้านบน · ใช้ high/low ที่ปรับปันผลแล้ว</p>
+        </div>
+        <div class="flex items-end gap-2">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">ช่วงเวลา</label>
+            <select id="breadthRange" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="365">1 ปี</option>
+              <option value="504" selected>2 ปี</option>
+              <option value="756">3 ปี</option>
+            </select>
+          </div>
+          <button id="breadthCalcBtn" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg px-4 py-2">คำนวณ</button>
+        </div>
+      </div>
+      <p id="breadthError" class="text-xs text-red-600 hidden mb-2"></p>
+      <div id="breadthLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div> กำลังคำนวณจากทั้ง universe...</div>
+      <div id="breadthSummary" class="hidden grid md:grid-cols-3 gap-3 my-3"></div>
+      <div class="relative" style="height:340px"><canvas id="breadthChart"></canvas></div>
+      <p id="breadthNote" class="text-[11px] text-slate-400 mt-2"></p>
     </section>
 
     <!-- ---------- Correlation Explorer ---------- -->
@@ -948,6 +974,12 @@ window.QD = (function () {
     momentum: {
       dataLoaded: false,
       lastFetchKey: null,       // set after a successful fetch; see computeMomentumFetchKey
+      // ATR / 52-week range, from the risk_metrics RPC. Keyed by instrument id.
+      // Cached per universe: these numbers do not depend on Lookback/SMA.
+      risk: { byId: {}, asOf: null, error: "", key: null },
+      // Market breadth across the whole active universe (its own button, its
+      // own cache -- it does not follow the Universe picker on purpose).
+      breadth: { rows: [], days: 504, loaded: false, loading: false, chart: null },
       universeMode: "asset_class",
       timeframe: "month",
       lookbackPeriods: 12,
@@ -2190,6 +2222,26 @@ window.QD = (function () {
   //
   // Prices and volumes are requested in PARALLEL and the table is rendered as
   // soon as prices land, so the volume round-trip is not dead waiting time.
+  // One call for the whole universe. These metrics need adjusted high/low, so
+  // they are computed in the database (ohlcv_adj) instead of pulling daily bars
+  // for 93 instruments into the browser.
+  async function fetchRiskMetrics(idList) {
+    const { data, error } = await sb.rpc("risk_metrics", { p_instrument_ids: idList });
+    if (error) throw error;
+    const byId = {};
+    let asOf = null;
+    (data || []).forEach((r) => {
+      byId[r.instrument_id] = {
+        price: num(r.price), atr14: num(r.atr14), atrPct: num(r.atr_pct),
+        atrPctile: num(r.atr_pctile_1y), hi52: num(r.hi_52w), lo52: num(r.lo_52w),
+        pos52: num(r.pos_52w), pctFromHigh: num(r.pct_from_high), bars: r.bars
+      };
+      if (r.as_of && (!asOf || r.as_of > asOf)) asOf = r.as_of;
+    });
+    return { byId, asOf };
+  }
+  const num = (v) => (v == null ? null : Number(v));
+
   async function loadMomentumUniverseData() {
     const errEl = byId("momLeaderboardError");
     hide(errEl);
@@ -2247,6 +2299,12 @@ window.QD = (function () {
       const volumePromise = fetchPeriodVolumes(idList, volPlan.granularity, volPlan.startDate)
         .then((rows) => ({ ok: true, rows }))
         .catch((e) => ({ ok: false, error: e }));
+      // Risk metrics degrade the same way volume does: if the call fails the
+      // table still renders, those columns just stay empty.
+      const riskKey = idList.slice().sort((a, b) => a - b).join(",");
+      const riskPromise = (state.momentum.risk.key === riskKey && !state.momentum.risk.error)
+        ? Promise.resolve({ ok: true, cached: true })
+        : fetchRiskMetrics(idList).then((r) => ({ ok: true, r })).catch((e) => ({ ok: false, error: e }));
 
       const priceRows = await pricePromise;
       const byInst = {};
@@ -2281,6 +2339,17 @@ window.QD = (function () {
       // Progressive render #2: fill in the volume half.
       recomputeMomentumRows();
       renderMomentumLeaderboard();
+
+      const riskResult = await riskPromise;
+      if (riskResult.ok && !riskResult.cached) {
+        state.momentum.risk = { byId: riskResult.r.byId, asOf: riskResult.r.asOf, error: "", key: riskKey };
+      } else if (!riskResult.ok) {
+        state.momentum.risk = { byId: {}, asOf: null, key: null,
+          error: (riskResult.error && riskResult.error.message) || String(riskResult.error) };
+      }
+      // Progressive render #3: ATR + 52-week range columns.
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
       return true;
     } catch (e) {
       showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
@@ -2289,6 +2358,140 @@ window.QD = (function () {
     } finally {
       setLoading("momLeaderboardLoading", false);
     }
+  }
+
+  // =======================================================================
+  // Market Breadth (2026-11-02)
+  // =======================================================================
+  // Why a separate section and not another column: breadth is a property of
+  // the WHOLE market, not of one instrument, so it cannot live in a table that
+  // has one row per instrument. It also deliberately ignores the Universe
+  // picker -- "how many of the 93 are making new highs" stops meaning anything
+  // if the denominator changes with a dropdown.
+
+  function breadthSummary(rows) {
+    if (!rows || !rows.length) return null;
+    const last = rows[rows.length - 1];
+    const prior = rows.length > 21 ? rows[rows.length - 22] : rows[0];
+    const yearAgo = rows[0];
+    const net = rows.map((r) => r.newHi - r.newLo);
+    const worst = rows.reduce((acc, r) => (r.newLo > acc.newLo ? r : acc), rows[0]);
+    return {
+      asOf: last.date,
+      universe: last.universe,
+      pctAbove: last.pctAbove,
+      pctAboveChange1m: last.pctAbove != null && prior.pctAbove != null ? last.pctAbove - prior.pctAbove : null,
+      pctAboveStart: yearAgo.pctAbove,
+      newHi: last.newHi,
+      newLo: last.newLo,
+      netLast: net[net.length - 1],
+      worstDay: { date: worst.date, newLo: worst.newLo }
+    };
+  }
+
+  async function loadBreadth() {
+    const b = state.momentum.breadth;
+    if (b.loading) return null;
+    b.loading = true;
+    hide(byId("breadthError"));
+    setLoading("breadthLoading", true);
+    try {
+      const days = Number((byId("breadthRange") || {}).value || b.days) || 504;
+      b.days = days;
+      const { data, error } = await sb.rpc("breadth_series", { p_days: days });
+      if (error) throw error;
+      b.rows = (data || []).map((r) => ({
+        date: String(r.date).slice(0, 10),
+        universe: r.universe,
+        newHi: r.new_hi,
+        newLo: r.new_lo,
+        aboveSma: r.above_sma200,
+        pctAbove: r.pct_above_sma200 == null ? null : Number(r.pct_above_sma200)
+      }));
+      b.loaded = true;
+      renderBreadth();
+      return b.rows;
+    } catch (e) {
+      b.rows = []; b.loaded = false;
+      showError(byId("breadthError"), "คำนวณ breadth ไม่สำเร็จ: " + (e.message || e));
+      return null;
+    } finally {
+      b.loading = false;
+      setLoading("breadthLoading", false);
+    }
+  }
+
+  function renderBreadth() {
+    const rows = state.momentum.breadth.rows;
+    const sumEl = byId("breadthSummary"), noteEl = byId("breadthNote");
+    const s = breadthSummary(rows);
+    if (sumEl) {
+      if (!s) { sumEl.classList.add("hidden"); sumEl.innerHTML = ""; }
+      else {
+        sumEl.classList.remove("hidden");
+        const arrow = s.pctAboveChange1m == null ? "" :
+          (s.pctAboveChange1m >= 0 ? `<span class="text-green-600">▲ ${s.pctAboveChange1m.toFixed(1)} จุด</span>`
+                                   : `<span class="text-red-600">▼ ${Math.abs(s.pctAboveChange1m).toFixed(1)} จุด</span>`);
+        const card = (k, v, n) => `<div class="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <div class="text-[11px] text-slate-500">${k}</div>
+            <div class="text-lg font-semibold text-slate-800 mt-0.5">${v}</div>
+            <div class="text-[11px] text-slate-500 mt-1 leading-5">${n}</div></div>`;
+        sumEl.innerHTML =
+          card("อยู่เหนือ SMA200", `${s.pctAbove == null ? "—" : s.pctAbove.toFixed(1) + "%"}`,
+               `${s.aboveSma == null ? "" : ""}จาก ${s.universe} กอง · เทียบ 1 เดือนก่อน ${arrow}`) +
+          card("จุดสูงสุด / ต่ำสุดใหม่ วันล่าสุด", `${s.newHi} / ${s.newLo}`,
+               `สุทธิ ${s.netLast >= 0 ? "+" : ""}${s.netLast} กอง · ${escapeHtml(s.asOf)}`) +
+          card("วันที่แย่ที่สุดในช่วงนี้", `${s.worstDay.newLo} กองทำจุดต่ำสุดใหม่`,
+               `${escapeHtml(s.worstDay.date)} — ใช้เทียบว่าตอนนี้ห่างจากภาวะเครียดแค่ไหน`);
+      }
+    }
+    if (noteEl) {
+      noteEl.textContent = s
+        ? `นับเฉพาะกองที่มีประวัติครบ 252 วันทำการในวันนั้น (universe ${s.universe} กอง) · กองที่เพิ่งตั้งจึงทำ "จุดสูงสุดใหม่" ไม่ได้`
+        : "";
+    }
+    renderBreadthChart(rows);
+  }
+
+  function buildBreadthDatasets(rows) {
+    return [
+      { type: "bar", label: "จุดสูงสุดใหม่ 52 สัปดาห์", data: rows.map((r) => r.newHi),
+        backgroundColor: "#059669", yAxisID: "y", order: 2 },
+      { type: "bar", label: "จุดต่ำสุดใหม่ 52 สัปดาห์", data: rows.map((r) => -r.newLo),
+        backgroundColor: "#dc2626", yAxisID: "y", order: 2 },
+      { type: "line", label: "% อยู่เหนือ SMA200", data: rows.map((r) => r.pctAbove),
+        borderColor: "#2563eb", borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.15,
+        yAxisID: "y1", order: 1 }
+    ];
+  }
+
+  function renderBreadthChart(rows) {
+    const canvas = byId("breadthChart");
+    if (!canvas || typeof Chart === "undefined") return null;
+    const b = state.momentum.breadth;
+    if (b.chart) { b.chart.destroy(); b.chart = null; }
+    if (!rows || !rows.length) return null;
+    b.chart = new Chart(canvas, {
+      data: { labels: rows.map((r) => r.date), datasets: buildBreadthDatasets(rows) },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { stacked: true, ticks: { maxTicksLimit: 14, autoSkip: true, font: { size: 10 } }, grid: { display: false } },
+          y: { stacked: true, position: "left", title: { display: true, text: "จำนวนกอง" },
+               grid: { color: "#f1f5f9" }, ticks: { callback: (v) => Math.abs(v) } },
+          y1: { position: "right", min: 0, max: 100, title: { display: true, text: "% เหนือ SMA200" },
+                grid: { display: false } }
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (c) => c.dataset.yAxisID === "y1"
+            ? `${c.dataset.label}: ${c.parsed.y == null ? "—" : c.parsed.y.toFixed(1)}%`
+            : `${c.dataset.label}: ${Math.abs(c.parsed.y)} กอง` } }
+        }
+      }
+    });
+    return b.chart;
   }
 
   // =======================================================================
@@ -2348,6 +2551,17 @@ window.QD = (function () {
       value: (r) => r.volZScore,                  text: (r) => num2(r.volZScore) },
     { id: "rvol",             label: "RVOL",                     exportLabel: "RVOL (x)",                   group: "vol", align: "right",
       value: (r) => r.rvol,                       text: (r) => x2(r.rvol) },
+    { id: "atrPct",           label: "ATR %",                    exportLabel: "ATR % ต่อวัน",                group: "risk", align: "right",
+      value: (r) => r.atrPct,                     text: (r) => pct2(r.atrPct) },
+    { id: "atrPctile",        label: "ATR เทียบตัวเอง 1 ปี",      exportLabel: "ATR percentile 1 ปี",         group: "risk", align: "right", heat: "high",
+      value: (r) => r.atrPctile,                  text: (r) => (r.atrPctile == null ? "—" : Math.round(r.atrPctile) + "%") },
+    { id: "atr14",            label: "ATR(14)",                  exportLabel: "ATR(14)",                    group: "risk", align: "right",
+      value: (r) => r.atr14,                      text: (r) => num2(r.atr14),          cls: "text-slate-500" },
+    { id: "pos52",            label: "ตำแหน่งในกรอบ 52w",         exportLabel: "ตำแหน่งในกรอบ 52 สัปดาห์ (%)", group: "risk", align: "right", heat: "high",
+      value: (r) => r.pos52,                      text: (r) => (r.pos52 == null ? "—" : r.pos52.toFixed(1) + "%") },
+    { id: "pctFromHigh",      label: "ห่างจากจุดสูงสุด 52w",       exportLabel: "ห่างจากจุดสูงสุด 52 สัปดาห์ (%)", group: "risk", align: "right",
+      value: (r) => r.pctFromHigh,                text: (r) => pct2(r.pctFromHigh),
+      cls: "text-slate-600" },
     { id: "volStatus",        label: "สถานะ Volume",              exportLabel: "สถานะ Volume",                group: "vol", align: "center",
       value: (r) => volumeAnomalyMagnitude({ zScore: r.volZScore }),
       text: (r) => volStatusHtml(r),              raw: (r) => (r.volZScore == null ? "N/A" : (!r.isAnomaly ? "Normal" : (r.volZScore > 0 ? "Spike" : "Dry-up"))), html: true }
@@ -2368,6 +2582,11 @@ window.QD = (function () {
       // rather than the signed z, so a dry-up ranks alongside a spike.
       columns: ["row", "ticker", "shortName", "category", "currentVolume", "meanVolume", "volZScore", "rvol", "volStatus", "momRank"],
       sort: { column: "volRank", dir: "asc" }
+    },
+    risk: {
+      label: "Risk",
+      columns: ["row", "ticker", "shortName", "trailingReturnPct", "atrPct", "atrPctile", "pos52", "pctFromHigh", "trendFilter"],
+      sort: { column: "pos52", dir: "desc" }
     },
     all: {
       label: "ทั้งหมด",
@@ -2404,7 +2623,15 @@ window.QD = (function () {
       .map((inst) => {
         const m = momById.get(inst.id) || null;
         const a = anomalyMap[inst.id] || null;
+        const k = (state.momentum.risk && state.momentum.risk.byId[inst.id]) || null;
         return {
+          atr14: k ? k.atr14 : null,
+          atrPct: k ? k.atrPct : null,
+          atrPctile: k ? k.atrPctile : null,
+          hi52: k ? k.hi52 : null,
+          lo52: k ? k.lo52 : null,
+          pos52: k ? k.pos52 : null,
+          pctFromHigh: k ? k.pctFromHigh : null,
           instrumentId: inst.id,
           ticker: inst.ticker,
           shortName: tickerShortName(inst.ticker),
@@ -3531,6 +3758,8 @@ window.QD = (function () {
     { label: "Risk-Adjusted Score", desc: "(Trailing Return − Risk-free Rate ที่ปรับสัดส่วนตามช่วงเวลา) ÷ ความผันผวนของช่วงนั้น — ลักษณะคล้าย Sharpe Ratio แต่ไม่ได้ annualize เต็มรูปแบบ" },
     { label: "Inverse-Volatility Weighting", desc: "ให้น้ำหนักแปรผกผันกับค่าเบี่ยงเบนมาตรฐานของแต่ละตัว (ผันผวนน้อย = น้ำหนักมาก) — เรียกใน UI ว่า \"Optimized Risk-adjusted\" แต่ไม่ใช่ Mean-Variance Optimization เต็มรูปแบบ (ไม่มี covariance matrix ระหว่างสินทรัพย์)" },
     { label: "RS-Ratio / RS-Momentum", desc: "วัดความแข็งแกร่งเชิงเปรียบเทียบกับ Benchmark แบบ self-normalize ด้วย EMA และค่าเฉลี่ยเคลื่อนที่ของตัวเอง โดยผูกหน้าต่างคำนวณกับค่า Lookback ที่เลือกไว้ — ต่างจาก RRG ทั่วไปที่มักใช้คาบเวลาตายตัว (14/10 period)" },
+    { label: "ATR % และ ATR เทียบตัวเอง", desc: "ATR(14) คือระยะที่ราคาเดินได้จริงในหนึ่งวันโดยเฉลี่ย รวมช่วงที่กระโดดข้ามคืน (true range) — ต่างจาก SD ของราคาปิดที่มองข้ามการเหวี่ยงระหว่างวัน · \"ATR %\" คือ ATR เทียบกับราคา จึงเทียบข้าม instrument ได้ · \"เทียบตัวเอง 1 ปี\" คือเปอร์เซ็นไทล์ของ ATR % วันนี้เทียบกับ 252 วันทำการที่ผ่านมาของตัวมันเอง — 90% แปลว่าตอนนี้ผันผวนกว่าปกติของตัวเองมาก แม้ค่าดิบจะดูไม่สูงเมื่อเทียบกับตัวอื่น · คำนวณจากราคาที่ปรับปันผลแล้ว (view ohlcv_adj)" },
+    { label: "ตำแหน่งในกรอบ 52 สัปดาห์", desc: "0% = อยู่ที่จุดต่ำสุดของ 52 สัปดาห์พอดี · 100% = อยู่ที่จุดสูงสุดพอดี · ใช้ high/low ที่ปรับปันผลแล้ว ไม่ใช่ราคาปิด · คู่กับคอลัมน์ \"ห่างจากจุดสูงสุด\" ที่บอกว่าต้องขึ้นอีกกี่ % ถึงจะกลับไปจุดเดิม" },
     { label: "Price–Volume Scatter", desc: "ภาพนิ่งของงวดล่าสุด วางทุก instrument บนระนาบ Trailing Return (แกนนอน) × Volume Z-score (แกนตั้ง) — ใช้ตอบคำถามว่า \"ราคาที่วิ่งอยู่ มี volume หนุนหรือไม่\" สีของจุดคือ quadrant ของ RRG ณ จุดล่าสุด (เขียว Leading / น้ำเงิน Improving / แดง Lagging / ส้ม Weakening / เทา = ยังไม่ได้คำนวณ RRG หรือประวัติราคาไม่พอ) instrument ที่มีข้อมูลด้านเดียว (เช่นมีราคาแต่ไม่มี volume) จะไม่ปรากฏบนกราฟนี้เพราะไม่มีพิกัดครบ แต่ยังอยู่ในตาราง" },
     { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
     { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
@@ -6185,6 +6414,11 @@ window.QD = (function () {
     const egGenNth = byId("egGenNthBtn");
     if (egGenNth) egGenNth.addEventListener("click", () => setEventGroupDraft(generateNthWeekdayDates(
       +byId("egOrd").value, +byId("egDow").value, +byId("egNthMonth").value, +byId("egNthFrom").value, +byId("egNthTo").value)));
+    const breadthBtn = byId("breadthCalcBtn");
+    if (breadthBtn) breadthBtn.addEventListener("click", () => loadBreadth());
+    const breadthRange = byId("breadthRange");
+    if (breadthRange) breadthRange.addEventListener("change", () => { if (state.momentum.breadth.loaded) loadBreadth(); });
+
     // ---- Event Study controls ----
     const esCalc = byId("esCalcBtn");
     if (esCalc) esCalc.addEventListener("click", () => runEventStudy());
@@ -6824,6 +7058,7 @@ window.QD = (function () {
     renderPriceVolumeScatter, QUADRANT_ORDER, QUADRANT_COLORS, QUADRANT_UNKNOWN_LABEL, QUADRANT_UNKNOWN_COLOR,
     rankUniverseFromSeries, rankUniverseNow,
     buildLeaderboardChartDatasets, momentumRankParams, computeMomentumFetchKey,
+    fetchRiskMetrics, loadBreadth, renderBreadth, renderBreadthChart, breadthSummary, buildBreadthDatasets,
     tickerShortName, computeDefaultRrgSelection, buildRrgCheckboxItems, buildRotationSummaryRows,
     // Momentum & Rotation -- data + flows
     fetchPeriodEndCloses, fetchLatestMacroValue,
