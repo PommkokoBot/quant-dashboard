@@ -47,6 +47,10 @@ function rpc(fn, args) {
     if (g) g.status = "approved";
     return r(g ? g.rows.length : 0);
   }
+  if (fn === "event_group_rows") {
+    const g = db.groups.find((x) => x.id === args.p_group_id);
+    return r(g ? g.rows.map((x, i) => ({ id: 200 + i, start_date: x.start, end_date: x.end || null })) : []);
+  }
   if (fn === "delete_event_group") { db.groups = db.groups.filter((x) => x.id !== args.p_group_id); return r(null); }
   return r(null);
 }
@@ -170,11 +174,77 @@ async function main() {
   assert.strictEqual(QD.state.eventsTab.pendingGroups.length, 0);
   console.log("[ok] admin: expand, fix a date, save onto the same group, delete a row, approve all at once, reject with confirm");
 
+  // ---------------- admin: groups that are already approved ----------------
+  // (added 2026-10-30 with the rest of the round-3A suite)
+  await QD.loadAdminApprovedGroups(); await flush();
+  const appr = QD.state.eventsTab.approvedGroups;
+  assert.strictEqual(appr.length, 1, "exactly the approved group is listed, and not in the pending panel");
+  const aid = appr[0].id;
+  assert.strictEqual(appr[0].rows, null, "its occurrences are not fetched until someone opens it");
+  assert.strictEqual($(`[data-eg-name="${aid}"]`).value, appr[0].name, "name is editable in place");
+
+  QD.state.eventsTab.openGroupId = null; QD.renderAdminGroups();
+  $(`#adminApprovedGroups [data-eg-toggle="${aid}"]`).click(); await flush();
+  assert.ok(calls.some((c) => c[0] === "event_group_rows" && c[1].p_group_id === aid), "rows fetched on expand");
+  assert.ok(QD.state.eventsTab.approvedGroups[0].rows.length > 0 && $$(`[data-egrow^="${aid}:"]`).length > 0, "rows rendered");
+
+  const nameEl = $(`[data-eg-name="${aid}"]`), colEl = $(`[data-eg-color="${aid}"]`);
+  nameEl.value = "วันชาติสหรัฐฯ (แก้ชื่อ)"; fire(nameEl, "change");
+  colEl.value = "#ff8800"; fire(colEl, "change");
+  const d0 = $(`[data-egrow="${aid}:0:start"]`); d0.value = "2031-07-04"; fire(d0, "change");
+  await QD.saveAdminGroupEdits(aid); await flush();
+  const upd = calls.filter((c) => c[0] === "save_event_group").pop();
+  assert.strictEqual(upd[1].p_group_id, aid, "saved onto the same approved group");
+  assert.strictEqual(upd[1].p_name, "วันชาติสหรัฐฯ (แก้ชื่อ)", "new name sent");
+  assert.strictEqual(upd[1].p_color, "#ff8800", "new colour sent");
+  assert.ok(upd[1].p_rows.some((r) => r.start === "2031-07-04"), "edited date sent");
+  assert.strictEqual(db.groups.find((g) => g.id === aid).status, "approved",
+    "editing an approved group must NOT send it back to draft (it would vanish for everyone else)");
+  console.log("[ok] admin: an approved group opens lazily, name/colour/date are editable, saved onto the same id, stays approved");
+
+  // multi-row delete via checkboxes
+  await flush();
+  const beforeDel = QD.state.eventsTab.approvedGroups[0].rows.length;
+  $(`[data-egsel="${aid}:0"]`).checked = true;
+  $(`[data-egsel="${aid}:1"]`).checked = true;
+  assert.strictEqual(QD.deleteSelectedGroupRows(aid, $("#adminApprovedGroups")), 2, "two rows removed");
+  assert.strictEqual(QD.state.eventsTab.approvedGroups[0].rows.length, beforeDel - 2, "state shrank by exactly two");
+  const selAll = $(`[data-eg-selall="${aid}"]`);
+  selAll.checked = true; fire(selAll, "change");
+  assert.ok($$(`[data-egsel^="${aid}:"]`).every((c) => c.checked), "select-all ticks the whole group");
+  console.log("[ok] admin: checkbox multi-row delete + select-all");
+
+  // delete the whole approved group in one click
+  assert.strictEqual(await QD.deleteEventGroup(aid, "x", () => false), false, "cancel keeps the group");
+  await QD.deleteEventGroup(aid, "x", () => true); await flush();
+  assert.ok(calls.some((c) => c[0] === "delete_event_group" && c[1].p_group_id === aid), "delete RPC sent");
+  assert.strictEqual(QD.state.eventsTab.approvedGroups.length, 0, "gone from the approved list");
+  assert.ok(!db.groups.some((g) => g.id === aid), "gone from the database too");
+  console.log("[ok] admin: delete a whole approved group in one click (with confirmation)");
+
+  // ---------------- builder: multi-row delete ----------------
+  QD.setEventGroupDraft(QD.generateYearlyDates(4, 7, 2020, 2026));
+  assert.strictEqual(QD.state.eventsTab.groupDraft.length, 7);
+  $('[data-eg-sel="0"]').checked = true;
+  $('[data-eg-sel="6"]').checked = true;
+  assert.strictEqual(QD.deleteSelectedDraftRows(), 2, "two draft rows removed");
+  eq(QD.state.eventsTab.groupDraft.map((r) => r.start),
+    ["2021-07-04", "2022-07-04", "2023-07-04", "2024-07-04", "2025-07-04"], "the right rows survived");
+  const sa = $("#egSelAll"); sa.checked = true; fire(sa, "change");
+  assert.ok($$("[data-eg-sel]").every((c) => c.checked), "builder select-all");
+  $("#egDelSelBtn").click();
+  assert.strictEqual(QD.state.eventsTab.groupDraft.length, 0, "select-all + delete clears the preview");
+  QD.setEventGroupDraft([]);
+  console.log("[ok] builder preview: checkbox multi-row delete + select-all");
+
   // ---------------- nothing leaks to non-admins ----------------
   QD.state.session = { user: { email: "someone@x.com" } };
   QD.state.eventsTab.pendingGroups = [];
   QD.renderAdminGroups();
   assert.ok($("#adminPendingGroups").textContent.includes("ไม่มีกลุ่ม"), "empty state for a non-admin view");
+  await QD.loadAdminApprovedGroups();
+  assert.strictEqual(QD.state.eventsTab.approvedGroups.length, 0, "a non-admin gets no approved-group admin list at all");
+  assert.ok($("#adminApprovedGroups").textContent.includes("ยังไม่มีกลุ่ม"), "approved panel empty state");
   console.log("[ok] empty states render");
 
   console.log("\nALL EVENT GROUP TESTS PASSED");

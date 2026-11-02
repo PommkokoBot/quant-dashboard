@@ -39,7 +39,8 @@ assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), "script-src must not fall b
 assert.ok(!/script-src[^;]*unsafe-eval/.test(csp), "script-src must not allow eval");
 assert.ok(!/script-src[^;]*https?:\/\//.test(csp), "no third-party script origin may be allowed");
 assert.strictEqual(directive("connect-src"), SUPABASE, "the page may only talk to our own Supabase project");
-assert.ok(directive("font-src") === "https://fonts.gstatic.com", "fonts only from Google Fonts");
+assert.strictEqual(directive("font-src"), "'self'", "fonts come from this repo, not from Google");
+assert.ok(!/fonts\.(googleapis|gstatic)\.com/.test(csp), "no Google origin left in the policy");
 console.log("[ok] policy is restrictive: no remote scripts, no eval, network limited to our Supabase project");
 
 // ---------------- 3. no library is loaded from a CDN any more ----------------
@@ -52,14 +53,18 @@ assert.ok(cssHrefs.includes("assets/tailwind.css"), "Tailwind is a local build, 
 assert.ok(fs.existsSync(path.resolve(path.dirname(FILE), "assets/tailwind.css")), "the built CSS exists");
 assert.ok(!/cdn\.tailwindcss\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com/.test(html),
   "no cdn.tailwindcss.com / cdnjs / jsdelivr / unpkg reference survives anywhere in the page");
-// Google Fonts is the one allowed remote origin: its CSS is generated per
-// user-agent, so an integrity digest is impossible by design. Stylesheet only,
-// never a script.
-const remote = Array.from(html.matchAll(/https?:\/\/[^"'\s)]+/g)).map((m) => m[0])
-  .filter((u) => !u.startsWith(SUPABASE) && !/fonts\.(googleapis|gstatic)\.com/.test(u)
-    && !/chartjs\.org|supabase\.com\/docs|sheetjs\.com|w3\.org|github\.com|fred\.stlouisfed\.org|finance\.yahoo\.com/.test(u));
-assert.deepStrictEqual(remote, [], "no unexpected remote origin in the page: " + remote.join(", "));
-console.log("[ok] all three libraries + Tailwind are served from this repo; only Google Fonts remains remote (by design)");
+assert.ok(!/fonts\.(googleapis|gstatic)\.com/.test(html), "the Google Fonts <link> tags are gone");
+const fontCss = fs.readFileSync(path.resolve(path.dirname(FILE), "assets/tailwind.css"), "utf8");
+const faces = Array.from(fontCss.matchAll(/url\(['"]?(fonts\/[^'")]+)['"]?\)/g)).map((m) => m[1]);
+assert.ok(faces.length >= 8, "@font-face rules for the self-hosted Sarabun (got " + faces.length + ")");
+[...new Set(faces)].forEach((f) =>
+  assert.ok(fs.existsSync(path.resolve(path.dirname(FILE), "assets", f)), "font file exists: assets/" + f));
+// Nothing outside our own Supabase project may be referenced any more. URLs in
+// comments/notes that are never fetched (docs, data sources) are not requests.
+const remote = Array.from(html.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)).map((m) => m[1])
+  .filter((u) => !u.startsWith(SUPABASE));
+assert.deepStrictEqual(remote, [], "the page fetches nothing from a third party: " + remote.join(", "));
+console.log("[ok] libraries, CSS and the Sarabun font files all come from this repo — zero third-party origins left");
 
 // ---------------- 4. release standards: version + disclaimer + privacy ----------------
 const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/", beforeParse(w) { w.__QD_TEST__ = true; } });
