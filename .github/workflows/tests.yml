@@ -1,0 +1,59 @@
+# Runs the JavaScript test suite on every push that can affect the page.
+#
+# Why this exists: two of this repo's rules fail SILENTLY if a step is skipped —
+# edit the inline script without re-running tools/build-csp.js and the published
+# page loads with a dead script; add a Tailwind class without rebuilding the CSS
+# and the element simply has no styling. Neither shows an error on screen. This
+# workflow is what notices instead of a person.
+#
+# The runner is pinned (not ubuntu-latest) for the same reason as daily-fetch.yml.
+name: tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "tests/**"
+      - "tools/**"
+      - "assets/**"
+      - "vendor/**"
+      - "tw-input.css"
+      - "tailwind.config.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Clearer failure message than letting the suite report it
+      - name: CSP hash matches the inline script
+        run: node tools/build-csp.js
+
+      # Catches a CSS file that was not rebuilt after index.html changed.
+      # Tailwind's minified output is deterministic for a pinned version.
+      - name: Built CSS is up to date
+        run: |
+          npx tailwindcss -c tailwind.config.js -i tw-input.css -o /tmp/tailwind.check.css --minify
+          if ! diff -q /tmp/tailwind.check.css assets/tailwind.css; then
+            echo "::error::assets/tailwind.css is stale -- run: npm run build:css"
+            exit 1
+          fi
+
+      - name: Test suite
+        run: npm test
