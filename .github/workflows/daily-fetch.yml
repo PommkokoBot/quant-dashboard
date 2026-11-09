@@ -3,7 +3,7 @@ name: Daily data fetch
 on:
   schedule:
     # 23:30 UTC = 06:30 Thailand time (covers prior-day US close + same-day Asia close)
-    - cron: "30 23 * * *"
+    - cron: "23 22 * * *"
   workflow_dispatch:
     inputs:
       full_history:
