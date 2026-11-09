@@ -1,0 +1,3 @@
+# Test-only dependencies. Kept out of requirements.txt so the daily data jobs
+# install nothing they do not need.
+pytest>=8.0
