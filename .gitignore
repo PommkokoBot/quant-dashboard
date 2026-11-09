@@ -1,0 +1,15 @@
+# Node -- สร้างโดย npm ci
+node_modules/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# PyCharm
+.idea/
+
+# ความลับที่รันในเครื่อง -- repo นี้เป็น public
+.env
+.env.*
