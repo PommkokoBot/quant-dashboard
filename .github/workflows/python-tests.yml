@@ -1,0 +1,46 @@
+# Python test suite for scripts/.
+#
+# Kept separate from tests.yml (which runs the JavaScript suite for the page)
+# because the two have nothing in common: different runtimes, different paths,
+# different reasons to run. Splitting them also means a change here cannot
+# break the workflow that currently guards the published page.
+#
+# The mutation step is not optional decoration: a suite that has only ever been
+# seen passing proves nothing, so CI breaks the watchdog on purpose eight ways
+# and fails if any of them slips through.
+name: python tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "tests/test_*.py"
+      - "tests/mutate_*.py"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - ".github/workflows/python-tests.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Test suite
+        run: pytest tests/test_watchdog.py -q
+
+      - name: The suite can go red
+        run: python tests/mutate_watchdog.py

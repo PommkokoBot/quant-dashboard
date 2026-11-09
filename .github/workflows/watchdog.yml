@@ -1,0 +1,44 @@
+# Asks the database what state it is in, once a day, and reports to Telegram.
+#
+# Why this is a separate workflow rather than a notification step bolted onto
+# daily-fetch.yml: the failure that hurts most is "the job never ran", and a
+# step inside that job cannot report its own absence. This one checks state, so
+# a missing fact sheet or a stalled pg_cron job is visible even when nothing
+# else ran at all.
+#
+# Timing: the daily-facts-builder gate closes at 08:00 UTC, so 08:30 UTC is the
+# first moment a verdict for the day is final -- checking earlier would produce
+# false alarms while the builder still has time left. Note that this workflow
+# is itself subject to the GitHub Actions scheduling queue (measured median
+# 2.6h late since 2026-10-10), so it reports on dates, never on "now".
+#
+# The runner is pinned for the same reason as daily-fetch.yml.
+name: watchdog
+
+on:
+  schedule:
+    - cron: "30 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # A failure here fails the job, which makes GitHub e-mail the owner --
+      # the backstop for a notifier that cannot notify.
+      - name: Check state and report
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/watchdog.py
