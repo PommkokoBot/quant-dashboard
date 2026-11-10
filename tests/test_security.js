@@ -3,16 +3,20 @@
 // Usage: QD_HTML=<index.html> node tests/test_security.js
 //
 // Why these and not "does CSP work": a browser enforces the policy, a test can
-// only prove the policy is PRESENT, CORRECT FOR THIS BUILD, and not quietly
-// widened. The byte-level check that matters is the inline-script hash: if the
-// app script is edited and tools/build-csp.js is not re-run, the published page
-// loads with a dead script and nothing on screen says why.
+// only prove the policy is PRESENT, restrictive, and not quietly widened.
+//
+// Until 2026-11-10 the check that mattered most was a byte-level hash of the
+// inline script, because editing the app without re-running tools/build-csp.js
+// published a page whose script the browser refused to run, with nothing on
+// screen to say why. Round A removed that failure mode at the source: the app
+// ships as app.js and `script-src 'self'` covers it, so there is no digest left
+// to go stale. What replaces the hash check is the invariant that makes it
+// unnecessary -- the page carries no inline script at all.
 
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
-const crypto = require("crypto");
-const { JSDOM } = require("jsdom");
+const { loadPage } = require("./_page");
 
 const FILE = path.resolve(__dirname, process.env.QD_HTML || "../index.html");
 const html = fs.readFileSync(FILE, "utf8");
@@ -25,12 +29,11 @@ const csp = meta[1];
 assert.ok(!/Report-Only/i.test(html), "Report-Only is not valid in a <meta> tag -- must be enforcing");
 assert.ok(!/frame-ancestors/.test(csp), "frame-ancestors has no effect in a <meta> tag -- must not be there");
 
-const inline = html.match(/<script>([\s\S]*?)<\/script>/);
-assert.ok(inline, "the app's inline <script> block");
-const hash = crypto.createHash("sha256").update(inline[1], "utf8").digest("base64");
-assert.ok(csp.includes(`'sha256-${hash}'`),
-  "CSP hash is STALE for this index.html -- run `node tools/build-csp.js --write`");
-console.log("[ok] CSP present, enforcing, and its sha256 matches the inline script byte for byte");
+const inline = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/);
+assert.ok(!inline, "the page carries no inline <script> -- script-src is 'self' and would block one");
+assert.ok(!/'sha256-/.test(csp), "no script hash may remain in the policy; there is nothing left to hash");
+assert.ok(/(^|;\s*)script-src 'self'\s*(;|$)/.test(csp), "script-src is exactly 'self'");
+console.log("[ok] CSP present, enforcing, script-src 'self' with no inline script left to go stale");
 
 // ---------------- 2. the policy is actually restrictive ----------------
 const directive = (name) => (csp.split(";").map((d) => d.trim()).find((d) => d.startsWith(name + " ")) || "").slice(name.length + 1);
@@ -45,9 +48,13 @@ console.log("[ok] policy is restrictive: no remote scripts, no eval, network lim
 
 // ---------------- 3. no library is loaded from a CDN any more ----------------
 const scriptSrcs = Array.from(html.matchAll(/<script[^>]*src="([^"]+)"/g)).map((m) => m[1]);
-assert.deepStrictEqual(scriptSrcs, ["vendor/chart.umd.js", "vendor/supabase.js", "vendor/xlsx.full.min.js"],
-  "every library is served from this repo, in a fixed order");
+assert.deepStrictEqual(scriptSrcs, ["vendor/chart.umd.js", "vendor/supabase.js", "vendor/xlsx.full.min.js", "app.js"],
+  "every script is served from this repo, in a fixed order, with the app loaded last");
 scriptSrcs.forEach((src) => assert.ok(fs.existsSync(path.resolve(path.dirname(FILE), src)), src + " exists next to index.html"));
+// A truncated or empty app.js would still satisfy every check above while
+// shipping a page that does nothing.
+const appBytes = fs.statSync(path.resolve(path.dirname(FILE), "app.js")).size;
+assert.ok(appBytes > 100000, "app.js carries the application, not an empty or truncated file (" + appBytes + " bytes)");
 const cssHrefs = Array.from(html.matchAll(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"/g)).map((m) => m[1]);
 assert.ok(cssHrefs.includes("assets/tailwind.css"), "Tailwind is a local build, not the Play CDN");
 assert.ok(fs.existsSync(path.resolve(path.dirname(FILE), "assets/tailwind.css")), "the built CSS exists");
@@ -67,7 +74,7 @@ assert.deepStrictEqual(remote, [], "the page fetches nothing from a third party:
 console.log("[ok] libraries, CSS and the Sarabun font files all come from this repo — zero third-party origins left");
 
 // ---------------- 4. release standards: version + disclaimer + privacy ----------------
-const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/", beforeParse(w) { w.__QD_TEST__ = true; } });
+const dom = loadPage();
 const QD = dom.window.QD, doc = dom.window.document;
 assert.ok(/^\d+\.\d+\.\d+$/.test(QD.APP_VERSION), "APP_VERSION is a version number");
 assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(QD.APP_BUILD_DATE), "APP_BUILD_DATE is a date");

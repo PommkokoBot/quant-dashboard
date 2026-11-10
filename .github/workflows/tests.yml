@@ -41,8 +41,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Clearer failure message than letting the suite report it
-      - name: CSP hash matches the inline script
+      # Clearer failure message than letting the suite report it. Since round A
+      # there is no hash to go stale; what this refuses is a policy that has
+      # been widened, or an inline <script> that 'self' would not cover.
+      - name: CSP is strict and the page has no inline script
         run: node tools/build-csp.js
 
       # Catches a CSS file that was not rebuilt after index.html changed.
@@ -57,3 +59,10 @@ jobs:
 
       - name: Test suite
         run: npm test
+
+      # The hash that used to guard this page proved itself every run: it either
+      # matched the bytes or it did not. Its replacement is a set of assertions,
+      # and assertions that have only ever been seen passing prove nothing -- so
+      # CI breaks the page on purpose and fails if a break goes unnoticed.
+      - name: The security suite can go red
+        run: node tests/mutate_security.js

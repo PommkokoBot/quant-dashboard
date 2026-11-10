@@ -9,12 +9,10 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
+const { loadPage } = require("./_page");
+
 function load(file) {
-  const html = fs.readFileSync(path.resolve(__dirname, file), "utf8")
-    .replace(/<script[^>]*src=[^>]*><\/script>/g, ""); // no CDN in tests
-  const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/",
-    beforeParse(w) { w.__QD_TEST__ = true; } });
-  return dom.window;
+  return loadPage({ file }).window;
 }
 // jsdom objects come from another realm -> compare as plain JSON
 const J = (x) => JSON.parse(JSON.stringify(x));

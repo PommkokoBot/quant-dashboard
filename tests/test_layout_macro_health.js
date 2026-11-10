@@ -7,10 +7,9 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const html = fs.readFileSync(path.resolve(__dirname, process.env.QD_HTML || "../index.html"), "utf8")
-  .replace(/<script[^>]*src=[^>]*><\/script>/g, "");
-const w = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/",
-  beforeParse(win) { win.__QD_TEST__ = true; } }).window;
+const { loadPage } = require("./_page");
+
+const w = loadPage().window;
 const QD = w.QD;
 
 // ---- layout ----
