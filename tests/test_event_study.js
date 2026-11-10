@@ -13,9 +13,9 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const html = fs.readFileSync(path.resolve(__dirname, process.env.QD_HTML || "../index.html"), "utf8")
-  .replace(/<script[^>]*src=[^>]*><\/script>/g, "");
-const dom = new JSDOM(html, { runScripts: "dangerously", url: "http://localhost/", beforeParse(w) { w.__QD_TEST__ = true; } });
+const { loadPage } = require("./_page");
+
+const dom = loadPage();
 const w = dom.window, QD = w.QD, doc = w.document;
 const $ = (s) => doc.querySelector(s);
 const flush = (n = 8) => { let p = Promise.resolve(); for (let i = 0; i < n; i++) p = p.then(() => new Promise((r) => setImmediate(r))); return p; };

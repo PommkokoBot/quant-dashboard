@@ -9,15 +9,11 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const html = fs.readFileSync(path.join(__dirname, process.env.QD_HTML || "../index.html"), "utf8");
+const { loadPage } = require("./_page");
 
-const dom = new JSDOM(html, {
-  runScripts: "dangerously",
-  url: "http://localhost/",
-  beforeParse(window) {
-    window.__QD_TEST__ = true; // prevent auto QD.init() so the test controls init timing
-  }
-});
+// __QD_TEST__ is set by the loader, which prevents auto QD.init() so this file
+// controls init timing.
+const dom = loadPage();
 const { window } = dom;
 
 function flush(times = 3) {

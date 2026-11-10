@@ -14,6 +14,14 @@ const assert = require("assert");
 
 const FILE = path.resolve(__dirname, process.env.QD_HTML || "../index.html");
 const html = fs.readFileSync(FILE, "utf8");
+// Round A (2026-11-10) moved the app into app.js, and most class names are
+// built there inside template literals. tailwind.config.js lists both files for
+// that reason, and this guard has to scan both for the same reason: looking at
+// the page alone would quietly stop covering 35 of the classes it used to.
+// A page that still carries its code inline has no app.js next to it.
+const APP = path.resolve(path.dirname(FILE), "app.js");
+const app = fs.existsSync(APP) ? fs.readFileSync(APP, "utf8") : "";
+const sources = html + "\n" + app;
 const css = fs.readFileSync(path.resolve(path.dirname(FILE), "assets/tailwind.css"), "utf8");
 const inlineStyle = (html.match(/<style>([\s\S]*?)<\/style>/) || ["", ""])[1];
 
@@ -29,7 +37,7 @@ const HOOKS = new Set([
 // the tables). Keep only the literal, utility-shaped tokens.
 const SHAPE = /^[a-z0-9][a-z0-9:_\\[\]().,/%#-]*$/i;
 const tokens = new Set();
-for (const m of html.matchAll(/class="([^"]*)"/g)) {
+for (const m of sources.matchAll(/class="([^"]*)"/g)) {
   for (const raw of m[1].split(/\s+/)) {
     const t = raw.trim();
     if (!t || t.includes("${") || t.includes("}") || t.includes("'") || t.includes('"')) continue;
@@ -42,7 +50,7 @@ assert.ok(tokens.size > 150, "found a realistic number of classes to check (got 
 const escapeForCss = (t) => "." + t.replace(/[:[\]/.%#(),]/g, (c) => "\\" + c);
 const missing = [...tokens].filter((t) => !css.includes(escapeForCss(t)) && !inlineStyle.includes("." + t));
 assert.deepStrictEqual(missing, [],
-  "these classes are used in index.html but exist in neither assets/tailwind.css nor the inline <style> -- rebuild the CSS:\n  " + missing.join("\n  "));
+  "these classes are used in index.html / app.js but exist in neither assets/tailwind.css nor the inline <style> -- rebuild the CSS:\n  " + missing.join("\n  "));
 console.log(`[ok] all ${tokens.size} utility classes used in index.html are present in the built CSS (responsive, hover and arbitrary-value variants included)`);
 
 // The custom classes must stay in the inline <style>: Tailwind never emits them

@@ -1,0 +1,6267 @@
+window.QD = (function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // Config
+  // ---------------------------------------------------------------------
+  // Version is shown in the header and written into every Excel export, so a
+  // report can always be traced back to the build that produced it.
+  const APP_VERSION = "1.0.1";
+  const APP_BUILD_DATE = "2026-11-10";
+
+  const SUPABASE_URL = "https://nsbreucmgfmphmfewnbw.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_7KHllF7ZjELjitvKTo0-ag_3GWgKtZp";
+
+  let sb = null; // supabase client instance (real or injected for tests)
+  let chartInstance = null;
+  let overviewChartInstance = null;
+  let momLeaderboardChartInstance = null;
+  let momRotationChartInstance = null;
+  let momPvScatterChartInstance = null;
+  let momVolumeChartInstance = null;
+  let momDrilldownChartInstance = null;
+  let corrPairChartInstance = null;
+  let corrAvgChartInstance = null;
+
+  const MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
+                  "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+
+  // 20 metrics (+ n, + cvar_5pct_n as supporting counts) exactly as returned by
+  // the seasonal_stats() RPC. Order/grouping follows section 3.2 of the spec doc.
+  // `direction` says which raw-value end is "good" for the Level 1 heatmap:
+  // "high" = larger raw value is better (this also covers already-signed loss/
+  // drawdown metrics like average_loss_pct, worst_observation_pct, cvar_5pct_pct,
+  // where e.g. -1% is a *larger* number than -5% and is indeed the better outcome);
+  // "low" = smaller raw value is better (frequency-of-bad-things and risk metrics).
+  const STAT_FIELDS = [
+    { key: "mean_pct",                   label: "Mean",                    group: "returns",  kind: "pct", direction: "high", desc: "ค่าเฉลี่ยเลขคณิตของผลตอบแทนทุกงวดในช่วงที่เลือก" },
+    { key: "median_pct",                 label: "Median",                  group: "returns",  kind: "pct", direction: "high", desc: "ค่ากลางของผลตอบแทน (ครึ่งหนึ่งของงวดสูงกว่า อีกครึ่งต่ำกว่า) ไม่ถูกดึงด้วยค่าผิดปกติสุดโต่งเหมือน Mean" },
+    { key: "geometric_mean_pct",         label: "Geometric Mean",          group: "returns",  kind: "pct", direction: "high", desc: "ค่าเฉลี่ยแบบทบต้น สะท้อนผลตอบแทนจริงหากลงทุนต่อเนื่องทุกงวด (มักต่ำกว่า Mean เสมอเมื่อผลตอบแทนผันผวน)" },
+    { key: "win_frequency_pct",          label: "Win Frequency",           group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของจำนวนงวดทั้งหมดที่ผลตอบแทนเป็นบวก" },
+    { key: "average_win_pct",            label: "Average Win",             group: "upside",   kind: "pct", direction: "high", desc: "ผลตอบแทนเฉลี่ย เฉพาะงวดที่เป็นบวกเท่านั้น" },
+    { key: "best_observation_pct",       label: "Best Observation",        group: "upside",   kind: "pct", direction: "high", desc: "ผลตอบแทนสูงสุดที่เคยเกิดขึ้นจริงในช่วงที่เลือก" },
+    { key: "above_mean_frequency_pct",   label: "Above-Mean Frequency",    group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของงวดที่ผลตอบแทนสูงกว่าค่าเฉลี่ย (Mean) ของช่วงนั้น" },
+    { key: "tail_win_frequency_pct",     label: "Tail-Win Frequency",      group: "upside",   kind: "pct", direction: "high", desc: "สัดส่วนของงวดที่ผลตอบแทนอยู่ในกลุ่มบวกสุดโต่ง (upside tail) เทียบกับการกระจายทั้งหมด" },
+    { key: "loss_frequency_pct",         label: "Loss Frequency",          group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของจำนวนงวดทั้งหมดที่ผลตอบแทนเป็นลบ" },
+    { key: "average_loss_pct",           label: "Average Loss",            group: "downside", kind: "pct", direction: "high", desc: "ผลตอบแทนเฉลี่ย เฉพาะงวดที่เป็นลบเท่านั้น (ตัวเลขติดลบ ยิ่งใกล้ 0 ยิ่งดี)" },
+    { key: "worst_observation_pct",      label: "Worst Observation",       group: "downside", kind: "pct", direction: "high", desc: "ผลตอบแทนต่ำสุด (ขาดทุนมากที่สุด) ที่เคยเกิดขึ้นจริงในช่วงที่เลือก" },
+    { key: "below_mean_frequency_pct",   label: "Below-Mean Frequency",    group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของงวดที่ผลตอบแทนต่ำกว่าค่าเฉลี่ย (Mean) ของช่วงนั้น" },
+    { key: "tail_loss_frequency_pct",    label: "Tail-Loss Frequency",     group: "downside", kind: "pct", direction: "low", desc: "สัดส่วนของงวดที่ผลตอบแทนอยู่ในกลุ่มลบสุดโต่ง (downside tail) เทียบกับการกระจายทั้งหมด" },
+    { key: "standard_deviation_pct",     label: "Standard Deviation",      group: "risk",     kind: "pct", direction: "low", desc: "ค่าเบี่ยงเบนมาตรฐานของผลตอบแทน วัดความผันผวนโดยรวม ยิ่งสูงยิ่งผันผวน" },
+    { key: "downside_deviation_pct",     label: "Downside Deviation",      group: "risk",     kind: "pct", direction: "low", desc: "ความผันผวนเฉพาะฝั่งขาดทุน (ไม่นับความผันผวนฝั่งกำไรเป็นความเสี่ยง)" },
+    { key: "cvar_5pct_pct",              label: "CVaR (5%)",               group: "risk",     kind: "pct", direction: "high", countKey: "cvar_5pct_n", desc: "ค่าเฉลี่ยผลตอบแทนของกลุ่ม 5% งวดที่แย่ที่สุด (Conditional Value at Risk) สะท้อนความเสียหายเฉลี่ยกรณีเลวร้าย" },
+    { key: "risk_adjusted_return_x",     label: "Risk-Adjusted Return",    group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลตอบแทนเฉลี่ยต่อความผันผวนโดยรวม (Mean ÷ Standard Deviation) ยิ่งสูงยิ่งคุ้มความเสี่ยง" },
+    { key: "downside_adjusted_return_x", label: "Downside-Adjusted Return",group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลตอบแทนเฉลี่ยต่อความผันผวนเฉพาะฝั่งขาดทุน (Mean ÷ Downside Deviation)" },
+    { key: "payoff_ratio_x",             label: "Payoff Ratio",            group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนขนาด Average Win ต่อขนาด Average Loss — มากกว่า 1 แปลว่ากำไรเฉลี่ยต่อครั้งมากกว่าขาดทุนเฉลี่ยต่อครั้ง" },
+    { key: "gain_to_pain_ratio_x",       label: "Gain-to-Pain Ratio",      group: "risk",     kind: "x", direction: "high", desc: "อัตราส่วนผลรวมกำไรทั้งหมดต่อผลรวมขาดทุนทั้งหมด (นับทุกงวดรวมกัน ไม่ใช่แค่ค่าเฉลี่ยต่อครั้ง)" }
+  ];
+
+  // 7 stats selectable on the Rolling Chart (per spec section 3.4)
+  const ROLLING_STATS = [
+    { key: "mean_pct",              label: "Mean Return" },
+    { key: "win_frequency_pct",     label: "Win Frequency (%)" },
+    { key: "average_win_pct",       label: "Average Win (%)" },
+    { key: "best_observation_pct",  label: "Best Observation (%)" },
+    { key: "average_loss_pct",      label: "Average Loss (%)" },
+    { key: "worst_observation_pct", label: "Worst Observation (%)" },
+    { key: "standard_deviation_pct",label: "Standard Deviation (%)" }
+  ];
+
+  const LOOKBACK_OPTIONS = [5, 10, 20, null]; // null = "all"
+
+  // Year-group presets for seasonal / event filtering (Round 2)
+  const YEAR_GROUPS = {
+    "presidential_y1": { "label": "Presidential Cycle Y1", "years": [2001,2005,2009,2013,2017,2021,2025], "color": "#2ecc71" },
+    "presidential_y2": { "label": "Presidential Cycle Y2", "years": [2002,2006,2010,2014,2018,2022,2026], "color": "#e67e22" },
+    "presidential_y3": { "label": "Presidential Cycle Y3", "years": [2003,2007,2011,2015,2019,2023], "color": "#9b59b6" },
+    "presidential_y4": { "label": "Presidential Cycle Y4 (Election)", "years": [2000,2004,2008,2012,2016,2020,2024], "color": "#e74c3c" },
+    "election_years":  { "label": "Election Years", "years": [2000,2004,2008,2012,2016,2020,2024], "color": "#e74c3c" },
+    "fed_hike_cycle":  { "label": "Fed Hike Cycle", "years": [1999,2000,2004,2005,2006,2015,2016,2017,2018,2022,2023], "color": "#c0392b" },
+    "fed_cut_cycle":   { "label": "Fed Cut Cycle", "years": [2001,2002,2003,2007,2008,2019,2020,2024], "color": "#27ae60" },
+    "post_crisis_recovery": { "label": "Post-Crisis Recovery", "years": [2003,2004,2009,2010,2020,2021], "color": "#2980b9" }
+  };
+
+  const state = {
+    session: null,
+    instrumentsLoaded: false,
+    dataAsOf: null,             // data_as_of() result: { as_of, last_complete_week_start, last_complete_month_start, ... }
+    // 2026-09-21: market event calendar (loaded once, on the first drill-down)
+    events: { loaded: false, loading: null, rows: [], types: [], enabled: [], enabledInitialized: false, error: "" },
+    // 2026-09-21: Data Health tab (loaded on first visit to the tab)
+    health: { loaded: false, loading: false, data: null, onlyProblems: false },
+    instruments: [],
+    assetId: null,
+    periodType: "month",
+    lookback: 10,
+    overviewRows: [],
+    variants: [
+      { enabled: true,  assetId: null, periodType: "month", period: 1, lookback: 10 },
+      { enabled: false, assetId: null, periodType: "month", period: 1, lookback: 10 },
+      { enabled: false, assetId: null, periodType: "month", period: 1, lookback: 10 }
+    ],
+    results: [null, null, null], // per variant: { rollingSeries: [{endYear, stats}] | null, snapshot: stats | null }
+    rollingStatKey: "mean_pct",
+
+    // ---- Momentum & Rotation tab (Phase 2) ----
+    activeTab: "seasonality",
+    momentum: {
+      dataLoaded: false,
+      lastFetchKey: null,       // set after a successful fetch; see computeMomentumFetchKey
+      // ATR / 52-week range, from the risk_metrics RPC. Keyed by instrument id.
+      // Cached per universe: these numbers do not depend on Lookback/SMA.
+      risk: { byId: {}, asOf: null, error: "", key: null },
+      // Market breadth across the whole active universe (its own button, its
+      // own cache -- it does not follow the Universe picker on purpose).
+      breadth: { rows: [], days: 504, loaded: false, loading: false, chart: null },
+      universeMode: "asset_class",
+      timeframe: "month",
+      lookbackPeriods: 12,
+      smaPeriods: 10,
+      paramErrors: { lookback: "", sma: "" }, // validation messages for the custom inputs
+      loadedPricePeriods: 0,    // momentumPriceLookbackPeriods() at the time of the last price fetch
+      riskAdjusted: false,
+      riskFreeAnnualPct: 2,
+      benchmarkAssetId: null,
+      tailLength: 12,
+      seriesByInstrument: {},   // instrumentId -> [{period_end, adj_close}] ascending by period_end
+      universeInstruments: [],  // resolved instrument list for the current universe mode
+      rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] } -- unfiltered, full rotation universe
+      rrgSelectedIds: [],       // instrumentIds currently checked in the RRG display-selection panel
+      rrgSelectionInitialized: false, // reset to false on each fresh data fetch so the Top-N default re-applies
+
+      // ---- Volume (merged into this tab, 2026-09) ----
+      volBaselinePeriods: 12,   // trailing periods used as the "normal volume" baseline
+      volumeSeriesByInstrument: {}, // instrumentId -> [{period_end, volume, adj_close}] at the active timeframe
+      volumeAnomalyById: {},    // instrumentId -> { zScore, rvol, current, mean, periodEnd }
+
+      // ---- Merged Leaderboard table ----
+      selectedIds: [],          // instruments included in the table + both charts
+      selectionInitialized: false,
+      rows: [],                 // merged (union) rows for the current selection
+      table: {
+        sortColumn: "trailingReturnPct",
+        sortDir: "desc",
+        order: [],              // column ids, left to right (filled from the registry at init)
+        visible: {},            // column id -> bool
+        preset: "all"
+      },
+      drilldownInstrumentId: null,
+      drilldownCacheKey: null,  // `${instrumentId}|${timeframe}` of what is in drilldownSeries
+      drilldownSeries: [],
+      drilldownPoints: [],
+
+      // ---- Correlation Explorer sub-section (2026-09 addition) ----
+      corr: {
+        frequency: "month",     // independent of the momentum timeframe above
+        windowPeriods: 12,
+        seriesCacheKey: null,   // `${universeMode}|${frequency}` of whatever is in seriesByInstrument below
+        seriesByInstrument: {}, // instrumentId -> [{period_end, adj_close}] at corr.frequency
+        instruments: [],
+        selectedIds: [],
+        selectionInitialized: false,
+        matrix: null,           // { ids, tickers, values: number|null[][], windowPeriods }
+        avgSeries: [],          // [{periodEnd, avgCorr, pairCount}]
+        selectedPair: null,     // { aId, bId, aTicker, bTicker }
+        pairSeries: []          // [{periodEnd, corr}]
+      }
+    },
+
+    // ---- Events / Seasonal tab (Round 2) ----
+    eventsTab: {
+      loaded: false,
+      loading: false,
+      customEvents: [],        // user's own drafts + all approved
+      pendingDrafts: [],       // admin: all pending drafts
+      yearFilter: null,        // selected year_group key or null
+      calendarYear: new Date().getFullYear(),
+      sort: { key: "date", dir: "desc" }, // Events table column sort (default = newest first, as before)
+      collapsed: false,        // Events Calendar section folded?
+      // Event groups (round 3A)
+      groupDraft: [],          // rows being built in the form: [{start, end, flag}]
+      editingGroupId: null,    // set when re-saving an existing draft group
+      groups: [],              // list_event_groups(): approved + own drafts
+      pendingGroups: [],       // admin: draft groups with their rows
+      approvedGroups: [],      // admin: approved groups (rows loaded on expand)
+      openGroupId: null,       // which admin group is expanded
+    },
+    eventStudy: {
+      assetId: null,           // instrument for the study
+      sourceKey: "",           // "t:<event_type>" or "g<group_id>"
+      sources: [],
+      stat: "med",             // med | mean | p25p75 | minmax
+      n: 60,                   // window in trading days
+      unlock: false,           // accept overlapping windows (lifts the cap)
+      duringMode: "raw",       // raw trading days | norm 0-100%
+      minDur: null, maxDur: null,
+      showBaseline: true,
+      pricesByAsset: {},       // instrument_id -> price index (session cache)
+      result: null, chart: null, ran: false,
+    },
+    seasonal: {
+      loaded: false,
+      loading: false,
+      assetId: null,           // selected instrument for seasonal chart
+      metric: "cumReturn",     // cumReturn | volume | volatility
+      statistic: "median",     // median | mean | p25_p75 | min_max
+      yearRange: "all",        // '5y' | '10y' | '20y' | 'all'
+      yearGroups: [],          // selected year_group keys (max 3)
+      rawData: [],             // fetched ohlcv rows
+      chartInstance: null
+    }
+  };
+
+  // ---------------------------------------------------------------------
+  // Pure helpers (unit-testable without DOM/network)
+  // ---------------------------------------------------------------------
+  function periodCount(periodType) { return periodType === "month" ? 12 : 53; }
+
+  function periodOptions(periodType) {
+    return Array.from({ length: periodCount(periodType) }, (_, i) => i + 1);
+  }
+
+  function periodLabel(periodType, period) {
+    return periodType === "month" ? MONTHS[period - 1] : `สัปดาห์ที่ ${period}`;
+  }
+
+  function lookbackLabel(lb) {
+    return (lb === null || lb === undefined) ? "ทั้งหมด" : `${lb} ปี`;
+  }
+
+  function parseLookbackValue(v) {
+    return v === "all" ? null : Number(v);
+  }
+
+  function lookbackToSelectValue(lb) {
+    return (lb === null || lb === undefined) ? "all" : String(lb);
+  }
+
+  function formatVal(field, stats) {
+    if (!stats) return "—";
+    const value = stats[field.key];
+    if (value === null || value === undefined) return "—";
+    const fixed = Number(value).toFixed(2);
+    const suffix = field.kind === "x" ? "x" : "%";
+    let out = `${fixed}${suffix}`;
+    if (field.countKey && stats[field.countKey] !== undefined && stats[field.countKey] !== null) {
+      out += ` (n=${stats[field.countKey]})`;
+    }
+    return out;
+  }
+
+  // Computes the list of p_end_year values needed to slide an N-year lookback
+  // window across [minYear, maxYear]. Returns null when lookback is "all"
+  // (a single, non-sliding window -- there is nothing to roll), and [] when
+  // there isn't even one full window available yet.
+  function computeEndYearRange(minYear, maxYear, lookback) {
+    if (lookback === null || lookback === undefined) return null;
+    if (typeof minYear !== "number" || typeof maxYear !== "number") return [];
+    const start = minYear + lookback - 1;
+    if (start > maxYear) return [];
+    const years = [];
+    for (let y = start; y <= maxYear; y++) years.push(y);
+    return years;
+  }
+
+  function tickerFor(assetId) {
+    const inst = state.instruments.find((i) => i.id === assetId);
+    return inst ? inst.ticker : `#${assetId}`;
+  }
+
+  function variantLabel(v) {
+    return `${tickerFor(v.assetId)} · ${periodLabel(v.periodType, v.period)} · ${lookbackLabel(v.lookback)}`;
+  }
+
+  function yearFromDateStr(d) {
+    return Number(String(d).slice(0, 4));
+  }
+
+  // ---------------------------------------------------------------------
+  // Level 1 heatmap: relative (min-max) color scale per metric column,
+  // computed independently across the periods currently shown (12 months or
+  // up to 53 weeks). Direction-aware so "good" always lands on the green end.
+  // ---------------------------------------------------------------------
+  function computeColumnRange(field, rows) {
+    let min = null, max = null;
+    rows.forEach((r) => {
+      if (!r.stats) return;
+      const v = r.stats[field.key];
+      if (v === null || v === undefined) return;
+      if (min === null || v < min) min = v;
+      if (max === null || v > max) max = v;
+    });
+    return { min, max };
+  }
+
+  // Neutral color used when a column has no spread (every period ties) --
+  // avoids a divide-by-zero and correctly implies "no meaningful difference".
+  const HEATMAP_NEUTRAL = "hsl(50, 20%, 92%)";
+
+  function heatmapColor(value, range, direction) {
+    if (value === null || value === undefined) return null;
+    if (range.min === null || range.max === null) return null;
+    if (range.min === range.max) return HEATMAP_NEUTRAL;
+    let t = (value - range.min) / (range.max - range.min); // 0 at min, 1 at max
+    if (direction === "low") t = 1 - t; // flip so the smaller raw value is the "good" (green) end
+    t = Math.max(0, Math.min(1, t));
+    const hue = t * 120; // 0 = red, 60 = yellow, 120 = green
+    return `hsl(${hue.toFixed(0)}, 65%, 85%)`;
+  }
+
+  // ---------------------------------------------------------------------
+  // Data access
+  // ---------------------------------------------------------------------
+  async function callRpc(assetId, periodType, period, lookback, endYear) {
+    const { data, error } = await sb.rpc("seasonal_stats", {
+      p_instrument_id: assetId,
+      p_period_type: periodType,
+      p_period: period,
+      p_lookback_years: lookback,
+      p_end_year: endYear,
+      // 2026-09-15: only completed months/weeks count as observations -- the
+      // month/week still in progress is left out (see data_as_of()).
+      p_complete_only: true
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function getYearRange(assetId) {
+    const [firstRes, lastRes] = await Promise.all([
+      sb.from("ohlcv_daily").select("date").eq("instrument_id", assetId).order("date", { ascending: true }).limit(1),
+      sb.from("ohlcv_daily").select("date").eq("instrument_id", assetId).order("date", { ascending: false }).limit(1)
+    ]);
+    if (firstRes.error) throw firstRes.error;
+    if (lastRes.error) throw lastRes.error;
+    if (!firstRes.data.length || !lastRes.data.length) return null;
+    return {
+      minYear: yearFromDateStr(firstRes.data[0].date),
+      maxYear: yearFromDateStr(lastRes.data[0].date)
+    };
+  }
+
+  async function loadInstruments() {
+    const { data, error } = await sb
+      .from("instruments")
+      .select("id,ticker,name,category")
+      .eq("is_active", true)
+      .order("category", { ascending: true })
+      .order("ticker", { ascending: true });
+    if (error) throw error;
+    state.instruments = data || [];
+    const spy = state.instruments.find((i) => i.ticker === "SPY");
+    state.assetId = spy ? spy.id : (state.instruments[0] ? state.instruments[0].id : null);
+    state.variants.forEach((v) => { if (v.assetId === null) v.assetId = state.assetId; });
+  }
+
+  // ---------------------------------------------------------------------
+  // Level 1: Overview table
+  // ---------------------------------------------------------------------
+  async function fetchOverview() {
+    const errEl = byId("overviewError");
+    hide(errEl);
+    setLoading("overviewLoading", true);
+    try {
+      const periods = periodOptions(state.periodType);
+      const results = await Promise.all(
+        periods.map((p) => callRpc(state.assetId, state.periodType, p, state.lookback, null))
+      );
+      state.overviewRows = periods.map((p, idx) => ({ period: p, stats: results[idx] }));
+      renderOverviewChart();
+      renderOverviewTable();
+    } catch (e) {
+      showError(errEl, `โหลดตารางภาพรวมไม่สำเร็จ: ${e.message || e}`);
+    } finally {
+      setLoading("overviewLoading", false);
+    }
+  }
+
+  function renderOverviewTable() {
+    const table = byId("overviewTable");
+    if (!table) return;
+    const headCells = [`<th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Period</th>`,
+                        `<th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">n</th>`]
+      .concat(STAT_FIELDS.map((f) =>
+        `<th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200 stat-group-${f.group}" title="${f.label}">${f.label}</th>`));
+
+    // Heatmap ranges: one min/max per metric column, computed once across all
+    // rows currently shown, then reused for every cell in that column below.
+    const ranges = {};
+    STAT_FIELDS.forEach((f) => { ranges[f.key] = computeColumnRange(f, state.overviewRows); });
+
+    const bodyRows = state.overviewRows.map((row) => {
+      const cells = [
+        `<td class="sticky-col px-3 py-1.5 font-medium text-slate-700 border-b border-slate-100 cursor-pointer hover:text-blue-600" data-period="${row.period}">${periodLabel(state.periodType, row.period)}</td>`,
+        `<td class="text-right px-2 py-1.5 border-b border-slate-100 text-slate-500">${row.stats ? row.stats.n : "—"}</td>`
+      ].concat(STAT_FIELDS.map((f) => {
+        const value = row.stats ? row.stats[f.key] : null;
+        const bg = heatmapColor(value, ranges[f.key], f.direction);
+        const style = bg ? ` style="background-color:${bg};"` : "";
+        return `<td class="text-right px-2 py-1.5 border-b border-slate-100"${style}>${formatVal(f, row.stats)}</td>`;
+      }));
+      return `<tr class="qd-row hover:bg-blue-50/50" data-period="${row.period}">${cells.join("")}</tr>`;
+    });
+
+    table.innerHTML = `<thead><tr>${headCells.join("")}</tr></thead><tbody>${bodyRows.join("")}</tbody>`;
+
+    table.querySelectorAll("tr.qd-row").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        applyRowToVariant(0, Number(tr.getAttribute("data-period")));
+      });
+    });
+  }
+
+  // Pure data-shaping for the overview chart -- kept separate from Chart.js
+  // construction so it can be unit-tested without a canvas/Chart.js present.
+  function buildOverviewChartDatasets(rows, periodType) {
+    return {
+      labels: rows.map((r) => periodLabel(periodType, r.period)),
+      range: rows.map((r) => (r.stats ? [r.stats.worst_observation_pct, r.stats.best_observation_pct] : [null, null])),
+      mean: rows.map((r) => (r.stats ? r.stats.mean_pct : null)),
+      winRate: rows.map((r) => (r.stats ? r.stats.win_frequency_pct : null))
+    };
+  }
+
+  function renderOverviewChart() {
+    const canvas = byId("overviewChart");
+    if (!canvas) return;
+    const built = buildOverviewChartDatasets(state.overviewRows, state.periodType);
+
+    if (typeof Chart === "undefined") return; // Chart.js not loaded (e.g. offline test DOM)
+
+    if (overviewChartInstance) { overviewChartInstance.destroy(); overviewChartInstance = null; }
+    overviewChartInstance = new Chart(canvas.getContext("2d"), {
+      data: {
+        labels: built.labels,
+        datasets: [
+          {
+            type: "bar", label: "ช่วง Worst–Best", data: built.range,
+            backgroundColor: "rgba(37,99,235,0.15)", borderColor: "rgba(37,99,235,0.5)", borderWidth: 1,
+            yAxisID: "yPct", order: 3
+          },
+          {
+            type: "line", label: "Mean", data: built.mean,
+            borderColor: "#2563eb", backgroundColor: "#2563eb",
+            yAxisID: "yPct", tension: 0.2, pointRadius: 3, order: 1
+          },
+          {
+            type: "line", label: "Win Rate (%)", data: built.winRate,
+            borderColor: "#059669", backgroundColor: "#059669", borderDash: [4, 2],
+            yAxisID: "yPct2", tension: 0.2, pointRadius: 3, order: 2
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          yPct: { type: "linear", position: "left", title: { display: true, text: "Return (%)" } },
+          yPct2: { type: "linear", position: "right", min: 0, max: 100, title: { display: true, text: "Win Rate (%)" }, grid: { drawOnChartArea: false } }
+        },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Level 2: Period Controls
+  // ---------------------------------------------------------------------
+  function applyRowToVariant(variantIndex, period) {
+    state.variants[variantIndex] = {
+      enabled: true,
+      assetId: state.assetId,
+      periodType: state.periodType,
+      period: period,
+      lookback: state.lookback
+    };
+    renderVariantForms();
+  }
+
+  function renderVariantForms() {
+    const container = byId("variantForms");
+    if (!container) return;
+    container.innerHTML = state.variants.map((v, idx) => {
+      const assetOpts = state.instruments.map((i) =>
+        `<option value="${i.id}" ${i.id === v.assetId ? "selected" : ""}>${i.ticker}</option>`).join("");
+      const periodTypeOpts = ["month", "week"].map((pt) =>
+        `<option value="${pt}" ${pt === v.periodType ? "selected" : ""}>${pt === "month" ? "รายเดือน" : "รายสัปดาห์"}</option>`).join("");
+      const periodOpts = periodOptions(v.periodType).map((p) =>
+        `<option value="${p}" ${p === v.period ? "selected" : ""}>${periodLabel(v.periodType, p)}</option>`).join("");
+      const lookbackOpts = LOOKBACK_OPTIONS.map((lb) =>
+        `<option value="${lookbackToSelectValue(lb)}" ${lb === v.lookback ? "selected" : ""}>${lookbackLabel(lb)}</option>`).join("");
+
+      return `
+      <div class="flex flex-wrap items-end gap-3 p-3 rounded-lg border ${v.enabled ? "border-blue-200 bg-blue-50/30" : "border-slate-200"}" data-variant="${idx}">
+        <label class="flex items-center gap-2 text-xs font-medium text-slate-600">
+          <input type="checkbox" class="variant-enabled" data-variant="${idx}" ${v.enabled ? "checked" : ""} />
+          ชุดที่ ${idx + 1}
+        </label>
+        <div>
+          <label class="block text-[10px] text-slate-400">Asset</label>
+          <select class="variant-asset border border-slate-300 rounded px-2 py-1 text-xs" data-variant="${idx}">${assetOpts}</select>
+        </div>
+        <div>
+          <label class="block text-[10px] text-slate-400">Period Type</label>
+          <select class="variant-periodtype border border-slate-300 rounded px-2 py-1 text-xs" data-variant="${idx}">${periodTypeOpts}</select>
+        </div>
+        <div>
+          <label class="block text-[10px] text-slate-400">Period</label>
+          <select class="variant-period border border-slate-300 rounded px-2 py-1 text-xs" data-variant="${idx}">${periodOpts}</select>
+        </div>
+        <div>
+          <label class="block text-[10px] text-slate-400">Lookback</label>
+          <select class="variant-lookback border border-slate-300 rounded px-2 py-1 text-xs" data-variant="${idx}">${lookbackOpts}</select>
+        </div>
+        <span class="text-[10px] text-slate-400 ml-1">${v.lookback === null ? "หมายเหตุ: เลือก \"ทั้งหมด\" จะไม่ขึ้น Rolling Chart (ไม่มีหน้าต่างให้เลื่อน) แต่ยังขึ้นในตาราง Compare" : ""}</span>
+      </div>`;
+    }).join("");
+
+    container.querySelectorAll(".variant-enabled").forEach((el) => el.addEventListener("change", onVariantFieldChange));
+    container.querySelectorAll(".variant-asset").forEach((el) => el.addEventListener("change", onVariantFieldChange));
+    container.querySelectorAll(".variant-periodtype").forEach((el) => el.addEventListener("change", onVariantFieldChange));
+    container.querySelectorAll(".variant-period").forEach((el) => el.addEventListener("change", onVariantFieldChange));
+    container.querySelectorAll(".variant-lookback").forEach((el) => el.addEventListener("change", onVariantFieldChange));
+  }
+
+  function onVariantFieldChange(evt) {
+    const idx = Number(evt.target.getAttribute("data-variant"));
+    const v = state.variants[idx];
+    if (evt.target.classList.contains("variant-enabled")) v.enabled = evt.target.checked;
+    if (evt.target.classList.contains("variant-asset")) v.assetId = Number(evt.target.value);
+    if (evt.target.classList.contains("variant-periodtype")) {
+      v.periodType = evt.target.value;
+      if (v.period > periodCount(v.periodType)) v.period = 1;
+    }
+    if (evt.target.classList.contains("variant-period")) v.period = Number(evt.target.value);
+    if (evt.target.classList.contains("variant-lookback")) v.lookback = parseLookbackValue(evt.target.value);
+    renderVariantForms();
+  }
+
+  // ---------------------------------------------------------------------
+  // Calculate: builds Rolling Chart series + Compare snapshot per variant
+  // ---------------------------------------------------------------------
+  async function runCalculate() {
+    const errEl = byId("calculateError");
+    hide(errEl);
+    setLoading("chartLoading", true);
+    setStatus("กำลังคำนวณ...");
+    try {
+      const enabledIdx = state.variants.map((v, i) => (v.enabled ? i : null)).filter((i) => i !== null);
+      if (enabledIdx.length === 0) {
+        showError(errEl, "กรุณาเปิดใช้งานอย่างน้อย 1 ชุดใน Period Controls");
+        return;
+      }
+      for (const i of enabledIdx) {
+        state.results[i] = await calculateVariant(state.variants[i]);
+      }
+      state.variants.forEach((v, i) => { if (!v.enabled) state.results[i] = null; });
+      renderChart(state.rollingStatKey);
+      renderCompareTable();
+      updateExportAvailability();
+      setStatus(`คำนวณเสร็จแล้ว (${enabledIdx.length} ชุด)`);
+    } catch (e) {
+      showError(errEl, `คำนวณไม่สำเร็จ: ${e.message || e}`);
+      setStatus("");
+    } finally {
+      setLoading("chartLoading", false);
+    }
+  }
+
+  async function calculateVariant(v) {
+    const range = await getYearRange(v.assetId);
+    const endYears = range ? computeEndYearRange(range.minYear, range.maxYear, v.lookback) : [];
+
+    let rollingSeries = null;
+    if (endYears !== null && endYears.length > 0) {
+      const seriesStats = await Promise.all(
+        endYears.map((ey) => callRpc(v.assetId, v.periodType, v.period, v.lookback, ey))
+      );
+      rollingSeries = endYears.map((ey, idx) => ({ endYear: ey, stats: seriesStats[idx] }));
+    }
+
+    const snapshot = await callRpc(v.assetId, v.periodType, v.period, v.lookback, null);
+    return { rollingSeries, snapshot };
+  }
+
+  // ---------------------------------------------------------------------
+  // Rendering: Rolling Chart (Chart.js)
+  // ---------------------------------------------------------------------
+  const CHART_COLORS = ["#2563eb", "#dc2626", "#059669"];
+
+  function renderChart(statKey) {
+    state.rollingStatKey = statKey;
+    const canvas = byId("rollingChart");
+    const noteEl = byId("chartEmptyNote");
+    if (!canvas) return;
+
+    const datasets = [];
+    let anyOmittedForAll = false;
+    state.variants.forEach((v, i) => {
+      const res = state.results[i];
+      if (!v.enabled) return;
+      if (!res || !res.rollingSeries) { anyOmittedForAll = true; return; }
+      datasets.push({
+        label: variantLabel(v),
+        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+        data: res.rollingSeries.map((pt) => ({ x: pt.endYear, y: pt.stats ? pt.stats[statKey] : null })),
+        fill: false,
+        tension: 0.15,
+        pointRadius: 2
+      });
+    });
+
+    if (noteEl) {
+      noteEl.textContent = anyOmittedForAll
+        ? "หมายเหตุ: ชุดที่เลือก Lookback = \"ทั้งหมด\" จะไม่แสดงบนกราฟนี้ (ไม่มีหน้าต่างให้เลื่อน) แต่ยังอยู่ในตาราง Compare ด้านล่าง"
+        : "";
+    }
+
+    if (typeof Chart === "undefined") return; // Chart.js not loaded (e.g. offline test DOM)
+
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    chartInstance = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        parsing: false,
+        scales: {
+          x: { type: "linear", title: { display: true, text: "End Year ของหน้าต่าง Lookback" }, ticks: { stepSize: 1 } },
+          y: { title: { display: true, text: ROLLING_STATS.find((s) => s.key === statKey)?.label || statKey } }
+        },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Rendering: Compare Table
+  // ---------------------------------------------------------------------
+  function renderCompareTable() {
+    const table = byId("compareTable");
+    if (!table) return;
+    const activeCols = state.variants
+      .map((v, i) => ({ v, i, res: state.results[i] }))
+      .filter((c) => c.v.enabled && c.res && c.res.snapshot);
+
+    if (activeCols.length === 0) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — กด "คำนวณ" ก่อน</td></tr></tbody>`;
+      return;
+    }
+
+    const head = [`<th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">Metric</th>`]
+      .concat(activeCols.map((c) => `<th class="text-right px-3 py-2 bg-slate-50 border-b border-slate-200">${variantLabel(c.v)}</th>`));
+
+    const nRow = `<tr><td class="sticky-col px-3 py-1.5 font-medium border-b border-slate-100">n</td>` +
+      activeCols.map((c) => `<td class="text-right px-3 py-1.5 border-b border-slate-100">${c.res.snapshot.n}</td>`).join("") + `</tr>`;
+
+    const rows = STAT_FIELDS.map((f) => {
+      const cells = activeCols.map((c) => `<td class="text-right px-3 py-1.5 border-b border-slate-100 stat-group-${f.group}">${formatVal(f, c.res.snapshot)}</td>`);
+      return `<tr><td class="sticky-col px-3 py-1.5 font-medium border-b border-slate-100 stat-group-${f.group}">${f.label}</td>${cells.join("")}</tr>`;
+    });
+
+    table.innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${nRow}${rows.join("")}</tbody>`;
+  }
+
+  // ---------------------------------------------------------------------
+  // Export to Excel (SheetJS) -- data-shaping kept pure/testable, separate
+  // from the actual XLSX.writeFile() call so tests can run without the lib.
+  // ---------------------------------------------------------------------
+  function fieldHeaderLabel(f) {
+    return `${f.label} (${f.kind === "x" ? "x" : "%"})`;
+  }
+
+  // One column definition per raw field the RPC returns (all 20 metrics,
+  // plus the CVaR sample-count column right next to CVaR itself) -- this is
+  // "stat ทั้งหมด": every number, not just what happens to be on screen.
+  function buildExportColumns() {
+    const columns = [];
+    STAT_FIELDS.forEach((f) => {
+      columns.push({ header: fieldHeaderLabel(f), get: (s) => (s ? s[f.key] : null) });
+      if (f.countKey) columns.push({ header: `${f.label} n`, get: (s) => (s ? s[f.countKey] : null) });
+    });
+    return columns;
+  }
+
+  // Every workbook carries the build that produced it plus the disclaimer, so a
+  // file that leaves the dashboard still says what it is and what it is not.
+  function buildAboutSheet(context) {
+    return [
+      ["Quant-Dashboard"],
+      ["Version", APP_VERSION],
+      ["Build date", APP_BUILD_DATE],
+      ["Exported at", new Date().toISOString().slice(0, 19).replace("T", " ") + " (UTC)"],
+      ["Section", String(context || "")],
+      [],
+      ["คำเตือน", "เครื่องมือนี้จัดทำเพื่อการศึกษาและวิเคราะห์เชิงสถิติเท่านั้น ไม่ใช่คำแนะนำการลงทุน"],
+      ["", "ข้อมูลมาจากแหล่งสาธารณะ (Yahoo Finance, FRED) อาจคลาดเคลื่อน ล่าช้า หรือถูกแก้ย้อนหลัง"],
+      ["", "ผลในอดีตไม่ได้รับประกันผลในอนาคต"]
+    ];
+  }
+
+  function buildExportSheets(selections) {
+    const columns = buildExportColumns();
+    const sheets = {};
+
+    if (selections.overview) {
+      const header = ["Period", "n"].concat(columns.map((c) => c.header));
+      const rows = state.overviewRows.map((r) => [
+        periodLabel(state.periodType, r.period),
+        r.stats ? r.stats.n : null
+      ].concat(columns.map((c) => c.get(r.stats))));
+      sheets.overview = [header].concat(rows);
+    }
+
+    if (selections.rolling) {
+      const header = ["Variant", "End Year", "n"].concat(columns.map((c) => c.header));
+      const rows = [];
+      state.variants.forEach((v, i) => {
+        const res = state.results[i];
+        if (!v.enabled || !res || !res.rollingSeries) return;
+        res.rollingSeries.forEach((pt) => {
+          rows.push([variantLabel(v), pt.endYear, pt.stats ? pt.stats.n : null].concat(columns.map((c) => c.get(pt.stats))));
+        });
+      });
+      sheets.rolling = [header].concat(rows);
+    }
+
+    if (selections.compare) {
+      const header = ["Variant", "Asset", "Period Type", "Period", "Lookback", "n"].concat(columns.map((c) => c.header));
+      const rows = [];
+      state.variants.forEach((v, i) => {
+        const res = state.results[i];
+        if (!v.enabled || !res || !res.snapshot) return;
+        rows.push([
+          variantLabel(v), tickerFor(v.assetId), v.periodType, periodLabel(v.periodType, v.period), lookbackLabel(v.lookback),
+          res.snapshot.n
+        ].concat(columns.map((c) => c.get(res.snapshot))));
+      });
+      sheets.compare = [header].concat(rows);
+    }
+
+    return sheets;
+  }
+
+  function updateExportAvailability() {
+    const anyRolling = state.results.some((r) => r && r.rollingSeries && r.rollingSeries.length > 0);
+    const anyCompare = state.results.some((r) => r && r.snapshot);
+    const rollingCb = byId("exportRolling");
+    const compareCb = byId("exportCompare");
+    if (rollingCb) { rollingCb.disabled = !anyRolling; if (!anyRolling) rollingCb.checked = false; }
+    if (compareCb) { compareCb.disabled = !anyCompare; if (!anyCompare) compareCb.checked = false; }
+  }
+
+  function exportToExcel() {
+    const errEl = byId("exportError");
+    hide(errEl);
+    const overviewCb = byId("exportOverview");
+    const rollingCb = byId("exportRolling");
+    const compareCb = byId("exportCompare");
+    const selections = {
+      overview: !!(overviewCb && overviewCb.checked),
+      rolling: !!(rollingCb && rollingCb.checked && !rollingCb.disabled),
+      compare: !!(compareCb && compareCb.checked && !compareCb.disabled)
+    };
+
+    if (!selections.overview && !selections.rolling && !selections.compare) {
+      showError(errEl, "กรุณาเลือกอย่างน้อย 1 ส่วนก่อน export");
+      return null;
+    }
+
+    const sheets = buildExportSheets(selections);
+
+    if (typeof XLSX === "undefined") return sheets; // lib not loaded (e.g. offline test DOM) -- data still built for testing
+
+    const wb = XLSX.utils.book_new();
+    if (sheets.overview) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.overview), "Overview");
+    if (sheets.rolling) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rolling), "Rolling");
+    if (sheets.compare) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.compare), "Compare");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAboutSheet("Seasonality")), "About");
+
+    const ticker = tickerFor(state.assetId);
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `seasonal-stats-${ticker}-${stamp}.xlsx`);
+    return sheets;
+  }
+
+  // =======================================================================
+  // Momentum & Rotation tab (Phase 2) — see architecture doc section 10 for
+  // the full decision log this implementation follows.
+  // =======================================================================
+
+  // ---------------------------------------------------------------------
+  // Config
+  // ---------------------------------------------------------------------
+  // Faber-style Asset Class universe (mode 1 of 10.2) -- a short hardcoded
+  // list, not a DB category, per the decision log (no schema change needed).
+  const ASSET_CLASS_TICKERS = ["SPY", "EFA", "EEM", "IEF", "VNQ", "DBC"];
+
+  // Week/Month lookback + SMA option sets (10.5) -- selectable, tied together
+  // by the Timeframe picker.
+  // Day was added in the 2026-09 merge round. Its lookback set deliberately
+  // starts at 21 trading days (~1 month): the momentum literature finds
+  // continuation at 3-12 month horizons but *reversal* below ~1 month, so
+  // offering 5/10-day "momentum" ranking would be a signal the statistics do
+  // not support. The SMA set uses the conventional 50/100/150/200-day levels
+  // (200d ~ Faber's 10-month filter).
+  const MOMENTUM_TIMEFRAME_OPTIONS = {
+    day:   { lookbacks: [21, 63, 126, 252],  smas: [50, 100, 150, 200] },
+    week:  { lookbacks: [4, 8, 13, 26, 52],  smas: [10, 20, 30, 40, 52] },
+    month: { lookbacks: [3, 6, 12],          smas: [6, 8, 10, 12] }
+  };
+  const MOMENTUM_TIMEFRAME_DEFAULTS = {
+    day:   { lookback: 63, sma: 200 },
+    week:  { lookback: 52, sma: 40 },
+    month: { lookback: 12, sma: 10 }
+  };
+  const MOMENTUM_PERIODS_PER_YEAR = { day: 252, week: 52, month: 12 };
+
+  // Custom Lookback / SMA input (2026-09-15). Lower bounds keep the RRG
+  // maths meaningful (RS-Momentum's ROC period is ~0.7 x lookback and needs
+  // at least 2); the upper bound is ~10 years, beyond which the price fetch
+  // turns into dozens of paged requests. Below 21 trading days a Day
+  // lookback is allowed but flagged: that horizon is short-term reversal
+  // territory in the literature, not momentum.
+  const MOMENTUM_CUSTOM_MIN = { lookback: 3, sma: 2 };
+  const MOMENTUM_CUSTOM_MAX = { day: 2520, week: 520, month: 120 };
+  const MOMENTUM_REVERSAL_ZONE_DAYS = 21;
+  const MOMENTUM_UNIT_LABEL = { day: "วัน", week: "สัปดาห์", month: "เดือน" };
+
+  function momentumParamBounds(kind, timeframe) {
+    return {
+      min: MOMENTUM_CUSTOM_MIN[kind] || 2,
+      max: MOMENTUM_CUSTOM_MAX[timeframe] || MOMENTUM_CUSTOM_MAX.month
+    };
+  }
+
+  function momentumReversalWarning(timeframe, lookbackPeriods) {
+    if (timeframe !== "day" || !(lookbackPeriods < MOMENTUM_REVERSAL_ZONE_DAYS)) return "";
+    return `คำเตือน: Lookback ${lookbackPeriods} วัน สั้นกว่า ${MOMENTUM_REVERSAL_ZONE_DAYS} วันทำการ (~1 เดือน) — งานวิจัยพบว่าช่วงนี้ราคามักกลับตัว (short-term reversal) มากกว่าจะวิ่งต่อ ผลการจัดอันดับจึงอาจไม่ใช่สัญญาณ momentum`;
+  }
+
+  // Pure validation of one typed value. Returns { ok, value, error }.
+  function validateMomentumParam(kind, timeframe, raw) {
+    const unit = MOMENTUM_UNIT_LABEL[timeframe] || "งวด";
+    const label = kind === "sma" ? "SMA" : "Lookback";
+    const text = raw == null ? "" : String(raw).trim();
+    if (text === "") return { ok: false, value: null, error: `${label}: กรุณากรอกตัวเลข` };
+    if (!/^[+]?\d+$/.test(text)) return { ok: false, value: null, error: `${label}: ต้องเป็นจำนวนเต็มบวก` };
+    const value = Number(text);
+    const b = momentumParamBounds(kind, timeframe);
+    if (value < b.min || value > b.max) {
+      return { ok: false, value: null, error: `${label}: ต้องอยู่ระหว่าง ${b.min}-${b.max} ${unit}` };
+    }
+    return { ok: true, value, error: "" };
+  }
+  // Daily RS-Momentum is far noisier than the weekly convention, so the tail
+  // default stretches to keep the rotation readable at day granularity.
+  const MOMENTUM_TAIL_DEFAULTS = { day: 30, week: 12, month: 12 };
+  // How many bars the two Leaderboard charts show, taken off the top of the
+  // table's CURRENT sort order.
+  const MOMENTUM_CHART_TOP_N = 20;
+
+  const OCTANT_LABELS = [
+    "Leading – Accelerating", "Leading – Strong", "Improving – Strong", "Improving – Early",
+    "Lagging – Weak", "Lagging – Weakening", "Weakening – Strong", "Weakening – Early"
+  ];
+
+  const CHART_ROTATION_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
+
+  // The 4 RRG quadrants. These colors are NOT new -- they are exactly the
+  // label colors rrgQuadrantPlugin() already paints the RRG background zones
+  // with, so a dot colored here matches the zone it would sit in over there.
+  // (RRG *lines* are colored per-instrument from CHART_ROTATION_COLORS, which
+  // is a different encoding entirely -- do not conflate the two.)
+  const QUADRANT_ORDER = ["Leading", "Improving", "Lagging", "Weakening"];
+  const QUADRANT_COLORS = {
+    Leading: "#059669", Improving: "#2563eb", Lagging: "#dc2626", Weakening: "#d97706"
+  };
+  const QUADRANT_UNKNOWN_LABEL = "ไม่ทราบ";
+  const QUADRANT_UNKNOWN_COLOR = "#94a3b8";
+
+  // Default number of instruments pre-checked in the RRG instrument-selection
+  // panel, ranked by Trailing Return (10.6 redesign, item 6) -- replaces the
+  // old Top-N Strategy dropdown, which no longer exists.
+  const MOMENTUM_RRG_DEFAULT_TOPN = 5;
+
+  // Short display names for the Leaderboard/RRG summary tables (item 2) --
+  // curated manually (not the full DB `name`), keyed by ticker. Tickers with
+  // overlapping themes are disambiguated with the provider name in
+  // parentheses. Unmapped tickers fall back to the bare ticker (see
+  // tickerShortName()).
+  const TICKER_SHORT_NAMES = {
+    // Bond
+    IEF: "US 7-10Y Treasury",
+    // Broad market
+    ACWI: "All Country World", DIA: "Dow Jones", EEM: "Emerging Markets", EFA: "EAFE (DM ex US/Canada)",
+    EWJ: "Japan", EWT: "Taiwan", EWU: "UK", EWY: "South Korea", INDA: "India", IWM: "Russell 2000",
+    MCHI: "China", QQQ: "Nasdaq 100", SPY: "S&P 500", THD: "Thailand (US-listed)", VGK: "Europe", VT: "Total World",
+    // Commodity
+    BNO: "Brent Oil", CPER: "Copper", DBA: "Agriculture", DBB: "Base Metals", DBC: "Commodity Index",
+    GLD: "Gold", GSG: "Commodity (GSCI)", SLV: "Silver", UNG: "Natural Gas", USO: "Crude Oil (WTI)",
+    // REIT
+    VNQ: "US Real Estate",
+    // Thematic
+    // 2026-09-15: IRBO -> ARTY, FIVG -> UFOX (was SIXG until 2026-04-30), LNGR -> AGNG (ticker changes by the issuers)
+    AGNG: "Aging Population", ARTY: "AI & Tech (iShares)", UFOX: "Space & Connective Tech",
+    AIQ: "AI & Technology", ARKG: "Genomics", ARKK: "ARK Innovation", ARKQ: "Autonomous & Robotics",
+    ARKX: "Space Exploration", BATT: "Lithium & Battery (Amplify)", BLOK: "Blockchain", BOTZ: "Robotics & AI (Global X)",
+    CHAT: "Generative AI", CIBR: "Cybersecurity (First Trust)", CRBN: "Low Carbon", DRIV: "EV & Autonomous",
+    EBIZ: "E-commerce", ESPO: "Gaming & eSports", ETHA: "Ethereum",
+    FINX: "FinTech", FIW: "Water (First Trust)", GRID: "Smart Grid",
+    HACK: "Cybersecurity (ETFMG)", HRTS: "GLP-1 & Obesity Care", IBB: "Biotechnology",
+    IBIT: "Bitcoin", ICLN: "Clean Energy (iShares)", IGF: "Global Infrastructure",
+    ITA: "Aerospace & Defense (iShares)", KROP: "AgTech & Food", KWEB: "China Internet", LIT: "Lithium & Battery (Global X)",
+    METV: "Metaverse", MOO: "Agribusiness", NLR: "Uranium & Nuclear",
+    PAVE: "US Infrastructure", PAWZ: "Pet Care", PBD: "Clean Energy (Invesco)", PHO: "Water Resources (Invesco)",
+    PRNT: "3D Printing", QTUM: "Quantum Computing", REMX: "Rare Earth Metals", ROBO: "Robotics & Automation",
+    SKYY: "Cloud Computing (First Trust)", SMH: "Semiconductors (VanEck)", SNSR: "Internet of Things", SOCL: "Social Media",
+    SOXX: "Semiconductors (iShares)", SRVR: "Data & Infra Real Estate", THNQ: "Artificial Intelligence", UFO: "Space (Procure)",
+    URA: "Uranium", VEGN: "Vegan Climate", WCLD: "Cloud Computing (WisdomTree)", XAR: "Aerospace & Defense (SPDR)",
+    // US Sector
+    XLB: "Materials", XLC: "Communication Svcs", XLE: "Energy", XLF: "Financials", XLI: "Industrials",
+    XLK: "Technology", XLP: "Consumer Staples", XLRE: "Real Estate", XLU: "Utilities", XLV: "Health Care", XLY: "Consumer Discretionary"
+  };
+
+  function tickerShortName(ticker) {
+    return TICKER_SHORT_NAMES[ticker] || ticker;
+  }
+
+  // ---------------------------------------------------------------------
+  // Universe resolution (10.2)
+  // ---------------------------------------------------------------------
+  function getUniverseInstruments(mode) {
+    const insts = state.instruments;
+    if (mode === "asset_class") {
+      return ASSET_CLASS_TICKERS.map((t) => insts.find((i) => i.ticker === t)).filter(Boolean);
+    }
+    if (mode === "broad_market") {
+      return insts.filter((i) => i.category === "broad_market" || i.ticker === "IEF" || i.ticker === "VNQ");
+    }
+    if (mode === "thematic") {
+      return insts.filter((i) => i.category === "thematic");
+    }
+    // US Sector (added 2026-09): the 11 SPDR select-sector ETFs. The rows were
+    // already in `instruments` + `ohlcv_daily` (price AND volume) since the
+    // Phase 1 ingest -- only the UI could not reach them.
+    if (mode === "us_sector") {
+      return insts.filter((i) => i.category === "us_sector");
+    }
+    return [];
+  }
+
+  // ---------------------------------------------------------------------
+  // Pure math: trailing return / SMA trend filter / volatility (10.3, 10.4)
+  // All operate on a `series` = ascending [{period_end, adj_close}] array,
+  // treating the LAST element as "now" -- callers slice the series to
+  // simulate an earlier "now" (used by the backtest below).
+  // ---------------------------------------------------------------------
+  function computeReturnSeries(series) {
+    const rets = [];
+    for (let i = 1; i < series.length; i++) {
+      const prev = series[i - 1].adj_close, cur = series[i].adj_close;
+      if (prev == null || cur == null || prev === 0) { rets.push(null); continue; }
+      rets.push(cur / prev - 1);
+    }
+    return rets;
+  }
+
+  function stdevSample(values) {
+    const v = values.filter((x) => x !== null && x !== undefined && !Number.isNaN(x));
+    if (v.length < 2) return null;
+    const mean = v.reduce((a, b) => a + b, 0) / v.length;
+    const variance = v.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (v.length - 1);
+    return Math.sqrt(variance);
+  }
+
+  // Cumulative return over the trailing N periods, in percent (e.g. 12.3 = +12.3%).
+  function computeTrailingReturn(series, lookbackPeriods) {
+    if (!series || !lookbackPeriods || series.length < lookbackPeriods + 1) return null;
+    const last = series[series.length - 1].adj_close;
+    const base = series[series.length - 1 - lookbackPeriods].adj_close;
+    if (last == null || base == null || base === 0) return null;
+    return (last / base - 1) * 100;
+  }
+
+  // Faber-style absolute trend filter: current price vs its own trailing SMA.
+  function computeSMASignal(series, smaPeriods) {
+    if (!series || !smaPeriods || series.length < smaPeriods) return null;
+    const windowSlice = series.slice(series.length - smaPeriods);
+    if (windowSlice.some((p) => p.adj_close == null)) return null;
+    const smaValue = windowSlice.reduce((s, p) => s + p.adj_close, 0) / smaPeriods;
+    const price = series[series.length - 1].adj_close;
+    return { price, sma: smaValue, pass: price > smaValue };
+  }
+
+  // Per-period (not annualized) standard deviation of returns over the
+  // trailing lookback window, in percent. Used both for inverse-vol
+  // weighting (relative comparison -- the scaling factor below cancels out
+  // across instruments sharing the same lookbackPeriods) and as the basis
+  // for the window-scaled volatility below.
+  function computePeriodicVolatility(series, lookbackPeriods) {
+    if (!series || !lookbackPeriods || series.length < lookbackPeriods + 1) return null;
+    const windowSeries = series.slice(series.length - 1 - lookbackPeriods);
+    const sd = stdevSample(computeReturnSeries(windowSeries));
+    return sd === null ? null : sd * 100;
+  }
+
+  // Volatility scaled (sqrt-time) to roughly match the magnitude of the
+  // cumulative N-period trailing return, for use as the risk-adjusted score
+  // denominator.
+  function computeWindowVolatility(series, lookbackPeriods) {
+    const periodic = computePeriodicVolatility(series, lookbackPeriods);
+    return periodic === null ? null : periodic * Math.sqrt(lookbackPeriods);
+  }
+
+  // Sharpe-like score (10.3): (trailing return - prorated risk-free rate) / window volatility.
+  // riskFreeAnnualPct is an annual %; it's prorated to the lookback window length
+  // using periodsPerYear so units match the (also window-length) trailing return.
+  function computeRiskAdjustedScore(trailingReturnPct, windowVolPct, riskFreeAnnualPct, lookbackPeriods, periodsPerYear) {
+    if (trailingReturnPct == null || windowVolPct == null || windowVolPct === 0) return null;
+    const rfWindowPct = (riskFreeAnnualPct || 0) * (lookbackPeriods / periodsPerYear);
+    return (trailingReturnPct - rfWindowPct) / windowVolPct;
+  }
+
+  // ---------------------------------------------------------------------
+  // Ranking (10.3) -- shared core used by the live Leaderboard.
+  // ---------------------------------------------------------------------
+  function rankUniverseFromSeries(items, params) {
+    const rows = [];
+    items.forEach((it) => {
+      const trailingReturnPct = computeTrailingReturn(it.series, params.lookbackPeriods);
+      if (trailingReturnPct === null) return; // insufficient history -> excluded from ranking (10.3)
+      const smaSignal = computeSMASignal(it.series, params.smaPeriods);
+      const periodicVolPct = computePeriodicVolatility(it.series, params.lookbackPeriods);
+      const windowVolPct = computeWindowVolatility(it.series, params.lookbackPeriods);
+      const riskAdjScore = computeRiskAdjustedScore(trailingReturnPct, windowVolPct, params.riskFreeAnnualPct, params.lookbackPeriods, params.periodsPerYear);
+      rows.push({
+        instrumentId: it.instrumentId, ticker: it.ticker, name: it.name, category: it.category,
+        trailingReturnPct, smaSignal, periodicVolPct, windowVolPct, riskAdjScore
+      });
+    });
+    const scoreKey = params.riskAdjusted ? "riskAdjScore" : "trailingReturnPct";
+    rows.sort((a, b) => {
+      const av = a[scoreKey], bv = b[scoreKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return bv - av;
+    });
+    rows.forEach((r, i) => { r.rank = i + 1; });
+    return rows;
+  }
+
+  function rankUniverseNow(universeInstruments, seriesByInstrumentId, params) {
+    const items = universeInstruments
+      .filter((inst) => seriesByInstrumentId[inst.id] && seriesByInstrumentId[inst.id].length)
+      .map((inst) => ({
+        instrumentId: inst.id, ticker: inst.ticker, name: inst.name, category: inst.category,
+        series: seriesByInstrumentId[inst.id]
+      }));
+    return rankUniverseFromSeries(items, params);
+  }
+
+  // ---------------------------------------------------------------------
+  // Rotation Graph (10.6, redesigned 2026-09) -- standard self-normalizing
+  // RS-Ratio/RS-Momentum, lookback window tied to the Week/Month selector
+  // (params.m) instead of a hardcoded 14/10 period. Rendered as a Cartesian
+  // scatter with a quadrant-background plugin (Leading/Improving/Lagging/
+  // Weakening) and an 8-octant label surfaced both in the tooltip and the
+  // summary table below the chart -- it does not change the (x,y) geometry.
+  //
+  // NOTE: the Strategy Preview backtest that used to live in this section
+  // (simulateTopNStrategy/computeEquityCurveSummary/computeWeights/
+  // buildMasterPeriodAxis/alignToAxis/rankUniverseAt) was removed per the
+  // 2026-09 decision log (item 5) -- the UI no longer offers a Top-N/
+  // Weighting/Equity-Curve preview, and true code reuse for a future
+  // strategy-performance feature was judged unlikely given Phase 3's
+  // broader planned scope, so the dead code was cut entirely rather than
+  // kept dormant.
+  // ---------------------------------------------------------------------
+  function ema(values, period) {
+    const alpha = 2 / (period + 1);
+    const out = new Array(values.length).fill(null);
+    let prev = null, seedSum = 0, seedCount = 0;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v == null) continue;
+      if (prev === null) {
+        seedSum += v; seedCount++;
+        if (seedCount === period) { prev = seedSum / period; out[i] = prev; }
+        continue;
+      }
+      prev = v * alpha + prev * (1 - alpha);
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  function sma(values, period) {
+    const out = new Array(values.length).fill(null);
+    for (let i = 0; i < values.length; i++) {
+      if (i < period - 1) continue;
+      const win = values.slice(i - period + 1, i + 1);
+      if (win.some((v) => v == null)) continue;
+      out[i] = win.reduce((a, b) => a + b, 0) / period;
+    }
+    return out;
+  }
+
+  // Angle-derived descriptive label -- borrows TrendSpider's finer 8-way
+  // classification without adopting its polar geometry (10.6, point 3).
+  function classifyOctant(x, y) {
+    if (x == null || y == null) return null;
+    let angle = Math.atan2(y - 100, x - 100) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    const idx = Math.floor(((angle + 22.5) % 360) / 45) % 8;
+    return OCTANT_LABELS[idx];
+  }
+
+  // Strict sign-based quadrant, matching the background zones drawn by
+  // rrgQuadrantPlugin() cell for cell (x>100 & y>100 = Leading, etc.).
+  //
+  // NOTE this deliberately does NOT reuse classifyOctant()'s prefix: the
+  // 8-way label is angle-based and straddles the axes, so a point at
+  // x=101,y=140 (angle ~76 deg) is labelled "Improving – Strong" while
+  // sitting geometrically inside the green Leading zone. Both are correct
+  // for what they measure; the scatter follows the zone because that is the
+  // promise its color legend makes ("same color as the RRG background").
+  function classifyQuadrant(x, y) {
+    if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return null;
+    if (y > 100) return x > 100 ? "Leading" : "Improving";
+    return x > 100 ? "Weakening" : "Lagging";
+  }
+
+  // instrumentId -> quadrant of its LATEST rotation point. Instruments with
+  // no rotation data (not computed yet, or too little price history for
+  // RS-Ratio) simply do not appear -- callers treat a miss as "unknown"
+  // rather than guessing a quadrant.
+  function quadrantMapFromRotation(rotationData) {
+    const out = {};
+    if (!rotationData || !Array.isArray(rotationData.results)) return out;
+    rotationData.results.forEach((r) => {
+      if (!r || !Array.isArray(r.points) || r.points.length === 0) return;
+      const last = r.points[r.points.length - 1];
+      const q = classifyQuadrant(last.x, last.y);
+      if (q) out[r.instrumentId] = q;
+    });
+    return out;
+  }
+
+  // Chart.js datasets for the Price-Volume scatter: one dataset per quadrant
+  // (plus an "unknown" gray group) so the legend reads as the 4 quadrant
+  // names. A row needs BOTH axes to be plottable -- a row with only momentum
+  // or only volume has no position on this plane and is skipped (it is still
+  // in the table, which is the union view).
+  function buildPriceVolumeScatterDatasets(rows, quadrantById) {
+    const qById = quadrantById || {};
+    const buckets = new Map();
+    QUADRANT_ORDER.forEach((q) => buckets.set(q, []));
+    buckets.set(QUADRANT_UNKNOWN_LABEL, []);
+    (rows || []).forEach((r) => {
+      if (!r || r.trailingReturnPct == null || r.volZScore == null) return;
+      if (Number.isNaN(r.trailingReturnPct) || Number.isNaN(r.volZScore)) return;
+      const q = qById[r.instrumentId] || null;
+      const key = q && buckets.has(q) ? q : QUADRANT_UNKNOWN_LABEL;
+      buckets.get(key).push({
+        x: r.trailingReturnPct,
+        y: r.volZScore,
+        instrumentId: r.instrumentId,
+        ticker: r.ticker,
+        shortName: r.shortName,
+        quadrant: q,
+        rvol: r.rvol,
+        volRank: r.volRank,
+        momRank: r.momRank
+      });
+    });
+    const datasets = [];
+    buckets.forEach((points, label) => {
+      if (points.length === 0) return;
+      const color = label === QUADRANT_UNKNOWN_LABEL ? QUADRANT_UNKNOWN_COLOR : QUADRANT_COLORS[label];
+      datasets.push({
+        label: `${label} (${points.length})`,
+        quadrant: label === QUADRANT_UNKNOWN_LABEL ? null : label,
+        data: points,
+        backgroundColor: color,
+        borderColor: color,
+        pointRadius: 6,
+        pointHoverRadius: 8
+      });
+    });
+    return datasets;
+  }
+
+  function formatPvScatterTooltip(point) {
+    if (!point) return [];
+    const lines = [`${point.ticker} — ${point.shortName || tickerShortName(point.ticker)}`];
+    lines.push(`Trailing Return: ${point.x >= 0 ? "+" : ""}${point.x.toFixed(2)}%`);
+    lines.push(`Volume Z-score: ${point.y >= 0 ? "+" : ""}${point.y.toFixed(2)}`);
+    if (point.rvol != null) lines.push(`RVOL: ${point.rvol.toFixed(2)}x`);
+    lines.push(`Quadrant: ${point.quadrant || "ไม่ทราบ (ยังไม่คำนวณ RRG หรือประวัติราคาไม่พอ)"}`);
+    if (point.momRank != null) lines.push(`อันดับ Momentum: #${point.momRank}`);
+    if (point.volRank != null) lines.push(`อันดับ Volume: #${point.volRank}`);
+    return lines;
+  }
+
+  function alignTwoSeries(seriesA, seriesB) {
+    const axisSet = new Set();
+    seriesA.forEach((p) => axisSet.add(p.period_end));
+    seriesB.forEach((p) => axisSet.add(p.period_end));
+    const axis = Array.from(axisSet).sort();
+    const mapA = new Map(seriesA.map((p) => [p.period_end, p.adj_close]));
+    const mapB = new Map(seriesB.map((p) => [p.period_end, p.adj_close]));
+    return {
+      axis,
+      instVals: axis.map((d) => (mapA.has(d) ? mapA.get(d) : null)),
+      benchVals: axis.map((d) => (mapB.has(d) ? mapB.get(d) : null))
+    };
+  }
+
+  // m = EMA + rolling-mean window for RS-Ratio, tied to the Lookback picker.
+  // k = ROC period for RS-Momentum, set to ~0.7*m to mirror the standard
+  // weekly convention (m=14, k=10) while scaling with whatever m the user picks.
+  function computeRotationGraphData(instruments, seriesByInstrumentId, benchSeries, m, tailLength) {
+    const k = Math.max(2, Math.round(m * 0.7));
+    if (!benchSeries || benchSeries.length < 2) return { m, k, results: [] };
+    const results = instruments.map((inst) => {
+      const series = seriesByInstrumentId[inst.id];
+      if (!series || series.length < 2) return { instrumentId: inst.id, ticker: inst.ticker, points: [] };
+      const { axis, instVals, benchVals } = alignTwoSeries(series, benchSeries);
+      const rs = instVals.map((v, i) => (v != null && benchVals[i] != null && benchVals[i] !== 0) ? (v / benchVals[i]) * 100 : null);
+      const emaRs = ema(rs, m);
+      const rollMean = sma(emaRs, m);
+      const rsRatio = emaRs.map((v, i) => (v != null && rollMean[i]) ? (100 * v / rollMean[i]) : null);
+      const roc = rsRatio.map((v, i) => (i >= k && v != null && rsRatio[i - k] != null && rsRatio[i - k] !== 0) ? (v / rsRatio[i - k] - 1) : null);
+      const emaRoc = ema(roc, k);
+      const rsMomentum = emaRoc.map((v) => (v != null ? 100 + 100 * v : null));
+      const points = [];
+      for (let i = 0; i < axis.length; i++) {
+        if (rsRatio[i] != null && rsMomentum[i] != null) {
+          points.push({ periodEnd: axis[i], x: rsRatio[i], y: rsMomentum[i], octant: classifyOctant(rsRatio[i], rsMomentum[i]) });
+        }
+      }
+      return { instrumentId: inst.id, ticker: inst.ticker, points: points.slice(-tailLength) };
+    });
+    return { m, k, results };
+  }
+
+  // ---------------------------------------------------------------------
+  // Data access
+  // ---------------------------------------------------------------------
+  // PostgREST caps rows returned per request (project setting, "Max Rows" --
+  // seen in production capping a single period_end_closes() call at 1000
+  // rows total across ALL requested instruments combined, silently dropping
+  // whichever instruments/periods sorted after the cutoff -- confirmed via a
+  // real browser session against the live API, see decision log). The
+  // underlying SQL function orders deterministically
+  // (instrument_id, period_start, date desc), so paging with .range() is
+  // safe: each page is stable and we just keep asking for more until a page
+  // comes back shorter than requested.
+  const PERIOD_END_CLOSES_PAGE_SIZE = 4000;
+
+  // completeOnly (default true, 2026-09-15): week/month series stop at the
+  // last COMPLETED period -- the one still in progress is never returned, so
+  // every trailing return / SMA / RS value compares whole periods only. Day
+  // bars are always complete (prices land after the close) and never cut.
+  async function fetchPeriodEndCloses(instrumentIds, granularity, startDate, endDate, completeOnly) {
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("period_end_closes", {
+        p_instrument_ids: instrumentIds,
+        p_granularity: granularity,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+        p_complete_only: completeOnly !== false
+      }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  // Global "as-of" info (2026-09-15): latest date in the database plus the
+  // newest COMPLETE week/month under the rule "a period is complete once any
+  // data for the next period exists". Used only for the on-screen note; the
+  // actual cut is applied server-side by p_complete_only. Failure is
+  // non-fatal -- the note simply is not shown.
+  async function fetchDataAsOf() {
+    try {
+      const { data, error } = await sb.rpc("data_as_of");
+      if (error) throw error;
+      state.dataAsOf = data || null;
+    } catch (e) {
+      state.dataAsOf = null;
+    }
+    return state.dataAsOf;
+  }
+
+  async function fetchLatestMacroValue(seriesId) {
+    const { data, error } = await sb.from("macro_series").select("date,value").eq("series_id", seriesId).order("date", { ascending: false }).limit(1);
+    if (error) throw error;
+    return data && data.length ? { date: data[0].date, value: Number(data[0].value) } : null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Orchestration
+  // ---------------------------------------------------------------------
+  function momentumRankParams() {
+    return {
+      lookbackPeriods: state.momentum.lookbackPeriods,
+      smaPeriods: state.momentum.smaPeriods,
+      riskAdjusted: state.momentum.riskAdjusted,
+      riskFreeAnnualPct: state.momentum.riskFreeAnnualPct,
+      periodsPerYear: MOMENTUM_PERIODS_PER_YEAR[state.momentum.timeframe]
+    };
+  }
+
+  // Identifies "what was fetched": which instruments, at what granularity,
+  // and (since the volume side now needs daily rows for month-to-date) with
+  // what baseline length. Anything NOT in this key -- Lookback, SMA,
+  // Risk-Adjusted, Risk-free, Tail length, column layout -- is a pure
+  // client-side recompute and never triggers a network call.
+  function computeMomentumFetchKey() {
+    const m = state.momentum;
+    return `${m.universeMode}|${m.timeframe}|${m.benchmarkAssetId}|${m.volBaselinePeriods}`;
+  }
+
+  // How much price history this parameter set actually needs. Previously the
+  // price fetch pulled FULL history every time, which at Day granularity on
+  // the 56-name Thematic universe is 162,898 rows (41 paged requests);
+  // bounding it to what the longest window touches brings that to ~4.
+  function momentumPriceLookbackPeriods() {
+    const m = state.momentum;
+    return Math.max(m.lookbackPeriods || 0, m.smaPeriods || 0) + (m.tailLength || 12) + 5;
+  }
+
+  // True when the loaded price history cannot serve the current parameters:
+  // nothing loaded yet, Universe/Timeframe/Benchmark/baseline changed, or a
+  // (custom) Lookback/SMA/Tail now needs more periods than were fetched.
+  function momentumNeedsFetch() {
+    const m = state.momentum;
+    return !m.dataLoaded
+      || computeMomentumFetchKey() !== m.lastFetchKey
+      || momentumPriceLookbackPeriods() > (m.loadedPricePeriods || 0);
+  }
+
+  // Returns true on success, false if the fetch failed (error already shown
+  // in the UI) -- callers that chain further work (runMomentumCalculate)
+  // use this to stop before running Level 2 on stale/incomplete data.
+  //
+  // Prices and volumes are requested in PARALLEL and the table is rendered as
+  // soon as prices land, so the volume round-trip is not dead waiting time.
+  // One call for the whole universe. These metrics need adjusted high/low, so
+  // they are computed in the database (ohlcv_adj) instead of pulling daily bars
+  // for 93 instruments into the browser.
+  async function fetchRiskMetrics(idList) {
+    const { data, error } = await sb.rpc("risk_metrics", { p_instrument_ids: idList });
+    if (error) throw error;
+    const byId = {};
+    let asOf = null;
+    (data || []).forEach((r) => {
+      byId[r.instrument_id] = {
+        price: num(r.price), atr14: num(r.atr14), atrPct: num(r.atr_pct),
+        atrPctile: num(r.atr_pctile_1y), hi52: num(r.hi_52w), lo52: num(r.lo_52w),
+        pos52: num(r.pos_52w), pctFromHigh: num(r.pct_from_high), bars: r.bars
+      };
+      if (r.as_of && (!asOf || r.as_of > asOf)) asOf = r.as_of;
+    });
+    return { byId, asOf };
+  }
+  const num = (v) => (v == null ? null : Number(v));
+
+  async function loadMomentumUniverseData() {
+    const errEl = byId("momLeaderboardError");
+    hide(errEl);
+    setLoading("momLeaderboardLoading", true);
+    setText("momLeaderboardStatus", "กำลังโหลดข้อมูลราคา...");
+    try {
+      // A fresh fetch means the underlying instrument set may have changed
+      // (Universe/Timeframe/Benchmark), so the RRG display-selection default
+      // (Top-N by Trailing Return) is re-applied once the new leaderboard is
+      // known -- see runMomentumCalculate.
+      // A re-fetch that only lengthens the history (custom Lookback/SMA/Tail
+      // beyond what was loaded) keeps the user's selections -- only a change
+      // of Universe/Timeframe/Benchmark/baseline resets them.
+      const sameUniverse = state.momentum.dataLoaded && computeMomentumFetchKey() === state.momentum.lastFetchKey;
+      if (!sameUniverse) {
+        state.momentum.rrgSelectionInitialized = false;
+        state.momentum.selectionInitialized = false;
+        // A different universe also invalidates the Correlation sub-section's
+        // cached series + default selection (it shares this Universe picker),
+        // and the drill-down cache (different granularity/instrument set).
+        state.momentum.corr.selectionInitialized = false;
+        state.momentum.corr.seriesCacheKey = null;
+        state.momentum.drilldownCacheKey = null;
+        state.momentum.drilldownSeries = [];
+      }
+
+      const universe = getUniverseInstruments(state.momentum.universeMode);
+      state.momentum.universeInstruments = universe;
+      const idSet = new Set(universe.map((i) => i.id));
+      if (state.momentum.benchmarkAssetId != null) idSet.add(state.momentum.benchmarkAssetId);
+      const idList = Array.from(idSet);
+      if (idList.length === 0) {
+        state.momentum.seriesByInstrument = {};
+        state.momentum.volumeSeriesByInstrument = {};
+        state.momentum.selectedIds = [];
+        state.momentum.selectionInitialized = true;
+        state.momentum.dataLoaded = true;
+        state.momentum.lastFetchKey = computeMomentumFetchKey();
+        state.momentum.loadedPricePeriods = momentumPriceLookbackPeriods();
+        recomputeMomentumRows();
+        renderMomentumLeaderboard();
+        setText("momLeaderboardStatus", "");
+        return true;
+      }
+
+      const tf = state.momentum.timeframe;
+      const pricePeriods = momentumPriceLookbackPeriods();
+      const priceStart = approxStartDateForPeriods(tf, pricePeriods);
+      if (!state.dataAsOf) fetchDataAsOf().then(() => renderAsOfNote("momAsOfNote", state.momentum.timeframe));
+      const volPlan = volumeFetchPlan(tf, state.momentum.volBaselinePeriods + 2);
+
+      const pricePromise = fetchPeriodEndCloses(idList, tf, priceStart);
+      // Volume failures degrade gracefully: the momentum half of the table
+      // still renders, the volume columns just stay empty.
+      const volumePromise = fetchPeriodVolumes(idList, volPlan.granularity, volPlan.startDate)
+        .then((rows) => ({ ok: true, rows }))
+        .catch((e) => ({ ok: false, error: e }));
+      // Risk metrics degrade the same way volume does: if the call fails the
+      // table still renders, those columns just stay empty.
+      const riskKey = idList.slice().sort((a, b) => a - b).join(",");
+      const riskPromise = (state.momentum.risk.key === riskKey && !state.momentum.risk.error)
+        ? Promise.resolve({ ok: true, cached: true })
+        : fetchRiskMetrics(idList).then((r) => ({ ok: true, r })).catch((e) => ({ ok: false, error: e }));
+
+      const priceRows = await pricePromise;
+      const byInst = {};
+      priceRows.forEach((r) => {
+        byInst[r.instrument_id] = byInst[r.instrument_id] || [];
+        byInst[r.instrument_id].push({ period_end: r.period_end, adj_close: Number(r.adj_close) });
+      });
+      Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
+      state.momentum.seriesByInstrument = byInst;
+      state.momentum.dataLoaded = true;
+      state.momentum.lastFetchKey = computeMomentumFetchKey();
+      state.momentum.loadedPricePeriods = pricePeriods;
+
+      if (!state.momentum.selectionInitialized) {
+        state.momentum.selectedIds = universe.map((i) => i.id);
+        state.momentum.selectionInitialized = true;
+      }
+      // Progressive render #1: momentum columns are ready, show them now.
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+      setText("momLeaderboardStatus", `ราคาโหลดแล้ว (${idList.length} instruments) · กำลังรอ volume...`);
+
+      const volResult = await volumePromise;
+      if (volResult.ok) {
+        state.momentum.volumeSeriesByInstrument = groupVolumeRows(volResult.rows);
+        setText("momLeaderboardStatus", `โหลดข้อมูลแล้ว (${idList.length} instruments)`);
+      } else {
+        state.momentum.volumeSeriesByInstrument = {};
+        setText("momLeaderboardStatus", `โหลดราคาแล้ว แต่ข้อมูล volume ไม่สำเร็จ (${volResult.error && volResult.error.message ? volResult.error.message : volResult.error})`);
+      }
+      // Progressive render #2: fill in the volume half.
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+
+      const riskResult = await riskPromise;
+      if (riskResult.ok && !riskResult.cached) {
+        state.momentum.risk = { byId: riskResult.r.byId, asOf: riskResult.r.asOf, error: "", key: riskKey };
+      } else if (!riskResult.ok) {
+        state.momentum.risk = { byId: {}, asOf: null, key: null,
+          error: (riskResult.error && riskResult.error.message) || String(riskResult.error) };
+      }
+      // Progressive render #3: ATR + 52-week range columns.
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+      return true;
+    } catch (e) {
+      showError(errEl, `โหลดข้อมูลไม่สำเร็จ: ${e.message || e}`);
+      setText("momLeaderboardStatus", "");
+      return false;
+    } finally {
+      setLoading("momLeaderboardLoading", false);
+    }
+  }
+
+  // =======================================================================
+  // Market Breadth (2026-11-02)
+  // =======================================================================
+  // Why a separate section and not another column: breadth is a property of
+  // the WHOLE market, not of one instrument, so it cannot live in a table that
+  // has one row per instrument. It also deliberately ignores the Universe
+  // picker -- "how many of the 93 are making new highs" stops meaning anything
+  // if the denominator changes with a dropdown.
+
+  function breadthSummary(rows) {
+    if (!rows || !rows.length) return null;
+    const last = rows[rows.length - 1];
+    const prior = rows.length > 21 ? rows[rows.length - 22] : rows[0];
+    const yearAgo = rows[0];
+    const net = rows.map((r) => r.newHi - r.newLo);
+    const worst = rows.reduce((acc, r) => (r.newLo > acc.newLo ? r : acc), rows[0]);
+    return {
+      asOf: last.date,
+      universe: last.universe,
+      pctAbove: last.pctAbove,
+      pctAboveChange1m: last.pctAbove != null && prior.pctAbove != null ? last.pctAbove - prior.pctAbove : null,
+      pctAboveStart: yearAgo.pctAbove,
+      newHi: last.newHi,
+      newLo: last.newLo,
+      netLast: net[net.length - 1],
+      worstDay: { date: worst.date, newLo: worst.newLo }
+    };
+  }
+
+  async function loadBreadth() {
+    const b = state.momentum.breadth;
+    if (b.loading) return null;
+    b.loading = true;
+    hide(byId("breadthError"));
+    setLoading("breadthLoading", true);
+    try {
+      const days = Number((byId("breadthRange") || {}).value || b.days) || 504;
+      b.days = days;
+      const { data, error } = await sb.rpc("breadth_series", { p_days: days });
+      if (error) throw error;
+      b.rows = (data || []).map((r) => ({
+        date: String(r.date).slice(0, 10),
+        universe: r.universe,
+        newHi: r.new_hi,
+        newLo: r.new_lo,
+        aboveSma: r.above_sma200,
+        pctAbove: r.pct_above_sma200 == null ? null : Number(r.pct_above_sma200)
+      }));
+      b.loaded = true;
+      renderBreadth();
+      return b.rows;
+    } catch (e) {
+      b.rows = []; b.loaded = false;
+      showError(byId("breadthError"), "คำนวณ breadth ไม่สำเร็จ: " + (e.message || e));
+      return null;
+    } finally {
+      b.loading = false;
+      setLoading("breadthLoading", false);
+    }
+  }
+
+  function renderBreadth() {
+    const rows = state.momentum.breadth.rows;
+    const sumEl = byId("breadthSummary"), noteEl = byId("breadthNote");
+    const s = breadthSummary(rows);
+    if (sumEl) {
+      if (!s) { sumEl.classList.add("hidden"); sumEl.innerHTML = ""; }
+      else {
+        sumEl.classList.remove("hidden");
+        const arrow = s.pctAboveChange1m == null ? "" :
+          (s.pctAboveChange1m >= 0 ? `<span class="text-green-600">▲ ${s.pctAboveChange1m.toFixed(1)} จุด</span>`
+                                   : `<span class="text-red-600">▼ ${Math.abs(s.pctAboveChange1m).toFixed(1)} จุด</span>`);
+        const card = (k, v, n) => `<div class="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <div class="text-[11px] text-slate-500">${k}</div>
+            <div class="text-lg font-semibold text-slate-800 mt-0.5">${v}</div>
+            <div class="text-[11px] text-slate-500 mt-1 leading-5">${n}</div></div>`;
+        sumEl.innerHTML =
+          card("อยู่เหนือ SMA200", `${s.pctAbove == null ? "—" : s.pctAbove.toFixed(1) + "%"}`,
+               `${s.aboveSma == null ? "" : ""}จาก ${s.universe} กอง · เทียบ 1 เดือนก่อน ${arrow}`) +
+          card("จุดสูงสุด / ต่ำสุดใหม่ วันล่าสุด", `${s.newHi} / ${s.newLo}`,
+               `สุทธิ ${s.netLast >= 0 ? "+" : ""}${s.netLast} กอง · ${escapeHtml(s.asOf)}`) +
+          card("วันที่แย่ที่สุดในช่วงนี้", `${s.worstDay.newLo} กองทำจุดต่ำสุดใหม่`,
+               `${escapeHtml(s.worstDay.date)} — ใช้เทียบว่าตอนนี้ห่างจากภาวะเครียดแค่ไหน`);
+      }
+    }
+    if (noteEl) {
+      noteEl.textContent = s
+        ? `นับเฉพาะกองที่มีประวัติครบ 252 วันทำการในวันนั้น (universe ${s.universe} กอง) · กองที่เพิ่งตั้งจึงทำ "จุดสูงสุดใหม่" ไม่ได้`
+        : "";
+    }
+    renderBreadthChart(rows);
+  }
+
+  function buildBreadthDatasets(rows) {
+    return [
+      { type: "bar", label: "จุดสูงสุดใหม่ 52 สัปดาห์", data: rows.map((r) => r.newHi),
+        backgroundColor: "#059669", yAxisID: "y", order: 2 },
+      { type: "bar", label: "จุดต่ำสุดใหม่ 52 สัปดาห์", data: rows.map((r) => -r.newLo),
+        backgroundColor: "#dc2626", yAxisID: "y", order: 2 },
+      { type: "line", label: "% อยู่เหนือ SMA200", data: rows.map((r) => r.pctAbove),
+        borderColor: "#2563eb", borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.15,
+        yAxisID: "y1", order: 1 }
+    ];
+  }
+
+  function renderBreadthChart(rows) {
+    const canvas = byId("breadthChart");
+    if (!canvas || typeof Chart === "undefined") return null;
+    const b = state.momentum.breadth;
+    if (b.chart) { b.chart.destroy(); b.chart = null; }
+    if (!rows || !rows.length) return null;
+    b.chart = new Chart(canvas, {
+      data: { labels: rows.map((r) => r.date), datasets: buildBreadthDatasets(rows) },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { stacked: true, ticks: { maxTicksLimit: 14, autoSkip: true, font: { size: 10 } }, grid: { display: false } },
+          y: { stacked: true, position: "left", title: { display: true, text: "จำนวนกอง" },
+               grid: { color: "#f1f5f9" }, ticks: { callback: (v) => Math.abs(v) } },
+          y1: { position: "right", min: 0, max: 100, title: { display: true, text: "% เหนือ SMA200" },
+                grid: { display: false } }
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (c) => c.dataset.yAxisID === "y1"
+            ? `${c.dataset.label}: ${c.parsed.y == null ? "—" : c.parsed.y.toFixed(1)}%`
+            : `${c.dataset.label}: ${Math.abs(c.parsed.y)} กอง` } }
+        }
+      }
+    });
+    return b.chart;
+  }
+
+  // =======================================================================
+  // Merged Leaderboard table (2026-09) -- momentum and volume in ONE
+  // config-driven table. Every consumer (the two charts, the Excel export,
+  // the column picker, the presets) reads the same registry below, so adding
+  // a column later cannot leave one of them behind.
+  // =======================================================================
+  const num2 = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2));
+  const pct2 = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2) + "%");
+  const x2   = (v) => (v == null || Number.isNaN(v) ? "—" : v.toFixed(2) + "x");
+
+  function trendBadgeHtml(smaSignal) {
+    if (!smaSignal) return `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">N/A</span>`;
+    return smaSignal.pass
+      ? `<span class="qd-badge-pass text-[10px] px-2 py-0.5 rounded-full">ผ่าน</span>`
+      : `<span class="qd-badge-fail text-[10px] px-2 py-0.5 rounded-full">ไม่ผ่าน</span>`;
+  }
+
+  function volStatusHtml(row) {
+    if (row.volZScore == null) return `<span class="text-slate-300">—</span>`;
+    if (!row.isAnomaly) return `<span class="qd-badge-na text-[10px] px-2 py-0.5 rounded-full">ปกติ</span>`;
+    return row.volZScore > 0
+      ? `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#ffedd5;color:#9a3412;">พุ่งผิดปกติ</span>`
+      : `<span class="text-[10px] px-2 py-0.5 rounded-full" style="background:#dbeafe;color:#1e40af;">แห้งผิดปกติ</span>`;
+  }
+
+  // heat: "high" = larger is better (green end), "diverging" = two-sided
+  // orange/blue scale centred on 0, undefined = no colour.
+  const MOMENTUM_TABLE_COLUMNS = [
+    { id: "row",              label: "#",                        exportLabel: "#",                          group: "id",  align: "left",   sortable: false, fixed: true,
+      value: () => null,                          text: (r, i) => String(i + 1) },
+    { id: "ticker",           label: "Ticker",                   exportLabel: "Ticker",                     group: "id",  align: "left",   fixed: true,
+      value: (r) => r.ticker,                     text: (r) => r.ticker,               cls: "font-medium text-slate-700" },
+    { id: "shortName",        label: "ชื่อย่อ",                   exportLabel: "ชื่อย่อ",                    group: "id",  align: "left",
+      value: (r) => r.shortName,                  text: (r) => r.shortName,            cls: "text-slate-500" },
+    { id: "category",         label: "Category",                 exportLabel: "Category",                   group: "id",  align: "left",
+      value: (r) => r.category,                   text: (r) => r.category || "—",      cls: "text-slate-500" },
+    { id: "momRank",          label: "อันดับ Momentum",           exportLabel: "อันดับ Momentum",             group: "mom", align: "right",
+      value: (r) => r.momRank,                    text: (r) => (r.momRank == null ? "—" : String(r.momRank)), cls: "text-slate-500" },
+    { id: "trailingReturnPct",label: "Trailing Return",          exportLabel: "Trailing Return (%)",        group: "mom", align: "right", heat: "high",
+      value: (r) => r.trailingReturnPct,          text: (r) => pct2(r.trailingReturnPct) },
+    { id: "trendFilter",      label: "Trend Filter",             exportLabel: "Trend Filter",               group: "mom", align: "center",
+      value: (r) => (r.smaSignal ? (r.smaSignal.pass ? 1 : 0) : null),
+      text: (r) => trendBadgeHtml(r.smaSignal),   raw: (r) => (r.smaSignal ? (r.smaSignal.pass ? "Pass" : "Fail") : "N/A"), html: true },
+    { id: "periodicVolPct",   label: "Volatility (SD) ต่องวด",    exportLabel: "Volatility SD ต่องวด (%)",   group: "mom", align: "right",
+      value: (r) => r.periodicVolPct,             text: (r) => pct2(r.periodicVolPct), cls: "text-slate-500" },
+    { id: "riskAdjScore",     label: "Risk-Adj Score",           exportLabel: "Risk-Adj Score",             group: "mom", align: "right",
+      value: (r) => r.riskAdjScore,               text: (r) => num2(r.riskAdjScore),   cls: "text-slate-500" },
+    { id: "volRank",          label: "อันดับ Volume",             exportLabel: "อันดับ Volume",               group: "vol", align: "right",
+      value: (r) => r.volRank,                    text: (r) => (r.volRank == null ? "—" : String(r.volRank)), cls: "text-slate-500" },
+    { id: "currentVolume",    label: "Volume ล่าสุด",             exportLabel: "Volume ล่าสุด",               group: "vol", align: "right",
+      value: (r) => r.currentVolume,              text: (r) => formatVolumeNumber(r.currentVolume), cls: "text-slate-600" },
+    { id: "meanVolume",       label: "ค่าเฉลี่ย baseline",         exportLabel: "ค่าเฉลี่ย baseline (geometric)", group: "vol", align: "right",
+      value: (r) => r.meanVolume,                 text: (r) => formatVolumeNumber(r.meanVolume), cls: "text-slate-500" },
+    { id: "volZScore",        label: "Volume Z-score",           exportLabel: "Volume Z-score (log)",       group: "vol", align: "right", heat: "diverging",
+      value: (r) => r.volZScore,                  text: (r) => num2(r.volZScore) },
+    { id: "rvol",             label: "RVOL",                     exportLabel: "RVOL (x)",                   group: "vol", align: "right",
+      value: (r) => r.rvol,                       text: (r) => x2(r.rvol) },
+    { id: "atrPct",           label: "ATR %",                    exportLabel: "ATR % ต่อวัน",                group: "risk", align: "right",
+      value: (r) => r.atrPct,                     text: (r) => pct2(r.atrPct) },
+    { id: "atrPctile",        label: "ATR เทียบตัวเอง 1 ปี",      exportLabel: "ATR percentile 1 ปี",         group: "risk", align: "right", heat: "high",
+      value: (r) => r.atrPctile,                  text: (r) => (r.atrPctile == null ? "—" : Math.round(r.atrPctile) + "%") },
+    { id: "atr14",            label: "ATR(14)",                  exportLabel: "ATR(14)",                    group: "risk", align: "right",
+      value: (r) => r.atr14,                      text: (r) => num2(r.atr14),          cls: "text-slate-500" },
+    { id: "pos52",            label: "ตำแหน่งในกรอบ 52w",         exportLabel: "ตำแหน่งในกรอบ 52 สัปดาห์ (%)", group: "risk", align: "right", heat: "high",
+      value: (r) => r.pos52,                      text: (r) => (r.pos52 == null ? "—" : r.pos52.toFixed(1) + "%") },
+    { id: "pctFromHigh",      label: "ห่างจากจุดสูงสุด 52w",       exportLabel: "ห่างจากจุดสูงสุด 52 สัปดาห์ (%)", group: "risk", align: "right",
+      value: (r) => r.pctFromHigh,                text: (r) => pct2(r.pctFromHigh),
+      cls: "text-slate-600" },
+    { id: "volStatus",        label: "สถานะ Volume",              exportLabel: "สถานะ Volume",                group: "vol", align: "center",
+      value: (r) => volumeAnomalyMagnitude({ zScore: r.volZScore }),
+      text: (r) => volStatusHtml(r),              raw: (r) => (r.volZScore == null ? "N/A" : (!r.isAnomaly ? "Normal" : (r.volZScore > 0 ? "Spike" : "Dry-up"))), html: true }
+  ];
+
+  const MOMENTUM_COLUMN_IDS = MOMENTUM_TABLE_COLUMNS.map((c) => c.id);
+  function momentumColumnById(id) { return MOMENTUM_TABLE_COLUMNS.find((c) => c.id === id) || null; }
+
+  const MOMENTUM_TABLE_PRESETS = {
+    momentum: {
+      label: "Momentum",
+      columns: ["row", "ticker", "shortName", "category", "trailingReturnPct", "trendFilter", "periodicVolPct", "riskAdjScore", "volRank"],
+      sort: { column: "trailingReturnPct", dir: "desc" }
+    },
+    volume: {
+      label: "Volume",
+      // sorted by the Volume RANK (distance from normal in EITHER direction)
+      // rather than the signed z, so a dry-up ranks alongside a spike.
+      columns: ["row", "ticker", "shortName", "category", "currentVolume", "meanVolume", "volZScore", "rvol", "volStatus", "momRank"],
+      sort: { column: "volRank", dir: "asc" }
+    },
+    risk: {
+      label: "Risk",
+      columns: ["row", "ticker", "shortName", "trailingReturnPct", "atrPct", "atrPctile", "pos52", "pctFromHigh", "trendFilter"],
+      sort: { column: "pos52", dir: "desc" }
+    },
+    all: {
+      label: "ทั้งหมด",
+      columns: MOMENTUM_COLUMN_IDS.slice(),
+      sort: { column: "trailingReturnPct", dir: "desc" }
+    }
+  };
+
+  // ---------------------------------------------------------------------
+  // Row assembly (union) + sorting
+  // ---------------------------------------------------------------------
+  // UNION, not intersection: an instrument with enough price history but not
+  // enough volume history (or the reverse) still gets a row, with "—" in the
+  // columns it cannot fill. Dropping it silently is how data quietly goes
+  // missing.
+  function buildMergedRows(instruments, priceSeriesById, volumeSeriesById, params, baselinePeriods) {
+    const momRows = rankUniverseNow(instruments, priceSeriesById, params);
+    const momById = new Map(momRows.map((r) => [r.instrumentId, r]));
+
+    const anomalyMap = computeVolumeAnomalyMap(instruments, volumeSeriesById, baselinePeriods);
+    const volRanked = Object.keys(anomalyMap)
+      .map((k) => ({ instrumentId: Number(k), a: anomalyMap[k] }))
+      .sort((x, y) => {
+        const xv = volumeAnomalyMagnitude(x.a), yv = volumeAnomalyMagnitude(y.a);
+        if (xv == null && yv == null) return 0;
+        if (xv == null) return 1;
+        if (yv == null) return -1;
+        return yv - xv;
+      });
+    const volRankById = new Map(volRanked.map((e, i) => [e.instrumentId, i + 1]));
+
+    return instruments
+      .filter((inst) => momById.has(inst.id) || anomalyMap[inst.id])
+      .map((inst) => {
+        const m = momById.get(inst.id) || null;
+        const a = anomalyMap[inst.id] || null;
+        const k = (state.momentum.risk && state.momentum.risk.byId[inst.id]) || null;
+        return {
+          atr14: k ? k.atr14 : null,
+          atrPct: k ? k.atrPct : null,
+          atrPctile: k ? k.atrPctile : null,
+          hi52: k ? k.hi52 : null,
+          lo52: k ? k.lo52 : null,
+          pos52: k ? k.pos52 : null,
+          pctFromHigh: k ? k.pctFromHigh : null,
+          instrumentId: inst.id,
+          ticker: inst.ticker,
+          shortName: tickerShortName(inst.ticker),
+          category: inst.category,
+          momRank: m ? m.rank : null,
+          trailingReturnPct: m ? m.trailingReturnPct : null,
+          smaSignal: m ? m.smaSignal : null,
+          periodicVolPct: m ? m.periodicVolPct : null,
+          windowVolPct: m ? m.windowVolPct : null,
+          riskAdjScore: m ? m.riskAdjScore : null,
+          volRank: volRankById.has(inst.id) ? volRankById.get(inst.id) : null,
+          currentVolume: a ? a.current : null,
+          meanVolume: a ? a.mean : null,
+          volZScore: a ? a.zScore : null,
+          rvol: a ? a.rvol : null,
+          volPeriodEnd: a ? a.periodEnd : null,
+          isAnomaly: !!(a && a.zScore != null && Math.abs(a.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD)
+        };
+      });
+  }
+
+  // Nulls always sink to the bottom, whichever direction is active -- an
+  // instrument with no data should never outrank one that has data.
+  function sortMergedRows(rows, columnId, dir) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.sortable === false) return rows.slice();
+    const mult = dir === "asc" ? 1 : -1;
+    return rows.slice().sort((a, b) => {
+      const av = col.value(a), bv = col.value(b);
+      const an = av == null || (typeof av === "number" && Number.isNaN(av));
+      const bn = bv == null || (typeof bv === "number" && Number.isNaN(bv));
+      if (an && bn) return 0;
+      if (an) return 1;
+      if (bn) return -1;
+      if (typeof av === "string" || typeof bv === "string") {
+        return String(av).localeCompare(String(bv)) * mult;
+      }
+      return (av - bv) * mult;
+    });
+  }
+
+  function visibleOrderedColumns() {
+    const t = state.momentum.table;
+    return t.order
+      .map((id) => momentumColumnById(id))
+      .filter((c) => c && (c.fixed || t.visible[c.id]));
+  }
+
+  // ---------------------------------------------------------------------
+  // Layout persistence (column order / visibility / sort)
+  // ---------------------------------------------------------------------
+  const MOMENTUM_LAYOUT_KEY = "qd.momentum.layout.v1";
+
+  function currentLayout() {
+    const t = state.momentum.table;
+    return { order: t.order.slice(), visible: Object.assign({}, t.visible), sortColumn: t.sortColumn, sortDir: t.sortDir, preset: t.preset };
+  }
+
+  function saveLayout() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return false;
+      localStorage.setItem(MOMENTUM_LAYOUT_KEY, JSON.stringify(currentLayout()));
+      return true;
+    } catch (e) { return false; } // private mode / blocked storage -- never fatal
+  }
+
+  // Validated against the live registry: a column id saved by an older build
+  // that no longer exists is dropped, and a column added since is appended,
+  // so an update can never leave the table in a broken state.
+  function sanitizeLayout(saved) {
+    if (!saved || typeof saved !== "object") return null;
+    const known = new Set(MOMENTUM_COLUMN_IDS);
+    const order = Array.isArray(saved.order) ? saved.order.filter((id) => known.has(id)) : [];
+    MOMENTUM_COLUMN_IDS.forEach((id) => { if (!order.includes(id)) order.push(id); });
+    const visible = {};
+    MOMENTUM_COLUMN_IDS.forEach((id) => {
+      visible[id] = saved.visible && Object.prototype.hasOwnProperty.call(saved.visible, id)
+        ? !!saved.visible[id]
+        : true;
+    });
+    const sortColumn = known.has(saved.sortColumn) ? saved.sortColumn : "trailingReturnPct";
+    const sortDir = saved.sortDir === "asc" ? "asc" : "desc";
+    return { order, visible, sortColumn, sortDir, preset: typeof saved.preset === "string" ? saved.preset : null };
+  }
+
+  function loadLayout() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return null;
+      const raw = localStorage.getItem(MOMENTUM_LAYOUT_KEY);
+      if (!raw) return null;
+      return sanitizeLayout(JSON.parse(raw));
+    } catch (e) { return null; }
+  }
+
+  function applyLayout(layout) {
+    if (!layout) return;
+    const t = state.momentum.table;
+    t.order = layout.order;
+    t.visible = layout.visible;
+    t.sortColumn = layout.sortColumn;
+    t.sortDir = layout.sortDir;
+    t.preset = layout.preset || null;
+  }
+
+  // Registry defaults first, then whatever the browser remembered (already
+  // validated against the current registry by sanitizeLayout).
+  function initTableLayout() {
+    const t = state.momentum.table;
+    t.order = MOMENTUM_COLUMN_IDS.slice();
+    t.visible = {};
+    MOMENTUM_COLUMN_IDS.forEach((id) => { t.visible[id] = true; });
+    t.sortColumn = "trailingReturnPct";
+    t.sortDir = "desc";
+    t.preset = "all";
+    const saved = loadLayout();
+    if (saved) applyLayout(saved);
+    renderMomColumnPanel();
+    renderPresetButtons();
+  }
+
+  function applyTablePreset(name) {
+    const preset = MOMENTUM_TABLE_PRESETS[name];
+    if (!preset) return;
+    const t = state.momentum.table;
+    const on = new Set(preset.columns);
+    MOMENTUM_COLUMN_IDS.forEach((id) => { t.visible[id] = on.has(id); });
+    t.order = MOMENTUM_COLUMN_IDS.slice();
+    t.sortColumn = preset.sort.column;
+    t.sortDir = preset.sort.dir;
+    t.preset = name;
+    saveLayout();
+  }
+
+  function resetTableLayout() {
+    applyTablePreset("all");
+    try { if (typeof localStorage !== "undefined" && localStorage) localStorage.removeItem(MOMENTUM_LAYOUT_KEY); } catch (e) { /* ignore */ }
+  }
+
+  function moveColumn(columnId, delta) {
+    const t = state.momentum.table;
+    const from = t.order.indexOf(columnId);
+    if (from === -1) return false;
+    const to = from + delta;
+    if (to < 0 || to >= t.order.length) return false;
+    const next = t.order.slice();
+    next.splice(from, 1);
+    next.splice(to, 0, columnId);
+    t.order = next;
+    t.preset = null; // hand-tuned layouts are no longer "a preset"
+    saveLayout();
+    return true;
+  }
+
+  function toggleColumn(columnId, on) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.fixed) return false;
+    state.momentum.table.visible[columnId] = !!on;
+    state.momentum.table.preset = null;
+    saveLayout();
+    return true;
+  }
+
+  function setSort(columnId) {
+    const col = momentumColumnById(columnId);
+    if (!col || col.sortable === false) return;
+    const t = state.momentum.table;
+    if (t.sortColumn === columnId) t.sortDir = t.sortDir === "desc" ? "asc" : "desc";
+    else { t.sortColumn = columnId; t.sortDir = (col.group === "id") ? "asc" : "desc"; }
+    t.preset = null;
+    saveLayout();
+  }
+
+  // ---------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------
+  function recomputeMomentumRows() {
+    const selected = new Set(state.momentum.selectedIds);
+    const insts = state.momentum.universeInstruments.filter((i) => selected.has(i.id));
+    state.momentum.rows = buildMergedRows(
+      insts, state.momentum.seriesByInstrument, state.momentum.volumeSeriesByInstrument,
+      momentumRankParams(), state.momentum.volBaselinePeriods
+    );
+    // The RRG halo/summary read from the same anomaly numbers as the table.
+    state.momentum.volumeAnomalyById = computeVolumeAnomalyMap(
+      insts.filter((i) => i.id !== state.momentum.benchmarkAssetId),
+      state.momentum.volumeSeriesByInstrument, state.momentum.volBaselinePeriods
+    );
+    return state.momentum.rows;
+  }
+
+  function sortedMomentumRows() {
+    const t = state.momentum.table;
+    return sortMergedRows(state.momentum.rows, t.sortColumn, t.sortDir);
+  }
+
+  function renderMomentumLeaderboard() {
+    const rows = sortedMomentumRows();
+    renderMomentumTable(rows);
+    renderMomLeaderboardChart(rows);
+    renderMomVolumeChart(rows);
+    // The scatter reads the same rows; its dot colors come from whatever
+    // rotationData currently holds (gray "unknown" before the first
+    // "คำนวณ" completes -- rerenderRotationDisplay() repaints it then).
+    renderPriceVolumeScatter();
+    renderMomColumnPanel();
+    renderPresetButtons();
+    renderAsOfNote("momAsOfNote", state.momentum.timeframe);
+    updateMomExportAvailability();
+  }
+
+  function renderPresetButtons() {
+    const active = state.momentum.table.preset;
+    document.querySelectorAll(".mom-preset-btn").forEach((btn) => {
+      const on = btn.getAttribute("data-preset") === active;
+      btn.classList.toggle("bg-slate-800", on);
+      btn.classList.toggle("text-white", on);
+      btn.classList.toggle("text-slate-600", !on);
+    });
+  }
+
+  function renderMomColumnPanel() {
+    const panel = byId("momColumnPanel");
+    if (!panel) return;
+    const t = state.momentum.table;
+    panel.innerHTML = t.order.map((id) => {
+      const col = momentumColumnById(id);
+      if (!col) return "";
+      if (col.fixed) return `<label class="flex items-center gap-1 text-slate-300"><input type="checkbox" checked disabled /> ${col.label}</label>`;
+      return `<label class="flex items-center gap-1 text-slate-600">
+          <input type="checkbox" class="mom-col-cb" data-col="${col.id}" ${t.visible[col.id] ? "checked" : ""} /> ${col.label}
+        </label>`;
+    }).join("");
+    panel.querySelectorAll(".mom-col-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        toggleColumn(e.target.getAttribute("data-col"), e.target.checked);
+        renderMomentumLeaderboard();
+      });
+    });
+  }
+
+  function renderMomentumTable(rows) {
+    const table = byId("momLeaderboardTable");
+    if (!table) return;
+    const cols = visibleOrderedColumns();
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือก Universe แล้วกด "คำนวณ" (หรือประวัติราคา/volume ไม่พอสำหรับพารามิเตอร์ที่เลือก)</td></tr></tbody>`;
+      return;
+    }
+    const t = state.momentum.table;
+    const heatRanges = {};
+    cols.forEach((c) => {
+      if (c.heat === "high") heatRanges[c.id] = computeColumnRange({ key: c.id }, rows.map((r) => ({ stats: { [c.id]: c.value(r) } })));
+      if (c.heat === "diverging") heatRanges[c.id] = computeSymmetricRange(rows.map((r) => c.value(r)), 0);
+    });
+
+    const head = `<thead><tr>${cols.map((c, ci) => {
+      const arrow = t.sortColumn === c.id ? (t.sortDir === "asc" ? " ▲" : " ▼") : "";
+      const alignCls = c.align === "right" ? "text-right" : (c.align === "center" ? "text-center" : "text-left");
+      const stickyCls = ci === 0 ? "sticky-col " : "";
+      const sortAttr = c.sortable === false ? "" : ` data-sort-col="${c.id}"`;
+      const cursor = c.sortable === false ? "" : " cursor-pointer hover:bg-slate-100";
+      const left = `<button class="mom-col-move text-slate-300 hover:text-blue-600" data-col="${c.id}" data-delta="-1" title="ย้ายไปทางซ้าย">◀</button>`;
+      const right = `<button class="mom-col-move text-slate-300 hover:text-blue-600" data-col="${c.id}" data-delta="1" title="ย้ายไปทางขวา">▶</button>`;
+      return `<th class="${stickyCls}${alignCls} px-2 py-2 bg-slate-50 border-b border-slate-200 whitespace-nowrap">
+          <span class="inline-flex items-center gap-1">
+            ${left}
+            <span class="mom-col-sort${cursor}"${sortAttr}>${c.label}${arrow}</span>
+            ${right}
+          </span>
+        </th>`;
+    }).join("")}</tr></thead>`;
+
+    const body = rows.map((r, i) => {
+      const cells = cols.map((c, ci) => {
+        let style = "";
+        if (c.heat === "high") {
+          const bg = heatmapColor(c.value(r), heatRanges[c.id], "high");
+          if (bg) style = ` style="background-color:${bg};"`;
+        } else if (c.heat === "diverging") {
+          const bg = volumeDivergingColor(c.value(r), heatRanges[c.id]);
+          if (bg) style = ` style="background-color:${bg};"`;
+        }
+        const alignCls = c.align === "right" ? "text-right" : (c.align === "center" ? "text-center" : "");
+        const stickyCls = ci === 0 ? "sticky-col " : "";
+        return `<td class="${stickyCls}${alignCls} px-2 py-1.5 ${c.cls || ""}"${style}>${c.text(r, i)}</td>`;
+      }).join("");
+      const selectedCls = state.momentum.drilldownInstrumentId === r.instrumentId ? " bg-blue-50" : "";
+      return `<tr class="border-b border-slate-100 cursor-pointer hover:bg-slate-50 mom-row${selectedCls}" data-inst-id="${r.instrumentId}">${cells}</tr>`;
+    }).join("");
+
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+
+    table.querySelectorAll(".mom-col-sort[data-sort-col]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setSort(el.getAttribute("data-sort-col"));
+        renderMomentumLeaderboard();
+      });
+    });
+    table.querySelectorAll(".mom-col-move").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (moveColumn(el.getAttribute("data-col"), Number(el.getAttribute("data-delta")))) renderMomentumLeaderboard();
+      });
+    });
+    table.querySelectorAll(".mom-row").forEach((tr) => {
+      tr.addEventListener("click", () => openDrilldown(Number(tr.getAttribute("data-inst-id"))));
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // The two Leaderboard charts -- both driven by the table's current sort
+  // ---------------------------------------------------------------------
+  function buildLeaderboardChartDatasets(rows, benchmarkTicker, maxN) {
+    const top = rows.slice(0, maxN || MOMENTUM_CHART_TOP_N);
+    const bench = rows.find((r) => r.ticker === benchmarkTicker);
+    return {
+      labels: top.map((r) => r.ticker),
+      values: top.map((r) => r.trailingReturnPct),
+      colors: top.map((r) => (!r.smaSignal ? "#94a3b8" : (r.smaSignal.pass ? "#059669" : "#dc2626"))),
+      benchmarkValue: bench ? bench.trailingReturnPct : null
+    };
+  }
+
+  function buildVolumeChartDatasets(rows, maxN) {
+    const top = rows.slice(0, maxN || MOMENTUM_CHART_TOP_N);
+    return {
+      labels: top.map((r) => r.ticker),
+      values: top.map((r) => r.volZScore),
+      colors: top.map((r) => (r.volZScore == null ? "#cbd5e1" : (r.volZScore >= 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR)))
+    };
+  }
+
+  function renderMomLeaderboardChart(rows) {
+    const canvas = byId("momLeaderboardChart");
+    if (!canvas) return;
+    const benchInst = state.instruments.find((i) => i.id === state.momentum.benchmarkAssetId);
+    const built = buildLeaderboardChartDatasets(rows, benchInst ? benchInst.ticker : null, MOMENTUM_CHART_TOP_N);
+    if (typeof Chart === "undefined") return;
+    if (momLeaderboardChartInstance) { momLeaderboardChartInstance.destroy(); momLeaderboardChartInstance = null; }
+    const datasets = [{ label: "Trailing Return (%)", data: built.values, backgroundColor: built.colors }];
+    if (built.benchmarkValue != null) {
+      datasets.push({
+        type: "line", label: `Benchmark (${benchInst.ticker})`,
+        data: built.labels.map(() => built.benchmarkValue),
+        borderColor: "#1e293b", borderDash: [4, 2], pointRadius: 0, fill: false
+      });
+    }
+    momLeaderboardChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: { labels: built.labels, datasets },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+    });
+  }
+
+  function renderMomVolumeChart(rows) {
+    const canvas = byId("momVolumeChart");
+    if (!canvas) return;
+    const built = buildVolumeChartDatasets(rows, MOMENTUM_CHART_TOP_N);
+    if (typeof Chart === "undefined") return;
+    if (momVolumeChartInstance) { momVolumeChartInstance.destroy(); momVolumeChartInstance = null; }
+    momVolumeChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: { labels: built.labels, datasets: [{ label: "Volume Z-score", data: built.values, backgroundColor: built.colors }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { title: { display: true, text: "Volume Z-score (log)" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Instrument selection panel (drives table + both charts)
+  // ---------------------------------------------------------------------
+  function renderMomSelectionPanel() {
+    const panel = byId("momSelectionPanel");
+    if (!panel) return;
+    const selected = new Set(state.momentum.selectedIds);
+    panel.innerHTML = state.momentum.universeInstruments.map((inst) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${inst.id}" class="mom-sel-cb" ${selected.has(inst.id) ? "checked" : ""} />
+         ${inst.ticker}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".mom-sel-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.selectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.selectedIds = Array.from(set);
+        recomputeMomentumRows();
+        renderMomentumLeaderboard();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Drill-down (lazy: history for ONE instrument, fetched on click)
+  // ---------------------------------------------------------------------
+  function buildVolumeDrilldownData(series, baselinePeriods, maxPoints) {
+    const band = computeVolumeBandSeries(series, baselinePeriods);
+    return maxPoints && band.length > maxPoints ? band.slice(band.length - maxPoints) : band;
+  }
+
+  async function openDrilldown(instrumentId) {
+    state.momentum.drilldownInstrumentId = instrumentId;
+    const inst = state.instruments.find((i) => i.id === instrumentId);
+    const titleEl = byId("momDrilldownTitle");
+    if (titleEl && inst) titleEl.textContent = `กราฟย้อนหลังรายตัว — ${inst.ticker} (${tickerShortName(inst.ticker)})`;
+    const cacheKey = `${instrumentId}|${state.momentum.timeframe}`;
+    if (state.momentum.drilldownCacheKey !== cacheKey) {
+      setLoading("momDrilldownLoading", true);
+      setText("momDrilldownNote", "กำลังโหลดประวัติ...");
+      try {
+        const tf = state.momentum.timeframe;
+        const periods = VOLUME_DRILLDOWN_PERIODS[tf] || 120;
+        const plan = volumeFetchPlan(tf, Math.max(periods, state.momentum.volBaselinePeriods + 2));
+        const rows = await fetchPeriodVolumes([instrumentId], plan.granularity, plan.startDate);
+        state.momentum.drilldownSeries = groupVolumeRows(rows)[instrumentId] || [];
+        state.momentum.drilldownCacheKey = cacheKey;
+      } catch (e) {
+        state.momentum.drilldownSeries = [];
+        state.momentum.drilldownCacheKey = null;
+        setText("momDrilldownNote", `โหลดประวัติไม่สำเร็จ: ${e.message || e}`);
+        setLoading("momDrilldownLoading", false);
+        return;
+      }
+      setLoading("momDrilldownLoading", false);
+    }
+    if (!state.events.loaded) await ensureMarketEvents();
+    renderMomDrilldown();
+    renderMomentumTable(sortedMomentumRows()); // refresh the row highlight
+    updateMomExportAvailability();
+  }
+
+  function renderMomDrilldown() {
+    const noteEl = byId("momDrilldownNote");
+    const canvas = byId("momDrilldownChart");
+    const inst = state.instruments.find((i) => i.id === state.momentum.drilldownInstrumentId);
+    const series = state.momentum.drilldownSeries || [];
+    if (!inst || !series.length) {
+      if (noteEl) noteEl.textContent = inst ? "ข้อมูลไม่พอสำหรับวาดกราฟ" : "คลิกแถวในตารางด้านบนเพื่อเลือก instrument";
+      if (momDrilldownChartInstance) { momDrilldownChartInstance.destroy(); momDrilldownChartInstance = null; }
+      return;
+    }
+    const tf = state.momentum.timeframe;
+    const points = buildVolumeDrilldownData(series, state.momentum.volBaselinePeriods, VOLUME_DRILLDOWN_PERIODS[tf]);
+    state.momentum.drilldownPoints = points;
+    const labels = points.map((p) => p.periodEnd);
+    const eventMarkers = buildEventMarkers(mapEventsToPeriods(labels, state.events.rows, tf, state.events.enabled));
+    state.momentum.drilldownEventMarkers = eventMarkers;
+    if (noteEl) {
+      noteEl.textContent = `แสดง ${points.length} งวดล่าสุด · baseline ${state.momentum.volBaselinePeriods} ${MOMENTUM_UNIT_LABEL[tf]}` +
+        ` (แถบเงา = ค่าเฉลี่ยเรขาคณิต × / ÷ 1SD และ 2SD บนสเกล log)` +
+        (state.events.enabled.length ? ` · เส้นประแนวตั้ง = event ${eventMarkers.reduce((a, m) => a + m.events.length, 0)} รายการในช่วงนี้` : "");
+    }
+    if (!canvas || typeof Chart === "undefined") return;
+    if (momDrilldownChartInstance) { momDrilldownChartInstance.destroy(); momDrilldownChartInstance = null; }
+    momDrilldownChartInstance = new Chart(canvas.getContext("2d"), {
+      plugins: [eventMarkersPlugin],
+      data: {
+        labels,
+        datasets: [
+          { type: "bar", label: "Volume", data: points.map((p) => p.volume), yAxisID: "y",
+            backgroundColor: points.map((p) => (p.zScore != null && Math.abs(p.zScore) >= VOLUME_ANOMALY_Z_THRESHOLD
+              ? (p.zScore > 0 ? VOLUME_POS_COLOR : VOLUME_NEG_COLOR) : "#cbd5e1")) },
+          { type: "line", label: "ค่าเฉลี่ย baseline", data: points.map((p) => p.mean), yAxisID: "y",
+            borderColor: "#475569", pointRadius: 0, borderWidth: 1.5, fill: false },
+          { type: "line", label: "×2SD", data: points.map((p) => p.upper2), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "×1SD", data: points.map((p) => p.upper1), yAxisID: "y",
+            borderColor: "rgba(234,88,12,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "÷1SD", data: points.map((p) => p.lower1), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.2)", pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "÷2SD", data: points.map((p) => p.lower2), yAxisID: "y",
+            borderColor: "rgba(37,99,235,0.35)", borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+          { type: "line", label: "ราคาปิด", data: points.map((p) => p.adjClose), yAxisID: "y1",
+            borderColor: "#7c3aed", pointRadius: 0, borderWidth: 1.5, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          y: { position: "left", title: { display: true, text: "Volume" } },
+          y1: { position: "right", title: { display: true, text: "ราคาปิด" }, grid: { drawOnChartArea: false } }
+        },
+        plugins: {
+          legend: { position: "bottom" },
+          qdEventMarkers: { markers: eventMarkers },
+          tooltip: {
+            callbacks: {
+              // list the events that fall in the hovered period
+              afterBody: (items) => {
+                const i = items && items.length ? items[0].dataIndex : -1;
+                const m = eventMarkers.find((x) => x.index === i);
+                return m ? m.events.map((e) => `• ${e.nameTh || e.code} (${formatThaiDate(e.eventDate) || e.eventDate})`) : [];
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function hexToRgba(hex, alpha) {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Default RRG display selection (item 6): Top N instrumentIds by
+  // Trailing Return among the rotation universe (benchmark already excluded
+  // upstream since it's never part of `rows` passed in from the caller --
+  // rows here is the full Leaderboard, so we intersect with rotationIds).
+  function computeDefaultRrgSelection(leaderboardRows, rotationInstrumentIds, topN) {
+    const idSet = new Set(rotationInstrumentIds);
+    return leaderboardRows
+      .filter((r) => idSet.has(r.instrumentId))
+      .slice(0, topN || MOMENTUM_RRG_DEFAULT_TOPN)
+      .map((r) => r.instrumentId);
+  }
+
+  // Pure builder for the RRG instrument-selection checkbox panel's items --
+  // sorted by Leaderboard rank (best Trailing Return first) so the default
+  // Top-N selection is easy to find. Instruments with no rank (excluded from
+  // the Leaderboard for insufficient history) are appended at the end,
+  // sorted by ticker.
+  function buildRrgCheckboxItems(rotationInstruments, leaderboardRows) {
+    const rankByInstId = new Map(leaderboardRows.map((r) => [r.instrumentId, r.rank != null ? r.rank : r.momRank]));
+    return rotationInstruments
+      .map((inst) => ({ instrumentId: inst.id, ticker: inst.ticker, rank: rankByInstId.has(inst.id) ? rankByInstId.get(inst.id) : null }))
+      .sort((a, b) => {
+        if (a.rank == null && b.rank == null) return a.ticker < b.ticker ? -1 : (a.ticker > b.ticker ? 1 : 0);
+        if (a.rank == null) return 1;
+        if (b.rank == null) return -1;
+        return a.rank - b.rank;
+      });
+  }
+
+  // Pure builder for the 8-group state-summary table rows (item 4.3) -- one
+  // row per SELECTED rotation instrument, reading Current/T-1 state straight
+  // off the already-computed (tail-trimmed) `points` array so it always
+  // matches exactly what the chart is plotting for that instrument.
+  function buildRotationSummaryRows(rotationResults, selectedIds, anomalyById) {
+    const idSet = new Set(selectedIds);
+    const anomalies = anomalyById || {};
+    return rotationResults
+      .filter((r) => idSet.has(r.instrumentId) && r.points.length)
+      .map((r) => {
+        const last = r.points[r.points.length - 1];
+        const prev = r.points.length >= 2 ? r.points[r.points.length - 2] : null;
+        const anomaly = anomalies[r.instrumentId] || null;
+        return {
+          instrumentId: r.instrumentId,
+          ticker: r.ticker,
+          shortName: tickerShortName(r.ticker),
+          currentState: last.octant,
+          t1State: prev ? prev.octant : null,
+          rsRatio: last.x,
+          rsMomentum: last.y,
+          volZScore: anomaly ? anomaly.zScore : null,
+          volRvol: anomaly ? anomaly.rvol : null
+        };
+      });
+  }
+
+  // Inline Chart.js v4 plugin (per-chart, not globally registered): paints
+  // the 4 RRG quadrant backgrounds + crosshair at (100,100) and labels them
+  // Leading/Improving/Lagging/Weakening, matching the reference RRG image's
+  // color scheme (item 4.2). Uses the chart's live pixel scale so it stays
+  // correct across zoom/resize; degrades to drawing nothing if x=100/y=100
+  // falls outside the current axis range (quadrant width/height becomes 0).
+  // Reference lines for the Price-Volume scatter: solid-ish crosshair at
+  // (0% return, Z=0) and faint dashes at the Z = +/-2 anomaly threshold the
+  // rest of the app already uses (VOLUME_ANOMALY_Z_THRESHOLD).
+  function pvScatterGuidesPlugin() {
+    return {
+      id: "pvScatterGuides",
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!ctx || !chartArea || !scales || !scales.x || !scales.y) return;
+        ctx.save();
+        const drawH = (val, color, dash) => {
+          const py = scales.y.getPixelForValue(val);
+          if (py < chartArea.top || py > chartArea.bottom) return;
+          ctx.strokeStyle = color; ctx.setLineDash(dash);
+          ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
+        };
+        const drawV = (val, color, dash) => {
+          const px = scales.x.getPixelForValue(val);
+          if (px < chartArea.left || px > chartArea.right) return;
+          ctx.strokeStyle = color; ctx.setLineDash(dash);
+          ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
+        };
+        drawH(VOLUME_ANOMALY_Z_THRESHOLD, "rgba(234,88,12,0.35)", [3, 3]);
+        drawH(-VOLUME_ANOMALY_Z_THRESHOLD, "rgba(37,99,235,0.35)", [3, 3]);
+        drawH(0, "rgba(100,116,139,0.5)", [4, 3]);
+        drawV(0, "rgba(100,116,139,0.5)", [4, 3]);
+        ctx.restore();
+      }
+    };
+  }
+
+  // Snapshot scatter: Trailing Return (x) vs Volume Z-score (y), colored by
+  // the RRG quadrant of each instrument's latest rotation point. Reads
+  // state.momentum.rows (the same rows the table renders) and
+  // state.momentum.rotationData -- it never fetches or recomputes anything.
+  function renderPriceVolumeScatter() {
+    const canvas = byId("momPvScatterChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    // Same instrument set as the RRG: the current table selection minus the
+    // benchmark. The benchmark is excluded on purpose -- it is the yardstick
+    // the RS-Ratio is measured against, so it has no quadrant of its own and
+    // would otherwise show up as a misleading gray "unknown" dot.
+    const rows = (state.momentum.rows || []).filter((r) => r.instrumentId !== state.momentum.benchmarkAssetId);
+    const quadrantById = quadrantMapFromRotation(state.momentum.rotationData);
+    const datasets = buildPriceVolumeScatterDatasets(rows, quadrantById);
+    const plotted = datasets.reduce((n, d) => n + d.data.length, 0);
+
+    const emptyEl = byId("momPvScatterEmpty");
+    if (emptyEl) emptyEl.classList.toggle("hidden", plotted > 0);
+    setText("momPvScatterStatus", plotted > 0 ? `${plotted} instruments` : "");
+
+    if (momPvScatterChartInstance) { momPvScatterChartInstance.destroy(); momPvScatterChartInstance = null; }
+    const unit = MOMENTUM_UNIT_LABEL[state.momentum.timeframe] || "";
+    momPvScatterChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "scatter",
+      data: { datasets },
+      plugins: [pvScatterGuidesPlugin()],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: `Trailing Return ${state.momentum.lookbackPeriods} ${unit} (%)` } },
+          y: { title: { display: true, text: "Volume Z-score (log scale)" } }
+        },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              title() { return ""; },
+              label(ctx) { return formatPvScatterTooltip(ctx.raw); }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function rrgQuadrantPlugin() {
+    return {
+      id: "rrgQuadrantBackground",
+      beforeDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!ctx || !chartArea || !scales || !scales.x || !scales.y) return;
+        const xMid = Math.min(Math.max(scales.x.getPixelForValue(100), chartArea.left), chartArea.right);
+        const yMid = Math.min(Math.max(scales.y.getPixelForValue(100), chartArea.top), chartArea.bottom);
+        const quads = [
+          { x: xMid, y: chartArea.top, w: chartArea.right - xMid, h: yMid - chartArea.top, color: "rgba(5,150,105,0.08)", label: "Leading", labelColor: "#059669", align: "right", valign: "top" },
+          { x: chartArea.left, y: chartArea.top, w: xMid - chartArea.left, h: yMid - chartArea.top, color: "rgba(37,99,235,0.08)", label: "Improving", labelColor: "#2563eb", align: "left", valign: "top" },
+          { x: chartArea.left, y: yMid, w: xMid - chartArea.left, h: chartArea.bottom - yMid, color: "rgba(220,38,38,0.08)", label: "Lagging", labelColor: "#dc2626", align: "left", valign: "bottom" },
+          { x: xMid, y: yMid, w: chartArea.right - xMid, h: chartArea.bottom - yMid, color: "rgba(217,119,6,0.08)", label: "Weakening", labelColor: "#d97706", align: "right", valign: "bottom" }
+        ];
+        ctx.save();
+        quads.forEach((q) => { if (q.w > 0 && q.h > 0) { ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, q.w, q.h); } });
+        ctx.font = "11px sans-serif";
+        quads.forEach((q) => {
+          if (q.w > 24 && q.h > 14) {
+            ctx.fillStyle = q.labelColor;
+            ctx.textAlign = q.align === "right" ? "right" : "left";
+            ctx.textBaseline = q.valign === "top" ? "top" : "bottom";
+            const px = q.align === "right" ? q.x + q.w - 4 : q.x + 4;
+            const py = q.valign === "top" ? q.y + 4 : q.y + q.h - 4;
+            ctx.fillText(q.label, px, py);
+          }
+        });
+        ctx.strokeStyle = "rgba(100,116,139,0.4)";
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(xMid, chartArea.top); ctx.lineTo(xMid, chartArea.bottom); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(chartArea.left, yMid); ctx.lineTo(chartArea.right, yMid); ctx.stroke();
+        ctx.restore();
+      }
+    };
+  }
+
+  // Halo ring around the LATEST point of an RRG tail (2026-09 volume
+  // overlay): orange when the most recent volume is unusually high for that
+  // instrument, blue when unusually quiet, none when it is inside its own
+  // normal band or unknown. Point SIZE is left alone -- it already encodes
+  // tail recency -- so the two signals never fight for the same channel.
+  function volumeHaloColor(anomaly) {
+    if (!anomaly || anomaly.zScore == null) return null;
+    if (anomaly.zScore >= VOLUME_ANOMALY_Z_THRESHOLD) return VOLUME_POS_COLOR;
+    if (anomaly.zScore <= -VOLUME_ANOMALY_Z_THRESHOLD) return VOLUME_NEG_COLOR;
+    return null;
+  }
+
+  function buildRotationPointStyles(points, baseColor, anomaly) {
+    const n = points.length;
+    const halo = volumeHaloColor(anomaly);
+    return {
+      pointBackgroundColor: points.map((p, i) => hexToRgba(baseColor, 0.3 + 0.7 * ((i + 1) / n))),
+      pointRadius: points.map((p, i) => 2 + 5 * ((i + 1) / n)),
+      pointBorderColor: points.map((p, i) => (i === n - 1 && halo ? halo : "rgba(0,0,0,0)")),
+      pointBorderWidth: points.map((p, i) => (i === n - 1 && halo ? 3 : 0))
+    };
+  }
+
+  // rotationData: full { m, k, results } for the whole rotation universe
+  // (computed once per "คำนวณ" click); selectedIds: instrumentIds currently
+  // checked in the panel -- filtering happens here so toggling a checkbox
+  // never needs to recompute RS-Ratio/RS-Momentum, only re-render.
+  // Pure dataset builder (extracted so the volume-overlay wiring -- halo
+  // ring on the last point, volZ/volRvol riding on that point for the
+  // tooltip -- is testable without a real Chart.js canvas).
+  function buildRotationDatasets(rotationData, selectedIds, anomalyByIdArg) {
+    const idSet = new Set(selectedIds || []);
+    const filtered = ((rotationData && rotationData.results) || []).filter((r) => r.points.length && idSet.has(r.instrumentId));
+    const anomalyById = anomalyByIdArg || {};
+    return filtered.map((r, idx) => {
+      const color = CHART_ROTATION_COLORS[idx % CHART_ROTATION_COLORS.length];
+      const n = r.points.length;
+      const anomaly = anomalyById[r.instrumentId] || null;
+      const styles = buildRotationPointStyles(r.points, color, anomaly);
+      return {
+        label: r.ticker,
+        // Volume figures ride on the LAST point only: the anomaly is measured
+        // "as of now", not per historical tail point.
+        data: r.points.map((p, i) => (i === n - 1 && anomaly
+          ? { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd, volZ: anomaly.zScore, volRvol: anomaly.rvol }
+          : { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd })),
+        showLine: true,
+        borderColor: color,
+        pointBackgroundColor: styles.pointBackgroundColor,
+        pointRadius: styles.pointRadius,
+        pointBorderColor: styles.pointBorderColor,
+        pointBorderWidth: styles.pointBorderWidth,
+        tension: 0
+      };
+    });
+  }
+
+  // Tooltip text for one RRG point: quadrant/octant label plus, on the
+  // latest point only, the volume-anomaly reading.
+  function formatRotationTooltip(datasetLabel, p) {
+    const point = p || {};
+    const base = `${datasetLabel}: (${point.x != null ? point.x.toFixed(1) : "—"}, ${point.y != null ? point.y.toFixed(1) : "—"})`;
+    const withOctant = point.octant ? `${base} — ${point.octant}` : base;
+    if (point.volZ == null) return withOctant;
+    const sign = point.volZ >= 0 ? "+" : "";
+    return [withOctant, `Volume Z: ${sign}${point.volZ.toFixed(2)}${point.volRvol != null ? ` (RVOL ${point.volRvol.toFixed(2)}x)` : ""}`];
+  }
+
+  function renderRotationGraph(rotationData, selectedIds) {
+    const canvas = byId("momRotationChart");
+    if (!canvas) return;
+    if (typeof Chart === "undefined") return;
+    if (momRotationChartInstance) { momRotationChartInstance.destroy(); momRotationChartInstance = null; }
+
+    const datasets = buildRotationDatasets(rotationData, selectedIds, state.momentum.volumeAnomalyById);
+    momRotationChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "scatter",
+      data: { datasets },
+      plugins: [rrgQuadrantPlugin()],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: "RS-Ratio" } },
+          y: { title: { display: true, text: "RS-Momentum" } }
+        },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label(ctx) { return formatRotationTooltip(ctx.dataset.label, ctx.raw); }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function renderRrgCheckboxPanel() {
+    const panel = byId("momRrgCheckboxPanel");
+    if (!panel) return;
+    const inTable = new Set(state.momentum.selectedIds);
+    const items = buildRrgCheckboxItems(
+      state.momentum.universeInstruments.filter((i) => inTable.has(i.id) && i.id !== state.momentum.benchmarkAssetId),
+      state.momentum.rows
+    );
+    const selected = new Set(state.momentum.rrgSelectedIds);
+    panel.innerHTML = items.map((it) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${it.instrumentId}" class="mom-rrg-cb" ${selected.has(it.instrumentId) ? "checked" : ""} />
+         ${it.ticker}${it.rank != null ? ` <span class="text-slate-400">#${it.rank}</span>` : ""}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".mom-rrg-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.rrgSelectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.rrgSelectedIds = Array.from(set);
+        rerenderRotationDisplay();
+      });
+    });
+  }
+
+  // Re-renders the chart + summary table from the already-computed
+  // rotationData using the current checkbox selection -- no recompute, no
+  // network call. Called on every checkbox toggle and after a fresh
+  // "คำนวณ" run.
+  function rerenderRotationDisplay() {
+    if (!state.momentum.rotationData) return;
+    renderRotationGraph(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    renderRotationSummaryTable(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    // Quadrant colors only exist once rotationData does -- repaint the
+    // scatter here so it stops showing everything as "unknown" gray.
+    renderPriceVolumeScatter();
+    updateMomExportAvailability();
+  }
+
+  function renderRotationSummaryTable(rotationData, selectedIds) {
+    const table = byId("momRotationSummaryTable");
+    if (!table) return;
+    const rows = buildRotationSummaryRows(rotationData.results || [], selectedIds || [], state.momentum.volumeAnomalyById);
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่ได้เลือกตัวแสดง หรือยังไม่มีข้อมูลเพียงพอ</td></tr></tbody>`;
+      return;
+    }
+    const volRange = computeSymmetricRange(rows.map((r) => r.volZScore), 0);
+    const head = `<thead><tr>
+        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">ETF</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Current State</th>
+        <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">T-1 State</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Ratio ล่าสุด</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Momentum ล่าสุด</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volume Z-score</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RVOL (x)</th>
+      </tr></thead>`;
+    const body = rows.map((r) => {
+      const bg = volumeDivergingColor(r.volZScore, volRange);
+      const volStyle = bg ? ` style="background-color:${bg};"` : "";
+      return `<tr class="border-b border-slate-100">
+        <td class="px-3 py-1.5 font-medium text-slate-700">${r.ticker}</td>
+        <td class="px-2 py-1.5 text-slate-500">${r.shortName}</td>
+        <td class="px-2 py-1.5 text-slate-700">${r.currentState || "—"}</td>
+        <td class="px-2 py-1.5 text-slate-500">${r.t1State || "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.rsRatio != null ? r.rsRatio.toFixed(2) : "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.rsMomentum != null ? r.rsMomentum.toFixed(2) : "—"}</td>
+        <td class="text-right px-2 py-1.5"${volStyle}>${r.volZScore != null ? r.volZScore.toFixed(2) : "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.volRvol != null ? r.volRvol.toFixed(2) + "x" : "—"}</td>
+      </tr>`;
+    }).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+  }
+
+  // Single entry point behind the top-of-page "คำนวณ" button: covers both
+  // Level 1 (Leaderboard) and Level 2 (Rotation Graph). Only re-fetches from
+  // Supabase when Universe/Timeframe/Benchmark actually changed since the
+  // last successful load (computeMomentumFetchKey) -- Lookback/SMA/
+  // Risk-Adjusted/Risk-free/Tail Length are all pure client-side recompute
+  // and never trigger a network call.
+  async function runMomentumCalculate() {
+    const errEl = byId("momCalculateError");
+    hide(errEl);
+    setText("momCalculateStatus", "กำลังคำนวณ...");
+    try {
+      const needsFetch = momentumNeedsFetch();
+      if (needsFetch) {
+        const ok = await loadMomentumUniverseData();
+        if (!ok) { setText("momCalculateStatus", ""); return; }
+      } else {
+        recomputeMomentumRows();
+        renderMomentumLeaderboard();
+      }
+
+      const seriesByInst = state.momentum.seriesByInstrument;
+      const params = momentumRankParams();
+      const benchSeries = seriesByInst[state.momentum.benchmarkAssetId];
+
+      // The RRG plots what the table covers: the current instrument
+      // selection, minus the benchmark it is measured against.
+      const selected = new Set(state.momentum.selectedIds);
+      const rotationInstruments = state.momentum.universeInstruments
+        .filter((i) => selected.has(i.id) && i.id !== state.momentum.benchmarkAssetId);
+      const rotationData = computeRotationGraphData(rotationInstruments, seriesByInst, benchSeries, params.lookbackPeriods, state.momentum.tailLength);
+      state.momentum.rotationData = rotationData;
+
+      if (!state.momentum.rrgSelectionInitialized) {
+        state.momentum.rrgSelectedIds = computeDefaultRrgSelection(
+          sortedMomentumRows(),
+          rotationInstruments.map((i) => i.id),
+          MOMENTUM_RRG_DEFAULT_TOPN
+        );
+        state.momentum.rrgSelectionInitialized = true;
+      }
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+      setText("momCalculateStatus", "คำนวณเสร็จแล้ว");
+    } catch (e) {
+      showError(errEl, `คำนวณไม่สำเร็จ: ${e.message || e}`);
+      setText("momCalculateStatus", "");
+    }
+  }
+
+  async function autofillRiskFreeRate() {
+    const source = byId("momRiskFreeSource") ? byId("momRiskFreeSource").value : "FEDFUNDS";
+    try {
+      setText("momRiskFreeStatus", "กำลังดึงค่า...");
+      const latest = await fetchLatestMacroValue(source);
+      if (!latest) { setText("momRiskFreeStatus", "ไม่พบข้อมูล"); return; }
+      state.momentum.riskFreeAnnualPct = latest.value;
+      const rfInput = byId("momRiskFreeRate");
+      if (rfInput) rfInput.value = latest.value;
+      setText("momRiskFreeStatus", `อัปเดตจาก ${source} (${latest.date})`);
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+    } catch (e) {
+      setText("momRiskFreeStatus", `ดึงข้อมูลไม่สำเร็จ: ${e.message || e}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Export to Excel (Momentum) -- 5 sheets, all shaped from the SAME column
+  // registry the table uses, so a column added later cannot silently go
+  // missing from the file.
+  // ---------------------------------------------------------------------
+  // The merged-table sheet deliberately exports EVERY column regardless of
+  // what is hidden on screen: hiding a column is a reading preference, and a
+  // file that quietly drops data is worse than a wide one (Excel can hide
+  // columns itself).
+  function buildMomentumExportSheets(selections) {
+    const sheets = {};
+    if (selections.leaderboard) {
+      const cols = state.momentum.table.order.map(momentumColumnById).filter(Boolean);
+      const header = cols.map((c) => c.exportLabel || c.label);
+      const rows = sortedMomentumRows().map((r, i) =>
+        cols.map((c) => (c.raw ? c.raw(r, i) : (c.id === "row" ? i + 1 : c.value(r, i))))
+      );
+      sheets.leaderboard = [header].concat(rows);
+    }
+    if (selections.rotation && state.momentum.rotationData) {
+      const header = ["Ticker", "ชื่อย่อ", "Period End", "RS-Ratio", "RS-Momentum", "8-Group Label"];
+      const rows = [];
+      (state.momentum.rotationData.results || []).forEach((r) => {
+        r.points.forEach((p) => rows.push([r.ticker, tickerShortName(r.ticker), p.periodEnd, p.x, p.y, p.octant]));
+      });
+      sheets.rotation = [header].concat(rows);
+    }
+    const corr = state.momentum.corr;
+    if (selections.corrMatrix && corr.matrix) {
+      const header = [""].concat(corr.matrix.tickers);
+      const rows = corr.matrix.tickers.map((t, i) => [t].concat(corr.matrix.values[i]));
+      sheets.corrMatrix = [header].concat(rows);
+    }
+    if (selections.corrAvg && corr.avgSeries && corr.avgSeries.length) {
+      const header = ["Period End", "ค่าเฉลี่ย Correlation", "จำนวนคู่"];
+      sheets.corrAvg = [header].concat(corr.avgSeries.map((p) => [p.periodEnd, p.avgCorr, p.pairCount]));
+    }
+    if (selections.drilldown && state.momentum.drilldownPoints && state.momentum.drilldownPoints.length) {
+      const inst = state.instruments.find((i) => i.id === state.momentum.drilldownInstrumentId);
+      const header = ["Ticker", "Period End", "Volume", "ค่าเฉลี่ย baseline (geometric)", "×1SD", "÷1SD", "×2SD", "÷2SD", "Volume Z-score (log)", "ราคาปิด"];
+      const rows = state.momentum.drilldownPoints.map((p) => [
+        inst ? inst.ticker : "", p.periodEnd, p.volume, p.mean, p.upper1, p.lower1, p.upper2, p.lower2, p.zScore, p.adjClose
+      ]);
+      sheets.drilldown = [header].concat(rows);
+    }
+    return sheets;
+  }
+
+  function updateMomExportAvailability() {
+    const anyRotation = !!(state.momentum.rotationData && (state.momentum.rotationData.results || []).some((r) => r.points.length));
+    const rotationCb = byId("momExportRotation");
+    if (rotationCb) { rotationCb.disabled = !anyRotation; if (!anyRotation) rotationCb.checked = false; }
+
+    const corr = state.momentum.corr;
+    const matrixCb = byId("momExportCorrMatrix");
+    if (matrixCb) { matrixCb.disabled = !corr.matrix; if (!corr.matrix) matrixCb.checked = false; }
+    const avgCb = byId("momExportCorrAvg");
+    if (avgCb) { const on = !!(corr.avgSeries && corr.avgSeries.length); avgCb.disabled = !on; if (!on) avgCb.checked = false; }
+
+    const drillCb = byId("momExportDrilldown");
+    if (drillCb) {
+      const on = !!(state.momentum.drilldownPoints && state.momentum.drilldownPoints.length);
+      drillCb.disabled = !on;
+      if (!on) drillCb.checked = false;
+    }
+  }
+
+  function momentumExportSelections() {
+    const on = (id) => {
+      const el = byId(id);
+      return !!(el && el.checked && !el.disabled);
+    };
+    return {
+      leaderboard: !!(byId("momExportLeaderboard") && byId("momExportLeaderboard").checked),
+      rotation: on("momExportRotation"),
+      corrMatrix: on("momExportCorrMatrix"),
+      corrAvg: on("momExportCorrAvg"),
+      drilldown: on("momExportDrilldown")
+    };
+  }
+
+  function exportMomentumToExcel() {
+    const errEl = byId("momExportError");
+    hide(errEl);
+    const selections = momentumExportSelections();
+    if (!Object.keys(selections).some((k) => selections[k])) {
+      showError(errEl, "กรุณาเลือกอย่างน้อย 1 ส่วนก่อน export");
+      return null;
+    }
+    const sheets = buildMomentumExportSheets(selections);
+    if (typeof XLSX === "undefined") return sheets;
+    const wb = XLSX.utils.book_new();
+    if (sheets.leaderboard) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.leaderboard), "Leaderboard");
+    if (sheets.rotation) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rotation), "Rotation");
+    if (sheets.corrMatrix) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrMatrix), "Correlation Matrix");
+    if (sheets.corrAvg) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrAvg), "Correlation Avg");
+    if (sheets.drilldown) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.drilldown), "Volume History");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAboutSheet("Momentum & Rotation")), "About");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `momentum-${state.momentum.universeMode}-${state.momentum.timeframe}-${stamp}.xlsx`);
+    return sheets;
+  }
+
+  // ---------------------------------------------------------------------
+  // Static pickers / glossary / tab switching
+  // ---------------------------------------------------------------------
+  // Lookback / SMA pickers (2026-09-15): the research-backed presets stay
+  // as the dropdown, plus a "กำหนดเอง..." entry that reveals a number box.
+  // A value that is not one of the presets (i.e. a custom one) keeps the
+  // dropdown on "กำหนดเอง..." with the box showing that value.
+  const MOMENTUM_CUSTOM_OPTION = "custom";
+
+  function renderParamPicker(selectId, inputId, presets, current, unit, kind) {
+    const tf = state.momentum.timeframe;
+    const isCustom = presets.indexOf(current) === -1;
+    const sel = byId(selectId);
+    if (sel) {
+      sel.innerHTML = presets.map((v) => `<option value="${v}" ${!isCustom && v === current ? "selected" : ""}>${v} ${unit}</option>`).join("")
+        + `<option value="${MOMENTUM_CUSTOM_OPTION}" ${isCustom ? "selected" : ""}>กำหนดเอง...</option>`;
+    }
+    const inp = byId(inputId);
+    if (inp) {
+      const b = momentumParamBounds(kind, tf);
+      inp.min = String(b.min);
+      inp.max = String(b.max);
+      inp.placeholder = `${b.min}-${b.max}`;
+      inp.title = `จำนวน${unit} (${b.min}-${b.max})`;
+      if (isCustom) { inp.value = String(current); show(inp); } else { hide(inp); }
+    }
+  }
+
+  function renderMomentumParamMessages() {
+    const errs = state.momentum.paramErrors || {};
+    const errText = [errs.lookback, errs.sma].filter(Boolean).join(" · ");
+    const errEl = byId("momParamError");
+    if (errEl) { errEl.textContent = errText; if (errText) show(errEl); else hide(errEl); }
+    const warn = momentumReversalWarning(state.momentum.timeframe, state.momentum.lookbackPeriods);
+    const warnEl = byId("momParamWarning");
+    if (warnEl) { warnEl.textContent = warn; if (warn) show(warnEl); else hide(warnEl); }
+  }
+
+  // Applies an accepted Lookback/SMA value. A longer window than the history
+  // already loaded triggers a re-fetch -- otherwise instruments would drop out
+  // of the table silently for "not enough history".
+  function applyMomentumParam(kind, value) {
+    if (kind === "sma") state.momentum.smaPeriods = value;
+    else state.momentum.lookbackPeriods = value;
+    state.momentum.paramErrors = Object.assign({}, state.momentum.paramErrors, { [kind]: "" });
+    renderMomentumParamMessages();
+    if (state.momentum.dataLoaded && momentumNeedsFetch()) {
+      return loadMomentumUniverseData();
+    }
+    recomputeMomentumRows();
+    renderMomentumLeaderboard();
+    return Promise.resolve(true);
+  }
+
+  function onParamSelectChange(kind, selectEl, inputEl) {
+    if (selectEl.value === MOMENTUM_CUSTOM_OPTION) {
+      if (inputEl) {
+        const cur = kind === "sma" ? state.momentum.smaPeriods : state.momentum.lookbackPeriods;
+        inputEl.value = String(cur);
+        show(inputEl);
+        if (typeof inputEl.focus === "function") inputEl.focus();
+      }
+      return Promise.resolve(false);
+    }
+    if (inputEl) hide(inputEl);
+    return applyMomentumParam(kind, Number(selectEl.value));
+  }
+
+  function onParamInputChange(kind, inputEl) {
+    const res = validateMomentumParam(kind, state.momentum.timeframe, inputEl.value);
+    if (!res.ok) {
+      state.momentum.paramErrors = Object.assign({}, state.momentum.paramErrors, { [kind]: res.error });
+      renderMomentumParamMessages();
+      return Promise.resolve(false);
+    }
+    return applyMomentumParam(kind, res.value);
+  }
+
+  function renderMomentumLookbackSmaPickers() {
+    const tf = state.momentum.timeframe;
+    const opts = MOMENTUM_TIMEFRAME_OPTIONS[tf];
+    const unit = MOMENTUM_UNIT_LABEL[tf] || "งวด";
+    renderParamPicker("momLookbackPicker", "momLookbackCustom", opts.lookbacks, state.momentum.lookbackPeriods, unit, "lookback");
+    renderParamPicker("momSmaPicker", "momSmaCustom", opts.smas, state.momentum.smaPeriods, unit, "sma");
+    renderMomentumParamMessages();
+  }
+
+  function renderMomentumBenchmarkPicker() {
+    const el = byId("momBenchmarkPicker");
+    if (!el) return;
+    el.innerHTML = state.instruments.map((i) => `<option value="${i.id}" ${i.id === state.momentum.benchmarkAssetId ? "selected" : ""}>${i.ticker}</option>`).join("");
+  }
+
+  const MOMENTUM_GLOSSARY_ITEMS = [
+    { label: "Trailing Return", desc: "ผลตอบแทนสะสมย้อนหลังตามจำนวนงวด (สัปดาห์/เดือน) ที่เลือกใน Lookback" },
+    { label: "SMA Trend Filter", desc: "เปรียบเทียบราคาปัจจุบันกับเส้นค่าเฉลี่ยเคลื่อนที่ (SMA) ตามจำนวนงวดที่เลือก — \"ผ่าน\" คือราคาสูงกว่า SMA" },
+    { label: "Risk-Adjusted Score", desc: "(Trailing Return − Risk-free Rate ที่ปรับสัดส่วนตามช่วงเวลา) ÷ ความผันผวนของช่วงนั้น — ลักษณะคล้าย Sharpe Ratio แต่ไม่ได้ annualize เต็มรูปแบบ" },
+    { label: "Inverse-Volatility Weighting", desc: "ให้น้ำหนักแปรผกผันกับค่าเบี่ยงเบนมาตรฐานของแต่ละตัว (ผันผวนน้อย = น้ำหนักมาก) — เรียกใน UI ว่า \"Optimized Risk-adjusted\" แต่ไม่ใช่ Mean-Variance Optimization เต็มรูปแบบ (ไม่มี covariance matrix ระหว่างสินทรัพย์)" },
+    { label: "RS-Ratio / RS-Momentum", desc: "วัดความแข็งแกร่งเชิงเปรียบเทียบกับ Benchmark แบบ self-normalize ด้วย EMA และค่าเฉลี่ยเคลื่อนที่ของตัวเอง โดยผูกหน้าต่างคำนวณกับค่า Lookback ที่เลือกไว้ — ต่างจาก RRG ทั่วไปที่มักใช้คาบเวลาตายตัว (14/10 period)" },
+    { label: "ATR % และ ATR เทียบตัวเอง", desc: "ATR(14) คือระยะที่ราคาเดินได้จริงในหนึ่งวันโดยเฉลี่ย รวมช่วงที่กระโดดข้ามคืน (true range) — ต่างจาก SD ของราคาปิดที่มองข้ามการเหวี่ยงระหว่างวัน · \"ATR %\" คือ ATR เทียบกับราคา จึงเทียบข้าม instrument ได้ · \"เทียบตัวเอง 1 ปี\" คือเปอร์เซ็นไทล์ของ ATR % วันนี้เทียบกับ 252 วันทำการที่ผ่านมาของตัวมันเอง — 90% แปลว่าตอนนี้ผันผวนกว่าปกติของตัวเองมาก แม้ค่าดิบจะดูไม่สูงเมื่อเทียบกับตัวอื่น · คำนวณจากราคาที่ปรับปันผลแล้ว (view ohlcv_adj)" },
+    { label: "ตำแหน่งในกรอบ 52 สัปดาห์", desc: "0% = อยู่ที่จุดต่ำสุดของ 52 สัปดาห์พอดี · 100% = อยู่ที่จุดสูงสุดพอดี · ใช้ high/low ที่ปรับปันผลแล้ว ไม่ใช่ราคาปิด · คู่กับคอลัมน์ \"ห่างจากจุดสูงสุด\" ที่บอกว่าต้องขึ้นอีกกี่ % ถึงจะกลับไปจุดเดิม" },
+    { label: "Price–Volume Scatter", desc: "ภาพนิ่งของงวดล่าสุด วางทุก instrument บนระนาบ Trailing Return (แกนนอน) × Volume Z-score (แกนตั้ง) — ใช้ตอบคำถามว่า \"ราคาที่วิ่งอยู่ มี volume หนุนหรือไม่\" สีของจุดคือ quadrant ของ RRG ณ จุดล่าสุด (เขียว Leading / น้ำเงิน Improving / แดง Lagging / ส้ม Weakening / เทา = ยังไม่ได้คำนวณ RRG หรือประวัติราคาไม่พอ) instrument ที่มีข้อมูลด้านเดียว (เช่นมีราคาแต่ไม่มี volume) จะไม่ปรากฏบนกราฟนี้เพราะไม่มีพิกัดครบ แต่ยังอยู่ในตาราง" },
+    { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
+    { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
+    { label: "วงแหวน Volume บนกราฟ RRG", desc: "จุดล่าสุดของแต่ละเส้นจะมีวงแหวนสีเมื่อ volume งวดล่าสุดผิดปกติเทียบกับฐานของตัวเอง (ส้ม = พุ่ง Z ≥ 2, น้ำเงิน = แห้ง Z ≤ −2) ใช้เป็นสัญญาณยืนยันว่าการหมุนของ RS เกิดขึ้นพร้อมกับปริมาณซื้อขายที่ผิดปกติหรือไม่ — ขนาดจุดยังคงหมายถึงความเก่า-ใหม่ของ tail เหมือนเดิม ไม่ได้แปลว่า volume" },
+    { label: "Correlation Matrix", desc: "ค่าสหสัมพันธ์ของผลตอบแทนระหว่างคู่สินทรัพย์ในหน้าต่างล่าสุดที่กำหนด (แดง = เคลื่อนไหวไปด้วยกัน, น้ำเงิน = สวนทางกัน) คลิกช่องใดก็ได้เพื่อดูกราฟ rolling correlation ย้อนหลังของคู่นั้น" },
+    { label: "ค่าเฉลี่ย Correlation ของทั้งกลุ่ม", desc: "เฉลี่ยค่าสหสัมพันธ์ของทุกคู่ในกลุ่มที่เลือก ณ แต่ละช่วงเวลา — ใช้ดูภาพ market regime (ค่าสูง = ตลาดเคลื่อนไหวไปทางเดียวกันหมด ผลของการกระจายความเสี่ยงลดลง) จุดบนกราฟถูกสุ่มเลือกช่วงเวลาไม่เกิน 100 จุดเพื่อความเร็ว" },
+    { label: "Volume Z-score", desc: "วัดว่า volume งวดล่าสุดห่างจากฐานปกติของ instrument ตัวเองกี่ SD โดยคำนวณบนสเกล log — ใช้ log เพราะ volume เบ้ขวารุนแรง (มีขอบล่างที่ศูนย์แต่ไม่มีขอบบน) ถ้าคิดบนตัวเลขดิบ ฝั่ง \"แห้งผิดปกติ\" จะไม่มีทางแตะเกณฑ์ −2 ได้เลย · เกณฑ์ที่ถือว่าผิดปกติคือ |Z| ≥ 2" },
+    { label: "RVOL (x)", desc: "volume งวดล่าสุดเป็นกี่เท่าของค่าเฉลี่ยฐาน — ใช้ค่าเฉลี่ยเรขาคณิต (geometric mean) เป็นตัวหาร ซึ่งเป็นตัวเดียวกับที่ Z-score อ้างอิง ทั้ง 2 คอลัมน์จึงเล่าเรื่องเดียวกัน" },
+    { label: "ค่าเฉลี่ย baseline", desc: "ค่าเฉลี่ยเรขาคณิตของ volume ในช่วงย้อนหลังที่กำหนด โดย**ไม่นับงวดปัจจุบัน**เข้าไปในฐาน (กันไม่ให้ค่าที่ผิดปกติไปดันค่าเฉลี่ยที่ตัวเองถูกเทียบ)" },
+    { label: "อันดับ Momentum / อันดับ Volume", desc: "อันดับคงที่ตาม Trailing Return และตามระดับความผิดปกติของ volume (|Z| ไม่ว่าจะพุ่งหรือแห้ง) — ไม่เปลี่ยนตามการ sort ตาราง จึงใช้เทียบข้ามมิติได้ เช่น \"volume อันดับ 1 แต่ momentum อันดับ 45\" คือ volume เข้าผิดปกติทั้งที่ราคายังไม่ไปไหน" },
+    { label: "ใช้เฉพาะงวดที่จบแล้ว (รายสัปดาห์/รายเดือน)", desc: "ทุกตัวเลขในหน้านี้ (Trailing Return, SMA, RRG, Volume, Correlation) ใช้เฉพาะสัปดาห์/เดือนที่จบแล้วเท่านั้น งวดที่ยังไม่จบจะไม่นำมาคำนวณ — ถือว่างวดจบแล้วเมื่อมีข้อมูลของงวดถัดไปเข้ามาในระบบ ถ้าต้องการสัญญาณที่สดกว่า ให้ใช้ Timeframe รายวันแล้วกำหนด Lookback เอง" },
+    { label: "สีในตาราง", desc: "คอลัมน์ Trailing Return ไล่สีทิศทางเดียว (เขียว = ดีกว่า) ส่วนคอลัมน์ Volume Z-score ไล่สี 2 ทาง (ส้ม = พุ่งผิดปกติ, น้ำเงิน = แห้งผิดปกติ) — ทั้งคู่เป็นสีแบบ relative เทียบกับแถวที่แสดงอยู่ ไม่ใช่ threshold ตายตัว" }
+  ];
+
+  function renderMomentumGlossary() {
+    const el = byId("momGlossary");
+    if (!el) return;
+    el.innerHTML = MOMENTUM_GLOSSARY_ITEMS.map((it) =>
+      `<div class="text-xs"><span class="font-semibold text-slate-700">${it.label}</span><span class="text-slate-500"> — ${it.desc}</span></div>`
+    ).join("");
+  }
+
+  // =======================================================================
+  // Volume Anomaly (2026-09, revised) -- ONE implementation shared by the
+  // merged Leaderboard table, the Volume chart, the RRG halo and the
+  // drill-down chart. There is deliberately no second copy of this maths
+  // anywhere else in the file (project rule #3).
+  //
+  // Two revisions vs the first cut, both forced by validation against real
+  // production data:
+  //
+  // 1. Z-SCORES ARE COMPUTED ON log(volume), NOT RAW VOLUME.
+  //    Traded volume is multiplicative and hard-bounded at zero, so its raw
+  //    distribution is strongly right-skewed (measured over 500 real trading
+  //    days: skew SPY +2.13, GLD +4.07, ARKK +1.66). On raw volume the low
+  //    tail is unreachable -- the most negative z across those same 500 days
+  //    was only -1.45, so the "unusually quiet" flag (z <= -2) could never
+  //    fire, not once, for any instrument. Taking logs makes "twice normal"
+  //    and "half normal" equal distances (+/-0.69), pulls the skew down to
+  //    ~0.0-0.6, and makes both tails detectable (log-z reached -2.2 to -2.6
+  //    on the same sample).
+  // 2. THE BASELINE CENTRE IS THE GEOMETRIC MEAN (exp of the mean log), so
+  //    the baseline shown in the table, the RVOL ratio and the z-score all
+  //    describe the same reference point. The drill-down bands are therefore
+  //    multiplicative as well -- asymmetric in raw units, which is the
+  //    correct shape for volume.
+  // =======================================================================
+  const VOLUME_BASELINE_OPTIONS = {
+    day:   [20, 50, 100],
+    week:  [10, 20, 26, 52],
+    month: [6, 12, 24]
+  };
+  const VOLUME_BASELINE_DEFAULTS = { day: 20, week: 20, month: 12 };
+
+  // |Z| at or beyond this earns the "ผิดปกติ" badge and the RRG halo. A
+  // display threshold only -- the heatmap itself stays relative to whatever
+  // rows are on screen, same principle as the Seasonal tab's F11 heatmap.
+  const VOLUME_ANOMALY_Z_THRESHOLD = 2;
+
+  const VOLUME_DRILLDOWN_PERIODS = { day: 250, week: 156, month: 60 };
+  // Fetched on top of what is strictly needed so the rolling baseline is
+  // already populated at the left edge of whatever window we plot.
+  const VOLUME_FETCH_BUFFER_PERIODS = 10;
+  const APPROX_DAYS_PER_PERIOD = { day: 1.6, week: 7.6, month: 31.5 };
+
+  const VOLUME_POS_HUE = 25;   // orange -- volume above its own normal
+  const VOLUME_NEG_HUE = 215;  // blue   -- volume below its own normal
+  const VOLUME_POS_COLOR = "#ea580c";
+  const VOLUME_NEG_COLOR = "#2563eb";
+
+  // log() of a volume figure, or null when the value cannot be logged
+  // (zero-volume days -- holidays, halted sessions -- are excluded from the
+  // baseline rather than treated as "extremely quiet").
+  function logVolume(v) {
+    const n = v == null ? null : Number(v);
+    if (n == null || Number.isNaN(n) || n <= 0) return null;
+    return Math.log(n);
+  }
+
+  // Mean + sample SD of the log volumes in the `baselinePeriods` slots ending
+  // just BEFORE index `endExclusive`. The observation being judged is left
+  // out of its own baseline so a spike cannot inflate the very average it is
+  // measured against. Returns the geometric mean alongside, for display.
+  function volumeBaselineStats(logs, endExclusive, baselinePeriods) {
+    if (!Array.isArray(logs) || !baselinePeriods || baselinePeriods < 2) return null;
+    const start = endExclusive - baselinePeriods;
+    if (start < 0 || endExclusive > logs.length) return null;
+    const win = logs.slice(start, endExclusive);
+    if (win.some((v) => v == null || Number.isNaN(v))) return null;
+    const meanLog = win.reduce((a, b) => a + b, 0) / win.length;
+    const sdLog = stdevSample(win);
+    return { meanLog, sdLog, geoMean: Math.exp(meanLog) };
+  }
+
+  // series: ascending [{period_end, volume, adj_close}]. Judges the LAST element.
+  function computeVolumeAnomaly(series, baselinePeriods) {
+    if (!series || series.length < baselinePeriods + 1) return null;
+    const logs = series.map((p) => logVolume(p.volume));
+    const idx = logs.length - 1;
+    const base = volumeBaselineStats(logs, idx, baselinePeriods);
+    const currentLog = logs[idx];
+    if (!base || currentLog == null) return null;
+    const current = Number(series[idx].volume);
+    return {
+      periodEnd: series[idx].period_end,
+      current,
+      mean: base.geoMean,          // geometric mean, the reference for BOTH z and rvol
+      sdLog: base.sdLog,
+      zScore: (base.sdLog != null && base.sdLog > 0) ? (currentLog - base.meanLog) / base.sdLog : null,
+      rvol: base.geoMean > 0 ? current / base.geoMean : null
+    };
+  }
+
+  // Rolling baseline + multiplicative bands for the drill-down chart. Bands
+  // are exp(meanLog ± k·sdLog), so they are naturally wider above than below
+  // and can never go negative.
+  function computeVolumeBandSeries(series, baselinePeriods) {
+    if (!series || !series.length) return [];
+    const logs = series.map((p) => logVolume(p.volume));
+    const out = [];
+    for (let i = 0; i < series.length; i++) {
+      const base = volumeBaselineStats(logs, i, baselinePeriods);
+      const v = series[i].volume == null ? null : Number(series[i].volume);
+      const sd = base && base.sdLog != null ? base.sdLog : null;
+      out.push({
+        periodEnd: series[i].period_end,
+        volume: v,
+        adjClose: series[i].adj_close == null ? null : Number(series[i].adj_close),
+        mean: base ? base.geoMean : null,
+        sdLog: sd,
+        upper1: base && sd != null ? Math.exp(base.meanLog + sd) : null,
+        lower1: base && sd != null ? Math.exp(base.meanLog - sd) : null,
+        upper2: base && sd != null ? Math.exp(base.meanLog + 2 * sd) : null,
+        lower2: base && sd != null ? Math.exp(base.meanLog - 2 * sd) : null,
+        zScore: (base && sd != null && sd > 0 && logs[i] != null) ? (logs[i] - base.meanLog) / sd : null
+      });
+    }
+    return out;
+  }
+
+  // instrumentId -> anomaly (absent when history is too short).
+  function computeVolumeAnomalyMap(instruments, seriesByInstrumentId, baselinePeriods) {
+    const out = {};
+    instruments.forEach((inst) => {
+      const a = computeVolumeAnomaly(seriesByInstrumentId[inst.id], baselinePeriods);
+      if (a) out[inst.id] = a;
+    });
+    return out;
+  }
+
+  // "How unusual", regardless of direction -- an unusually quiet instrument
+  // is as much an anomaly as a spike, so the Volume rank uses distance from
+  // normal rather than the signed value.
+  function volumeAnomalyMagnitude(row) {
+    return row && row.zScore != null ? Math.abs(row.zScore) : null;
+  }
+
+  // Symmetric (diverging) scale around `center`: unlike the Seasonal
+  // heatmap, volume anomalies matter in BOTH directions, so the colour scale
+  // has to be two-sided rather than a single good->bad ramp.
+  function computeSymmetricRange(values, center) {
+    let maxAbs = 0;
+    values.forEach((v) => {
+      if (v == null || Number.isNaN(v)) return;
+      const d = Math.abs(v - center);
+      if (d > maxAbs) maxAbs = d;
+    });
+    return { center, maxAbs };
+  }
+
+  function volumeDivergingColor(value, range) {
+    if (value == null || Number.isNaN(value)) return null;
+    if (!range || !range.maxAbs) return HEATMAP_NEUTRAL;
+    let t = (value - range.center) / range.maxAbs;
+    t = Math.max(-1, Math.min(1, t));
+    const hue = t >= 0 ? VOLUME_POS_HUE : VOLUME_NEG_HUE;
+    const light = 97 - 25 * Math.abs(t);
+    return `hsl(${hue}, 80%, ${light.toFixed(0)}%)`;
+  }
+
+  function formatVolumeNumber(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return (v / 1e9).toFixed(2) + "B";
+    if (abs >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (abs >= 1e3) return (v / 1e3).toFixed(1) + "K";
+    return String(Math.round(v));
+  }
+
+  // p_start_date for a fetch that only needs `periods` recent periods -- keeps
+  // payloads small (and well clear of PostgREST row caps) instead of pulling
+  // full history every time.
+  function approxStartDateForPeriods(granularity, periods, now) {
+    const days = Math.ceil((periods + VOLUME_FETCH_BUFFER_PERIODS) * (APPROX_DAYS_PER_PERIOD[granularity] || 1.6)) + 14;
+    const base = now ? new Date(now.getTime()) : new Date();
+    base.setUTCDate(base.getUTCDate() - days);
+    return base.toISOString().slice(0, 10);
+  }
+
+  // What to fetch for the volume side, given the momentum timeframe.
+  // 2026-09-15: the month-to-date aggregation was removed -- every timeframe
+  // now reads its own granularity straight from the RPC, and week/month stop
+  // at the last COMPLETED period (p_complete_only), so a half-finished
+  // period can never read as a volume "dry-up".
+  function volumeFetchPlan(timeframe, periodsNeeded, now) {
+    return {
+      granularity: timeframe,
+      startDate: approxStartDateForPeriods(timeframe, periodsNeeded, now)
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Volume data access
+  // ---------------------------------------------------------------------
+  async function fetchPeriodVolumes(instrumentIds, granularity, startDate, endDate, completeOnly) {
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("period_volume_series", {
+        p_instrument_ids: instrumentIds,
+        p_granularity: granularity,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+        p_complete_only: completeOnly !== false
+      }).range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  function groupVolumeRows(rows) {
+    const byInst = {};
+    rows.forEach((r) => {
+      byInst[r.instrument_id] = byInst[r.instrument_id] || [];
+      byInst[r.instrument_id].push({
+        period_end: r.period_end,
+        volume: r.volume == null ? null : Number(r.volume),
+        adj_close: r.adj_close == null ? null : Number(r.adj_close),
+        // 2026-09-21: period open/high/low on the adj_close basis (null from an
+        // older RPC that did not return them)
+        adj_open: r.adj_open == null ? null : Number(r.adj_open),
+        adj_high: r.adj_high == null ? null : Number(r.adj_high),
+        adj_low: r.adj_low == null ? null : Number(r.adj_low)
+      });
+    });
+    Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
+    return byInst;
+  }
+
+  // ---------------------------------------------------------------------
+  // "Data as of" note (2026-09-15)
+  // ---------------------------------------------------------------------
+  // Week/month views only ever use COMPLETED periods, so the note tells the
+  // user which period the numbers stop at. Day bars are complete by
+  // construction (prices are loaded after the close).
+  const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+
+  function formatThaiDate(dateStr) {
+    if (typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return null;
+    const y = Number(dateStr.slice(0, 4));
+    const m = Number(dateStr.slice(5, 7));
+    const d = Number(dateStr.slice(8, 10));
+    if (!(m >= 1 && m <= 12)) return null;
+    return `${d} ${THAI_MONTHS_SHORT[m - 1]} ${y}`;
+  }
+
+  function dataAsOfMessage(asOf, granularity) {
+    if (!asOf || !asOf.as_of) return "";
+    const latest = formatThaiDate(asOf.as_of);
+    if (!latest) return "";
+    if (granularity === "month") {
+      const m = asOf.last_complete_month_start;
+      if (!formatThaiDate(m)) return "";
+      const label = `${THAI_MONTHS_SHORT[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+      return `ข้อมูลรายเดือนถึงเดือน ${label} (ใช้เฉพาะเดือนที่จบแล้ว — เดือนที่ยังไม่จบไม่นำมาคำนวณ) · ข้อมูลล่าสุดในระบบ ${latest}`;
+    }
+    if (granularity === "week") {
+      const w = formatThaiDate(asOf.last_complete_week_start);
+      if (!w) return "";
+      return `ข้อมูลรายสัปดาห์ถึงสัปดาห์ที่เริ่ม ${w} (ใช้เฉพาะสัปดาห์ที่จบแล้ว — สัปดาห์ที่ยังไม่จบไม่นำมาคำนวณ) · ข้อมูลล่าสุดในระบบ ${latest}`;
+    }
+    return `ข้อมูลรายวันถึงวันที่ ${latest}`;
+  }
+
+  function renderAsOfNote(elId, granularity) {
+    const el = byId(elId);
+    if (!el) return false;
+    const msg = dataAsOfMessage(state.dataAsOf, granularity);
+    if (msg) { el.textContent = msg; show(el); } else { el.textContent = ""; hide(el); }
+    return !!msg;
+  }
+
+  function renderSeasonalAsOfNote() {
+    return renderAsOfNote("seasonalAsOfNote", state.periodType);
+  }
+
+  // =======================================================================
+  // Correlation Explorer (2026-09) -- lives inside the Momentum tab, shares
+  // its Universe selector but keeps an independent return-frequency +
+  // rolling-window control.
+  // =======================================================================
+  const CORR_DEFAULT_WINDOW = { day: 60, week: 26, month: 12 };
+  const CORR_MIN_OVERLAP = 5;            // fewer overlapping return observations than this -> correlation is null
+  const CORR_AVG_MAX_POINTS = 100;       // evaluation points on the average-correlation time series (subsampled for speed)
+  const CORR_DEFAULT_MAX_SELECTED = 25;  // above this the matrix pre-checks only the first N, for readability
+
+  function pearson(xs, ys) {
+    const n = xs.length;
+    if (n < 2 || ys.length !== n) return null;
+    let sx = 0, sy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+    const mx = sx / n, my = sy / n;
+    let num = 0, dx2 = 0, dy2 = 0;
+    for (let i = 0; i < n; i++) {
+      const a = xs[i] - mx, b = ys[i] - my;
+      num += a * b; dx2 += a * a; dy2 += b * b;
+    }
+    if (dx2 <= 0 || dy2 <= 0) return null;
+    return num / Math.sqrt(dx2 * dy2);
+  }
+
+  // items: [{instrumentId, ticker, series:[{period_end, adj_close}]}]
+  // Returns a shared ascending date axis plus per-instrument return arrays
+  // aligned to it (null where that instrument has no return on that date --
+  // different listing dates and market holidays are handled by the pairwise
+  // overlap logic below rather than by dropping dates globally).
+  function buildAlignedReturns(items) {
+    const axisSet = new Set();
+    items.forEach((it) => (it.series || []).forEach((p) => axisSet.add(p.period_end)));
+    const axis = Array.from(axisSet).sort();
+    const indexOf = new Map(axis.map((d, i) => [d, i]));
+    const returnsById = {};
+    items.forEach((it) => {
+      const arr = new Array(axis.length).fill(null);
+      const series = it.series || [];
+      for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].adj_close, cur = series[i].adj_close;
+        if (prev == null || cur == null || prev === 0) continue;
+        const idx = indexOf.get(series[i].period_end);
+        if (idx == null) continue;
+        arr[idx] = cur / prev - 1;
+      }
+      returnsById[it.instrumentId] = arr;
+    });
+    return { axis, returnsById };
+  }
+
+  // Correlation over the last `windowPeriods` axis slots ending at
+  // endIndex where BOTH series have a return.
+  function correlationForWindow(retsA, retsB, endIndex, windowPeriods) {
+    if (!retsA || !retsB) return null;
+    const xs = [], ys = [];
+    for (let i = endIndex; i >= 0 && xs.length < windowPeriods; i--) {
+      const a = retsA[i], b = retsB[i];
+      if (a == null || b == null) continue;
+      xs.push(a); ys.push(b);
+    }
+    if (xs.length < Math.min(windowPeriods, CORR_MIN_OVERLAP)) return null;
+    return pearson(xs, ys);
+  }
+
+  function computeCorrelationMatrix(items, windowPeriods) {
+    const aligned = buildAlignedReturns(items);
+    const endIndex = aligned.axis.length - 1;
+    const ids = items.map((it) => it.instrumentId);
+    const tickers = items.map((it) => it.ticker);
+    const values = ids.map((idA, i) => ids.map((idB, j) => {
+      if (i === j) return 1;
+      if (j < i) return null; // filled by mirroring below
+      return correlationForWindow(aligned.returnsById[idA], aligned.returnsById[idB], endIndex, windowPeriods);
+    }));
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = 0; j < i; j++) values[i][j] = values[j][i];
+    }
+    return { ids, tickers, values, windowPeriods, axisLength: aligned.axis.length, aligned };
+  }
+
+  function computeRollingPairCorrelation(aligned, idA, idB, windowPeriods) {
+    const retsA = aligned.returnsById[idA], retsB = aligned.returnsById[idB];
+    const out = [];
+    if (!retsA || !retsB) return out;
+    for (let i = windowPeriods; i < aligned.axis.length; i++) {
+      const c = correlationForWindow(retsA, retsB, i, windowPeriods);
+      if (c != null) out.push({ periodEnd: aligned.axis[i], corr: c });
+    }
+    return out;
+  }
+
+  // Average of all pairwise correlations through time -- a market-regime
+  // read (everything moving together vs differentiating). Evaluation points
+  // are subsampled to CORR_AVG_MAX_POINTS because the cost is
+  // O(points x pairs x window) and a 56-name universe is 1,540 pairs.
+  function computeAverageCorrelationSeries(aligned, ids, windowPeriods, maxPoints) {
+    const out = [];
+    const total = aligned.axis.length;
+    if (total <= windowPeriods || ids.length < 2) return out;
+    const available = total - windowPeriods;
+    const step = Math.max(1, Math.ceil(available / (maxPoints || CORR_AVG_MAX_POINTS)));
+    for (let i = windowPeriods; i < total; i += step) {
+      let sum = 0, count = 0;
+      for (let a = 0; a < ids.length; a++) {
+        for (let b = a + 1; b < ids.length; b++) {
+          const c = correlationForWindow(aligned.returnsById[ids[a]], aligned.returnsById[ids[b]], i, windowPeriods);
+          if (c != null) { sum += c; count++; }
+        }
+      }
+      if (count) out.push({ periodEnd: aligned.axis[i], avgCorr: sum / count, pairCount: count });
+    }
+    return out;
+  }
+
+  // Blue (negative) -> white (zero) -> red (positive). Fixed -1..+1 scale,
+  // not relative: correlation already has an absolute, interpretable range.
+  function correlationColor(value) {
+    if (value == null || Number.isNaN(value)) return null;
+    const t = Math.max(-1, Math.min(1, value));
+    const hue = t >= 0 ? 0 : 215;
+    const light = 97 - 32 * Math.abs(t);
+    return `hsl(${hue}, 70%, ${light.toFixed(0)}%)`;
+  }
+
+  function corrFetchKey() {
+    return `${state.momentum.universeMode}|${state.momentum.corr.frequency}`;
+  }
+
+  // Reuses the price series already loaded for the Leaderboard/RRG whenever
+  // the requested correlation frequency matches the momentum Timeframe --
+  // only a genuinely different frequency (or universe) costs a fetch.
+  async function ensureCorrelationSeries() {
+    const corr = state.momentum.corr;
+    const key = corrFetchKey();
+    if (corr.seriesCacheKey === key && Object.keys(corr.seriesByInstrument).length) return true;
+
+    const universe = state.momentum.universeInstruments.length
+      ? state.momentum.universeInstruments
+      : getUniverseInstruments(state.momentum.universeMode);
+    corr.instruments = universe;
+    if (!universe.length) { corr.seriesByInstrument = {}; corr.seriesCacheKey = key; return true; }
+
+    if (corr.frequency === state.momentum.timeframe && state.momentum.dataLoaded) {
+      const reused = {};
+      universe.forEach((inst) => {
+        const s = state.momentum.seriesByInstrument[inst.id];
+        if (s && s.length) reused[inst.id] = s;
+      });
+      if (Object.keys(reused).length) {
+        corr.seriesByInstrument = reused;
+        corr.seriesCacheKey = key;
+        return true;
+      }
+    }
+
+    const g = corr.frequency;
+    const needed = Math.max(corr.windowPeriods * 3, (CORR_DEFAULT_WINDOW[g] || 60) * 3);
+    const rows = await fetchPeriodEndCloses(universe.map((i) => i.id), g, approxStartDateForPeriods(g, needed));
+    const byInst = {};
+    rows.forEach((r) => {
+      byInst[r.instrument_id] = byInst[r.instrument_id] || [];
+      byInst[r.instrument_id].push({ period_end: r.period_end, adj_close: Number(r.adj_close) });
+    });
+    Object.keys(byInst).forEach((k) => byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : (a.period_end > b.period_end ? 1 : 0))));
+    corr.seriesByInstrument = byInst;
+    corr.seriesCacheKey = key;
+    return true;
+  }
+
+  function corrSelectedItems() {
+    const corr = state.momentum.corr;
+    const selected = new Set(corr.selectedIds);
+    return corr.instruments
+      .filter((inst) => selected.has(inst.id) && corr.seriesByInstrument[inst.id] && corr.seriesByInstrument[inst.id].length > 1)
+      .map((inst) => ({ instrumentId: inst.id, ticker: inst.ticker, series: corr.seriesByInstrument[inst.id] }));
+  }
+
+  async function runCorrelationCalculate() {
+    const corr = state.momentum.corr;
+    const errEl = byId("corrError");
+    hide(errEl);
+    setLoading("corrLoading", true);
+    setText("corrStatus", "กำลังคำนวณ...");
+    try {
+      await ensureCorrelationSeries();
+      if (!corr.selectionInitialized) {
+        const ranked = sortedMomentumRows().map((r) => r.instrumentId);
+        const ordered = corr.instruments.slice().sort((a, b) => {
+          const ai = ranked.indexOf(a.id), bi = ranked.indexOf(b.id);
+          return (ai === -1 ? 1e9 : ai) - (bi === -1 ? 1e9 : bi);
+        });
+        corr.selectedIds = ordered.slice(0, CORR_DEFAULT_MAX_SELECTED).map((i) => i.id);
+        corr.selectionInitialized = true;
+      }
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+      setText("corrStatus", "คำนวณเสร็จแล้ว");
+    } catch (e) {
+      showError(errEl, `คำนวณ Correlation ไม่สำเร็จ: ${e.message || e}`);
+      setText("corrStatus", "");
+    } finally {
+      setLoading("corrLoading", false);
+    }
+  }
+
+  function recomputeCorrelation() {
+    const corr = state.momentum.corr;
+    const items = corrSelectedItems();
+    if (items.length < 2) {
+      corr.matrix = null; corr.avgSeries = []; corr.pairSeries = []; corr.selectedPair = null;
+      renderCorrelationMatrix();
+      renderCorrAvgChart();
+      renderCorrPairChart();
+      return;
+    }
+    corr.matrix = computeCorrelationMatrix(items, corr.windowPeriods);
+    corr.avgSeries = computeAverageCorrelationSeries(corr.matrix.aligned, corr.matrix.ids, corr.windowPeriods, CORR_AVG_MAX_POINTS);
+    if (corr.selectedPair) {
+      const stillThere = corr.matrix.ids.includes(corr.selectedPair.aId) && corr.matrix.ids.includes(corr.selectedPair.bId);
+      if (stillThere) {
+        corr.pairSeries = computeRollingPairCorrelation(corr.matrix.aligned, corr.selectedPair.aId, corr.selectedPair.bId, corr.windowPeriods);
+      } else {
+        corr.selectedPair = null; corr.pairSeries = [];
+      }
+    }
+    renderCorrelationMatrix();
+    renderCorrAvgChart();
+    renderCorrPairChart();
+  }
+
+  function renderCorrCheckboxPanel() {
+    const panel = byId("corrCheckboxPanel");
+    const noteEl = byId("corrSelectionNote");
+    const corr = state.momentum.corr;
+    if (noteEl) {
+      noteEl.textContent = corr.instruments.length > CORR_DEFAULT_MAX_SELECTED
+        ? `Universe นี้มี ${corr.instruments.length} ตัว — ค่าเริ่มต้นติ๊กให้ ${CORR_DEFAULT_MAX_SELECTED} ตัวแรกตามอันดับ Leaderboard เพื่อให้ matrix ยังอ่านได้ ติ๊กเพิ่มเองได้ตามต้องการ`
+        : "ค่าเริ่มต้น: ทุกตัวใน Universe";
+    }
+    if (!panel) return;
+    const selected = new Set(corr.selectedIds);
+    panel.innerHTML = corr.instruments.map((inst) =>
+      `<label class="flex items-center gap-1 text-slate-600">
+         <input type="checkbox" data-inst-id="${inst.id}" class="corr-cb" ${selected.has(inst.id) ? "checked" : ""} />
+         ${inst.ticker}
+       </label>`
+    ).join("");
+    panel.querySelectorAll(".corr-cb").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        const id = Number(e.target.getAttribute("data-inst-id"));
+        const set = new Set(state.momentum.corr.selectedIds);
+        if (e.target.checked) set.add(id); else set.delete(id);
+        state.momentum.corr.selectedIds = Array.from(set);
+        recomputeCorrelation();
+      });
+    });
+  }
+
+  function renderCorrelationMatrix() {
+    const table = byId("corrMatrixTable");
+    if (!table) return;
+    const corr = state.momentum.corr;
+    if (!corr.matrix) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูล — เลือกอย่างน้อย 2 ตัวแล้วกด "คำนวณ Correlation"</td></tr></tbody>`;
+      return;
+    }
+    const { tickers, values, ids } = corr.matrix;
+    const head = `<thead><tr><th class="sticky-col text-left px-2 py-1 bg-slate-50 border-b border-slate-200"></th>` +
+      tickers.map((t) => `<th class="px-1.5 py-1 bg-slate-50 border-b border-slate-200 text-slate-600">${t}</th>`).join("") +
+      `</tr></thead>`;
+    const body = tickers.map((rowTicker, i) => {
+      const cells = tickers.map((colTicker, j) => {
+        const v = values[i][j];
+        const bg = correlationColor(v);
+        const style = bg ? ` style="background-color:${bg};"` : "";
+        const txt = v == null ? "—" : v.toFixed(2);
+        return `<td class="text-right px-1.5 py-1 corr-cell cursor-pointer" data-i="${i}" data-j="${j}"${style} title="${rowTicker} vs ${colTicker}">${txt}</td>`;
+      }).join("");
+      return `<tr><th class="sticky-col text-left px-2 py-1 font-medium text-slate-700 border-b border-slate-100">${rowTicker}</th>${cells}</tr>`;
+    }).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
+    table.querySelectorAll(".corr-cell").forEach((td) => {
+      td.addEventListener("click", () => {
+        const i = Number(td.getAttribute("data-i")), j = Number(td.getAttribute("data-j"));
+        if (i === j) return;
+        selectCorrelationPair(ids[i], ids[j]);
+      });
+    });
+  }
+
+  function selectCorrelationPair(aId, bId) {
+    const corr = state.momentum.corr;
+    if (!corr.matrix) return;
+    const aIdx = corr.matrix.ids.indexOf(aId), bIdx = corr.matrix.ids.indexOf(bId);
+    if (aIdx === -1 || bIdx === -1) return;
+    corr.selectedPair = { aId, bId, aTicker: corr.matrix.tickers[aIdx], bTicker: corr.matrix.tickers[bIdx] };
+    corr.pairSeries = computeRollingPairCorrelation(corr.matrix.aligned, aId, bId, corr.windowPeriods);
+    renderCorrPairChart();
+  }
+
+  function renderCorrPairChart() {
+    const titleEl = byId("corrPairTitle");
+    const corr = state.momentum.corr;
+    if (titleEl) {
+      titleEl.textContent = corr.selectedPair
+        ? `Rolling Correlation รายคู่ — ${corr.selectedPair.aTicker} vs ${corr.selectedPair.bTicker} (หน้าต่าง ${corr.windowPeriods} งวด)`
+        : "Rolling Correlation รายคู่ (ยังไม่ได้เลือกคู่)";
+    }
+    const canvas = byId("corrPairChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    if (corrPairChartInstance) { corrPairChartInstance.destroy(); corrPairChartInstance = null; }
+    if (!corr.pairSeries.length) return;
+    corrPairChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: corr.pairSeries.map((p) => p.periodEnd),
+        datasets: [{ label: "Correlation", data: corr.pairSeries.map((p) => p.corr), borderColor: "#2563eb", pointRadius: 0, borderWidth: 1.5, fill: false }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { min: -1, max: 1, title: { display: true, text: "Correlation" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  function renderCorrAvgChart() {
+    const canvas = byId("corrAvgChart");
+    const corr = state.momentum.corr;
+    if (!canvas || typeof Chart === "undefined") return;
+    if (corrAvgChartInstance) { corrAvgChartInstance.destroy(); corrAvgChartInstance = null; }
+    if (!corr.avgSeries.length) return;
+    corrAvgChartInstance = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: corr.avgSeries.map((p) => p.periodEnd),
+        datasets: [{ label: "ค่าเฉลี่ย Correlation", data: corr.avgSeries.map((p) => p.avgCorr), borderColor: "#059669", pointRadius: 0, borderWidth: 1.5, fill: false }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: { y: { min: -1, max: 1, title: { display: true, text: "ค่าเฉลี่ย Correlation" } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth"), eventsEl = byId("tabEvents");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth"), eventsBtn = byId("tabBtnEvents");
+    if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
+    if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
+    if (healthEl) healthEl.classList.toggle("hidden", tab !== "health");
+    if (eventsEl) eventsEl.classList.toggle("hidden", tab !== "events");
+    if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
+    if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
+    if (healthBtn) healthBtn.classList.toggle("qd-tab-active", tab === "health");
+    if (eventsBtn) eventsBtn.classList.toggle("qd-tab-active", tab === "events");
+    if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
+    if (tab === "health" && !state.health.loaded && !state.health.loading && state.session) loadDataHealth();
+    if (tab === "events" && !state.eventsTab.loaded) loadEventsTab();
+  }
+
+  function bindMomentumUIHandlers() {
+    const tabSeasBtn = byId("tabBtnSeasonality");
+    if (tabSeasBtn) tabSeasBtn.addEventListener("click", () => switchTab("seasonality"));
+    const tabMomBtn = byId("tabBtnMomentum");
+    if (tabMomBtn) tabMomBtn.addEventListener("click", () => switchTab("momentum"));
+
+    const universeEl = byId("momUniversePicker");
+    if (universeEl) universeEl.addEventListener("change", (e) => { state.momentum.universeMode = e.target.value; });
+
+    const tfEl = byId("momTimeframePicker");
+    if (tfEl) tfEl.addEventListener("change", (e) => {
+      state.momentum.timeframe = e.target.value;
+      const def = MOMENTUM_TIMEFRAME_DEFAULTS[e.target.value];
+      state.momentum.lookbackPeriods = def.lookback;
+      state.momentum.smaPeriods = def.sma;
+      state.momentum.paramErrors = { lookback: "", sma: "" };
+      // The volume baseline is measured in the same periods as the timeframe,
+      // so its sensible default moves with it (the user can still override).
+      state.momentum.volBaselinePeriods = VOLUME_BASELINE_DEFAULTS[e.target.value] || state.momentum.volBaselinePeriods;
+      const volBaseEl = byId("momVolBaselineInput");
+      if (volBaseEl) volBaseEl.value = state.momentum.volBaselinePeriods;
+      // Daily rotation is much noisier than weekly/monthly, so the tail
+      // default stretches with the timeframe.
+      state.momentum.tailLength = MOMENTUM_TAIL_DEFAULTS[e.target.value] || state.momentum.tailLength;
+      const tailInput = byId("momTailLengthInput");
+      if (tailInput) tailInput.value = state.momentum.tailLength;
+      renderMomentumLookbackSmaPickers();
+    });
+
+    const volBaselineEl = byId("momVolBaselineInput");
+    if (volBaselineEl) volBaselineEl.addEventListener("change", (e) => {
+      // Part of the fetch key: a longer baseline may need more history than
+      // what is currently loaded, so "คำนวณ" decides whether to re-fetch.
+      state.momentum.volBaselinePeriods = Math.max(3, Number(e.target.value) || 12);
+    });
+
+    const lbEl = byId("momLookbackPicker");
+    const lbCustomEl = byId("momLookbackCustom");
+    if (lbEl) lbEl.addEventListener("change", () => { onParamSelectChange("lookback", lbEl, lbCustomEl); });
+    if (lbCustomEl) lbCustomEl.addEventListener("change", () => { onParamInputChange("lookback", lbCustomEl); });
+
+    const smaEl = byId("momSmaPicker");
+    const smaCustomEl = byId("momSmaCustom");
+    if (smaEl) smaEl.addEventListener("change", () => { onParamSelectChange("sma", smaEl, smaCustomEl); });
+    if (smaCustomEl) smaCustomEl.addEventListener("change", () => { onParamInputChange("sma", smaCustomEl); });
+
+    const benchEl = byId("momBenchmarkPicker");
+    if (benchEl) benchEl.addEventListener("change", (e) => { state.momentum.benchmarkAssetId = Number(e.target.value); });
+
+    const riskToggle = byId("momRiskAdjustedToggle");
+    if (riskToggle) riskToggle.addEventListener("change", (e) => { state.momentum.riskAdjusted = e.target.checked; recomputeMomentumRows(); renderMomentumLeaderboard(); });
+
+    const rfInput = byId("momRiskFreeRate");
+    if (rfInput) rfInput.addEventListener("change", (e) => { state.momentum.riskFreeAnnualPct = Number(e.target.value) || 0; recomputeMomentumRows(); renderMomentumLeaderboard(); });
+
+    const rfAutofillBtn = byId("momRiskFreeAutofillBtn");
+    if (rfAutofillBtn) rfAutofillBtn.addEventListener("click", () => autofillRiskFreeRate());
+
+    const tailEl = byId("momTailLengthInput");
+    if (tailEl) tailEl.addEventListener("change", (e) => { state.momentum.tailLength = Math.max(2, Number(e.target.value) || 12); });
+
+    const rrgSelectAllBtn = byId("momRrgSelectAllBtn");
+    if (rrgSelectAllBtn) rrgSelectAllBtn.addEventListener("click", () => {
+      const sel = new Set(state.momentum.selectedIds);
+      const rotationInstruments = state.momentum.universeInstruments.filter((i) => sel.has(i.id) && i.id !== state.momentum.benchmarkAssetId);
+      state.momentum.rrgSelectedIds = rotationInstruments.map((i) => i.id);
+      state.momentum.rrgSelectionInitialized = true;
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+    });
+
+    const rrgClearAllBtn = byId("momRrgClearAllBtn");
+    if (rrgClearAllBtn) rrgClearAllBtn.addEventListener("click", () => {
+      state.momentum.rrgSelectedIds = [];
+      state.momentum.rrgSelectionInitialized = true;
+      renderRrgCheckboxPanel();
+      rerenderRotationDisplay();
+    });
+
+    const calcBtn = byId("momCalculateBtn");
+    if (calcBtn) calcBtn.addEventListener("click", () => runMomentumCalculate());
+
+    const exportBtn = byId("momExportBtn");
+    if (exportBtn) exportBtn.addEventListener("click", () => exportMomentumToExcel());
+  }
+
+  function bindMergedTableUIHandlers() {
+    const selectAll = byId("momSelectAllBtn");
+    if (selectAll) selectAll.addEventListener("click", () => {
+      state.momentum.selectedIds = state.momentum.universeInstruments.map((i) => i.id);
+      state.momentum.selectionInitialized = true;
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+    });
+
+    const clearAll = byId("momClearAllBtn");
+    if (clearAll) clearAll.addEventListener("click", () => {
+      state.momentum.selectedIds = [];
+      state.momentum.selectionInitialized = true;
+      renderMomSelectionPanel();
+      recomputeMomentumRows();
+      renderMomentumLeaderboard();
+    });
+
+    document.querySelectorAll(".mom-preset-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyTablePreset(btn.getAttribute("data-preset"));
+        renderMomentumLeaderboard();
+      });
+    });
+
+    const colToggle = byId("momColumnToggleBtn");
+    if (colToggle) colToggle.addEventListener("click", () => {
+      const panel = byId("momColumnPanel");
+      if (panel) panel.classList.toggle("hidden");
+    });
+
+    const resetBtn = byId("momLayoutResetBtn");
+    if (resetBtn) resetBtn.addEventListener("click", () => {
+      resetTableLayout();
+      renderMomentumLeaderboard();
+    });
+  }
+
+  function bindCorrelationUIHandlers() {
+    const freqEl = byId("corrFrequencyPicker");
+    if (freqEl) freqEl.addEventListener("change", (e) => {
+      state.momentum.corr.frequency = e.target.value;
+      state.momentum.corr.windowPeriods = CORR_DEFAULT_WINDOW[e.target.value] || 12;
+      const winEl = byId("corrWindowInput");
+      if (winEl) winEl.value = state.momentum.corr.windowPeriods;
+    });
+
+    const winEl = byId("corrWindowInput");
+    if (winEl) winEl.addEventListener("change", (e) => {
+      state.momentum.corr.windowPeriods = Math.max(5, Number(e.target.value) || 12);
+    });
+
+    const calcBtn = byId("corrCalculateBtn");
+    if (calcBtn) calcBtn.addEventListener("click", () => runCorrelationCalculate());
+
+    const selectAll = byId("corrSelectAllBtn");
+    if (selectAll) selectAll.addEventListener("click", () => {
+      state.momentum.corr.selectedIds = state.momentum.corr.instruments.map((i) => i.id);
+      state.momentum.corr.selectionInitialized = true;
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+    });
+
+    const clearAll = byId("corrClearAllBtn");
+    if (clearAll) clearAll.addEventListener("click", () => {
+      state.momentum.corr.selectedIds = [];
+      state.momentum.corr.selectionInitialized = true;
+      renderCorrCheckboxPanel();
+      recomputeCorrelation();
+    });
+  }
+
+  // =====================================================================
+  // Market events (2026-09-21, Round 1 item C)
+  // =====================================================================
+  // market_events_between() returns every event with the trading day it lands
+  // on (market_date). The page only maps those days onto chart periods and
+  // draws them -- no date logic of its own beyond "which period holds this day".
+  const EVENT_TYPE_STYLE = {
+    fomc:             { short: "FOMC",     color: "#dc2626" },
+    cpi:              { short: "CPI",      color: "#d97706" },
+    pce:              { short: "PCE",      color: "#ca8a04" },
+    us_election_pres: { short: "เลือกตั้ง",  color: "#2563eb" },
+    us_election_mid:  { short: "กลางเทอม", color: "#0891b2" },
+    opex_monthly:     { short: "OpEx",     color: "#64748b" }
+  };
+  const EVENT_DEFAULT_STYLE = { color: "#6b7280" };
+
+  // Custom events are drawn one checkbox per event *name* (same name across
+  // years = one series), using the colour the creator picked. Their codes are
+  // "custom:<name>"; styles are filled in when the rows are loaded.
+  const CUSTOM_EVENT_CODE_PREFIX = "custom:";
+  const CUSTOM_EVENT_LABEL_MAX = 18;
+  let customEventStyles = {};
+
+  function eventStyle(code) {
+    return EVENT_TYPE_STYLE[code] || customEventStyles[code] || Object.assign({ short: code }, EVENT_DEFAULT_STYLE);
+  }
+
+  // Raw market_events_between rows -> rows for the drill-down chart. System
+  // events pass through untouched; each custom row gets code "custom:<name>"
+  // and name_th = its own name (so toggles + tooltip show the real name).
+  // Returns { rows, styles } -- styles keyed by code, colour of the earliest row.
+  function toDrilldownEventRows(rows) {
+    const styles = {};
+    const out = (rows || []).map((r) => {
+      if (r.event_type !== "custom") return r;
+      const name = String(r.event_name || "").trim() || "Custom Event";
+      const code = CUSTOM_EVENT_CODE_PREFIX + name;
+      if (!styles[code]) {
+        const short = name.length > CUSTOM_EVENT_LABEL_MAX ? name.slice(0, CUSTOM_EVENT_LABEL_MAX - 1) + "…" : name;
+        styles[code] = { short, color: /^#[0-9a-f]{6}$/i.test(r.color || "") ? r.color : EVENT_DEFAULT_STYLE.color, firstDate: r.event_date };
+      } else if (r.event_date && r.event_date < styles[code].firstDate && /^#[0-9a-f]{6}$/i.test(r.color || "")) {
+        styles[code].color = r.color;
+        styles[code].firstDate = r.event_date;
+      }
+      return Object.assign({}, r, { event_type: code, name_th: name, name_en: name, show_default: false });
+    });
+    Object.keys(styles).forEach((c) => { delete styles[c].firstDate; });
+    return { rows: out, styles };
+  }
+
+  // Single place that (re)loads the drill-down's event state from raw rows --
+  // used by ensureMarketEvents and by the Events tab after every fetch, so a
+  // new/approved/deleted custom event shows on the chart without a page reload.
+  // Existing on/off choices are kept; new types start off (show_default).
+  function applyMarketEventRows(rawRows) {
+    const ev = state.events;
+    const conv = toDrilldownEventRows(rawRows);
+    customEventStyles = conv.styles;
+    ev.rows = conv.rows;
+    ev.types = eventTypesFromRows(conv.rows);
+    if (!ev.enabledInitialized) {
+      ev.enabled = ev.types.filter((t) => t.showDefault).map((t) => t.code);
+      ev.enabledInitialized = true;
+    } else {
+      const known = new Set(ev.types.map((t) => t.code));
+      ev.enabled = ev.enabled.filter((c) => known.has(c));
+    }
+    ev.error = "";
+    ev.loaded = true;
+    renderEventToggles();
+  }
+
+  async function fetchMarketEvents() {
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.rpc("market_events_between", { p_types: null, p_start: null, p_end: null })
+        .range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  // Distinct event types in first-seen order of the style table (known types
+  // first, in EVENT_TYPE_STYLE order; unknown ones after, alphabetically).
+  function eventTypesFromRows(rows) {
+    const byCode = {};
+    (rows || []).forEach((r) => {
+      if (!byCode[r.event_type]) {
+        byCode[r.event_type] = { code: r.event_type, nameTh: r.name_th || r.event_type, showDefault: !!r.show_default, count: 0 };
+      }
+      byCode[r.event_type].count += 1;
+    });
+    const known = Object.keys(EVENT_TYPE_STYLE);
+    return Object.values(byCode).sort((a, b) => {
+      const ia = known.indexOf(a.code), ib = known.indexOf(b.code);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 1e9 : ia) - (ib === -1 ? 1e9 : ib);
+      return a.code < b.code ? -1 : 1;
+    });
+  }
+
+  // The period a trading day belongs to, as a comparable key. The chart's own
+  // period_end dates are keyed the same way, so an event lands on the bar whose
+  // period contains it (Monday-based weeks, like date_trunc('week') in SQL).
+  function eventPeriodKey(dateStr, timeframe) {
+    if (!dateStr) return null;
+    const s = String(dateStr).slice(0, 10);
+    if (timeframe === "month") return s.slice(0, 7);
+    if (timeframe === "week") {
+      const d = new Date(s + "T00:00:00Z");
+      if (isNaN(d.getTime())) return null;
+      const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+      d.setUTCDate(d.getUTCDate() - dow);
+      return d.toISOString().slice(0, 10);
+    }
+    return s;
+  }
+
+  // -> [{ index, events: [{code, eventDate, marketDate, nameTh}] }] for the
+  // enabled types only; events outside the plotted periods are dropped.
+  function mapEventsToPeriods(periodEnds, events, timeframe, enabledCodes) {
+    const enabled = new Set(enabledCodes || []);
+    const idxByKey = new Map();
+    (periodEnds || []).forEach((pe, i) => idxByKey.set(eventPeriodKey(pe, timeframe), i));
+    const byIndex = new Map();
+    (events || []).forEach((e) => {
+      if (!enabled.has(e.event_type) || !e.market_date) return;
+      const i = idxByKey.get(eventPeriodKey(e.market_date, timeframe));
+      if (i === undefined) return;
+      if (!byIndex.has(i)) byIndex.set(i, []);
+      byIndex.get(i).push({ code: e.event_type, eventDate: e.event_date, marketDate: e.market_date, nameTh: e.name_th });
+    });
+    return Array.from(byIndex.entries()).sort((a, b) => a[0] - b[0]).map(([index, evs]) => ({ index, events: evs }));
+  }
+
+  // One marker per bar: colour of the first type there, label lists every
+  // distinct type ("FOMC·CPI").
+  function buildEventMarkers(mapped) {
+    return (mapped || []).map((m) => {
+      const codes = [];
+      m.events.forEach((e) => { if (codes.indexOf(e.code) === -1) codes.push(e.code); });
+      return { index: m.index, color: eventStyle(codes[0]).color, label: codes.map((c) => eventStyle(c).short).join("·"), codes, events: m.events };
+    });
+  }
+
+  // Draws dashed vertical lines + a small label on a Chart.js chart. Pure
+  // canvas calls so it can be tested with a recording fake context.
+  function drawEventMarkers(ctx, area, xForIndex, markers) {
+    if (!ctx || !area || !markers || !markers.length) return 0;
+    let drawn = 0;
+    let lastLabelRight = -Infinity;
+    let row = 0;
+    ctx.save();
+    ctx.font = "10px sans-serif";
+    ctx.textBaseline = "top";
+    markers.forEach((m) => {
+      const x = xForIndex(m.index);
+      if (x == null || isNaN(x) || x < area.left - 0.5 || x > area.right + 0.5) return;
+      ctx.strokeStyle = m.color;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, area.top);
+      ctx.lineTo(x, area.bottom);
+      ctx.stroke();
+      // labels alternate between two rows when they would overlap
+      const w = ctx.measureText ? ctx.measureText(m.label).width : m.label.length * 6;
+      row = x - 2 < lastLabelRight ? (row + 1) % 2 : 0;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.label, Math.min(x + 2, area.right - w), area.top + 2 + row * 12);
+      lastLabelRight = Math.max(lastLabelRight, x + 2 + w);
+      drawn += 1;
+    });
+    ctx.restore();
+    return drawn;
+  }
+
+  const eventMarkersPlugin = {
+    id: "qdEventMarkers",
+    afterDatasetsDraw(chart, _args, opts) {
+      const markers = (opts && opts.markers) || [];
+      if (!markers.length || !chart.scales || !chart.scales.x) return;
+      drawEventMarkers(chart.ctx, chart.chartArea, (i) => chart.scales.x.getPixelForValue(i), markers);
+    }
+  };
+
+  // Loads events once per session; failure is non-fatal (the chart is drawn
+  // without markers and the note says why).
+  async function ensureMarketEvents() {
+    const ev = state.events;
+    if (ev.loaded) return ev.rows;
+    if (ev.loading) return ev.loading;
+    ev.loading = (async () => {
+      try {
+        applyMarketEventRows(await fetchMarketEvents());
+      } catch (e) {
+        ev.rows = [];
+        ev.types = [];
+        ev.error = (e && e.message) || String(e);
+        ev.loaded = true;
+        renderEventToggles();
+      }
+      ev.loading = null;
+      return ev.rows;
+    })();
+    return ev.loading;
+  }
+
+  function renderEventToggles() {
+    const el = byId("momEventToggles");
+    if (!el) return;
+    const ev = state.events;
+    if (ev.error) {
+      el.innerHTML = `<span class="text-slate-400">โหลดปฏิทิน event ไม่สำเร็จ: ${escapeHtml(ev.error)}</span>`;
+      return;
+    }
+    if (!ev.types.length) {
+      el.innerHTML = ev.loaded ? `<span class="text-slate-400">ยังไม่มีข้อมูล event</span>` : "";
+      return;
+    }
+    el.innerHTML = `<span class="text-slate-500 mr-1">แสดง event บนกราฟ:</span>` + ev.types.map((t) => {
+      const st = eventStyle(t.code);
+      const on = ev.enabled.indexOf(t.code) !== -1;
+      return `<label class="inline-flex items-center gap-1 mr-3 cursor-pointer" title="${escapeHtml(t.nameTh)} (${t.count} รายการ)">` +
+        `<input type="checkbox" data-event-code="${escapeHtml(t.code)}" ${on ? "checked" : ""} />` +
+        `<span class="inline-block w-3 border-t-2 border-dashed" style="border-color:${st.color}"></span>` +
+        `<span>${escapeHtml(t.nameTh)}</span></label>`;
+    }).join("");
+    el.querySelectorAll("input[data-event-code]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const code = cb.getAttribute("data-event-code");
+        const set = new Set(state.events.enabled);
+        if (cb.checked) set.add(code); else set.delete(code);
+        state.events.enabled = ev.types.map((t) => t.code).filter((c) => set.has(c));
+        renderMomDrilldown(); // redraw only -- no fetch
+      });
+    });
+  }
+
+  // =====================================================================
+  // Events / Seasonal tab (Round 2)
+  // =====================================================================
+
+  const SEASONAL_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2"];
+
+  // ---- Events Tab: load, render, custom events, admin ----
+
+  async function loadEventsTab() {
+    // Seasonal pickers are independent of the events fetch — render them first
+    // so they work even if the events fetch fails.
+    renderSeasonalAssetPicker();
+    renderSeasonalYearGroupPicker();
+
+    // Show custom event form if logged in
+    if (state.session) show(byId("customEventSection"));
+    // Show admin panel if admin
+    if (isAdminSession()) show(byId("adminEventSection"));
+    applyEventsCollapsed();
+
+    if (state.eventsTab.loading) return;
+    state.eventsTab.loading = true;
+    state.eventsTab.loaded = false;
+    hide(byId("eventsError"));
+    show(byId("eventsLoading"));
+    try {
+      const rows = await fetchMarketEvents();
+      state.eventsTab.customEvents = rows;
+      state.eventsTab.loaded = true;
+      // keep the filters the user had picked across a reload
+      const prevYear = (byId("eventsYearFilter") || {}).value || "";
+      const prevType = (byId("eventsTypeFilter") || {}).value || "";
+      renderEventsCalendarStrip(rows);
+      populateEventsFilters(rows);
+      const yEl = byId("eventsYearFilter"), tEl = byId("eventsTypeFilter");
+      if (yEl && prevYear && Array.from(yEl.options).some((o) => o.value === prevYear)) yEl.value = prevYear;
+      if (tEl && prevType && Array.from(tEl.options).some((o) => o.value === prevType)) tEl.value = prevType;
+      rerenderEventsTable();
+      // Same rows feed the Momentum drill-down markers -> no page reload needed
+      applyMarketEventRows(rows);
+      renderEsPickers();
+      if (state.momentum.drilldownInstrumentId != null) renderMomDrilldown();
+      if (state.session) await loadEventGroups();
+      // Load admin pending drafts (separate query)
+      if (isAdminSession()) { await loadAdminPendingDrafts(); await loadAdminPendingGroups(); await loadAdminApprovedGroups(); }
+    } catch (e) {
+      showError(byId("eventsError"), "โหลด events ไม่สำเร็จ: " + (e.message || e));
+    } finally {
+      state.eventsTab.loading = false;
+      hide(byId("eventsLoading"));
+    }
+  }
+
+  function populateEventsFilters(rows) {
+    // Year filter
+    const yearEl = byId("eventsYearFilter");
+    if (yearEl) {
+      const years = new Set();
+      rows.forEach((r) => { if (r.event_date || r.market_date) years.add(String(r.event_date || r.market_date).slice(0, 4)); });
+      const sorted = [...years].sort().reverse();
+      yearEl.innerHTML = '<option value="">All Years</option>' +
+        // Year group presets
+        Object.keys(YEAR_GROUPS).map((k) =>
+          `<option value="yg:${k}">${YEAR_GROUPS[k].label}</option>`
+        ).join("") +
+        sorted.map((y) => `<option value="${y}">${y}</option>`).join("");
+    }
+    // Type filter
+    const typeEl = byId("eventsTypeFilter");
+    if (typeEl) {
+      const types = eventTypesFromRows(rows);
+      typeEl.innerHTML = '<option value="">ทุกประเภท</option>' +
+        types.map((t) => `<option value="${t.code}">${escapeHtml(t.nameTh)} (${t.count})</option>`).join("");
+    }
+  }
+
+  function renderEventsCalendarStrip(rows) {
+    const el = byId("eventsCalendarStrip");
+    if (!el) return;
+    const year = state.eventsTab.calendarYear;
+    const byMonth = {};
+    for (let m = 0; m < 12; m++) byMonth[m] = 0;
+    (rows || []).forEach((r) => {
+      const d = r.event_date || r.market_date;
+      if (!d) return;
+      const ds = String(d).slice(0, 10);
+      const y = parseInt(ds.slice(0, 4), 10);
+      if (y !== year) return;
+      const m = parseInt(ds.slice(5, 7), 10) - 1;
+      if (m >= 0 && m < 12) byMonth[m]++;
+    });
+    const shortMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    el.innerHTML = shortMonths.map((label, m) => {
+      const count = byMonth[m] || 0;
+      const bg = count > 5 ? "bg-blue-100 border-blue-300" : count > 0 ? "bg-slate-50 border-slate-200" : "bg-white border-slate-200";
+      return `<div class="flex-shrink-0 border rounded-lg px-3 py-2 text-center min-w-[60px] ${bg}">` +
+        `<div class="text-[10px] text-slate-500">${label}</div>` +
+        `<div class="text-sm font-semibold ${count > 0 ? 'text-blue-700' : 'text-slate-300'}">${count}</div></div>`;
+    }).join("");
+  }
+
+  function isAdminSession() {
+    return !!(state.session && state.session.user && state.session.user.email === "mehresix@gmail.com");
+  }
+
+  // Events table columns: key -> header label, sort value, alignment
+  const EVENTS_TABLE_COLUMNS = [
+    { key: "date",    label: "Date",        align: "left",   value: (r) => String(r.event_date || r.market_date || "") },
+    { key: "type",    label: "Type",        align: "left",   value: (r) => String(r.event_type || "") },
+    { key: "name",    label: "Name / Note", align: "left",   value: (r) => String(r.event_name || r.name_th || r.event_type || "").toLowerCase() },
+    { key: "status",  label: "Status",      align: "center", value: (r) => String(r.status || "system") },
+    { key: "creator", label: "Creator",     align: "left",   value: (r) => String(r.creator_email || "system").toLowerCase() }
+  ];
+
+  // Pure: returns a new array sorted by column key/dir; ties fall back to
+  // date (newest first) so the order is stable and predictable.
+  function sortEventRows(rows, key, dir) {
+    const col = EVENTS_TABLE_COLUMNS.find((c) => c.key === key) || EVENTS_TABLE_COLUMNS[0];
+    const dateOf = EVENTS_TABLE_COLUMNS[0].value;
+    const sign = dir === "asc" ? 1 : -1;
+    return (rows || []).slice().sort((a, b) => {
+      const va = col.value(a), vb = col.value(b);
+      if (va !== vb) {
+        if (va === "") return 1; // blanks always last
+        if (vb === "") return -1;
+        return (va < vb ? -1 : 1) * sign;
+      }
+      const da = dateOf(a), db = dateOf(b);
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+  }
+
+  function rerenderEventsTable() {
+    renderEventsTable(state.eventsTab.customEvents,
+      (byId("eventsYearFilter") || {}).value || null,
+      (byId("eventsTypeFilter") || {}).value || null);
+  }
+
+  // Header click: same column flips direction; new column starts desc for
+  // date (newest first) and asc for text columns.
+  function setEventsSort(key) {
+    const s = state.eventsTab.sort;
+    if (s.key === key) s.dir = s.dir === "asc" ? "desc" : "asc";
+    else { s.key = key; s.dir = key === "date" ? "desc" : "asc"; }
+    rerenderEventsTable();
+  }
+
+  function applyEventsCollapsed() {
+    const collapsed = !!state.eventsTab.collapsed;
+    const body = byId("eventsBody"), ctl = byId("eventsControls"), btn = byId("eventsCollapseBtn");
+    if (body) body.classList.toggle("hidden", collapsed);
+    if (ctl) ctl.classList.toggle("hidden", collapsed);
+    if (btn) {
+      btn.textContent = collapsed ? "ขยาย ▼" : "พับ ▲";
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+  }
+
+  function toggleEventsCollapsed() {
+    state.eventsTab.collapsed = !state.eventsTab.collapsed;
+    applyEventsCollapsed();
+  }
+
+  function renderEventsTable(rows, yearFilter, typeFilter) {
+    const el = byId("eventsTable");
+    if (!el) return;
+    let filtered = rows || [];
+    if (yearFilter) {
+      if (yearFilter.startsWith("yg:")) {
+        const key = yearFilter.slice(3);
+        const yg = YEAR_GROUPS[key];
+        if (yg) {
+          const yearSet = new Set(yg.years.map(String));
+          filtered = filtered.filter((r) => yearSet.has(String(r.event_date || r.market_date).slice(0, 4)));
+        }
+      } else {
+        filtered = filtered.filter((r) => String(r.event_date || r.market_date).slice(0, 4) === yearFilter);
+      }
+    }
+    if (typeFilter) {
+      filtered = filtered.filter((r) => r.event_type === typeFilter);
+    }
+    const sortState = state.eventsTab.sort || { key: "date", dir: "desc" };
+    filtered = sortEventRows(filtered, sortState.key, sortState.dir);
+    const admin = isAdminSession();
+    const statusBadge = (s) => {
+      if (s === "approved") return '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>';
+      if (s === "draft") return '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>';
+      if (s === "rejected") return '<span class="qd-badge-fail text-[10px] px-1.5 py-0.5 rounded">rejected</span>';
+      return '<span class="text-[10px] text-slate-400">' + escapeHtml(s || "system") + '</span>';
+    };
+    const headerCells = EVENTS_TABLE_COLUMNS.map((c) => {
+      const active = c.key === sortState.key;
+      const arrow = active ? (sortState.dir === "asc" ? " ▲" : " ▼") : "";
+      const aria = active ? (sortState.dir === "asc" ? "ascending" : "descending") : "none";
+      return `<th class="text-${c.align} px-3 py-2 font-medium text-slate-600 cursor-pointer select-none hover:bg-slate-100" ` +
+        `data-sort="${c.key}" aria-sort="${aria}" title="คลิกเพื่อเรียง">${c.label}<span class="text-blue-600">${arrow}</span></th>`;
+    }).join("") + (admin ? '<th class="text-center px-3 py-2 font-medium text-slate-600">จัดการ</th>' : "");
+    const colCount = EVENTS_TABLE_COLUMNS.length + (admin ? 1 : 0);
+    el.innerHTML =
+      '<thead class="bg-slate-50"><tr>' + headerCells + '</tr></thead><tbody>' +
+      filtered.map((r) => {
+        const color = /^#[0-9a-f]{6}$/i.test(r.color || "") ? r.color : "#64748b";
+        const name = r.event_name || r.name_th || r.event_type || "";
+        const creator = r.creator_email ? maskEmail(r.creator_email) : "system";
+        const canDelete = admin && r.event_type === "custom" && r.status === "approved" && r.event_id != null;
+        return `<tr class="border-t border-slate-100 hover:bg-slate-50">` +
+          `<td class="px-3 py-1.5"><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${color}"></span>${escapeHtml(r.event_date || r.market_date || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(r.event_type || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(name)}</td>` +
+          `<td class="px-3 py-1.5 text-center">${statusBadge(r.status)}</td>` +
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(creator)}</td>` +
+          (admin ? `<td class="px-3 py-1.5 text-center">` +
+            (canDelete ? `<button type="button" class="text-red-600 hover:underline" data-delete-event="${escapeHtml(String(r.event_id))}" data-event-label="${escapeHtml(name + " (" + (r.event_date || "") + ")")}">ลบ</button>` : "") +
+            `</td>` : "") +
+          `</tr>`;
+      }).join("") +
+      (filtered.length === 0 ? `<tr><td colspan="${colCount}" class="px-3 py-4 text-center text-slate-400">ไม่พบ event</td></tr>` : "") +
+      '</tbody>';
+  }
+
+  function maskEmail(email) {
+    if (!email) return "";
+    const parts = email.split("@");
+    if (parts.length < 2) return email;
+    const local = parts[0];
+    return local.slice(0, 3) + "***@" + parts[1];
+  }
+
+  function filterEventsByYear(rows, yearGroupKey) {
+    if (!yearGroupKey || !YEAR_GROUPS[yearGroupKey]) return rows;
+    const yearSet = new Set(YEAR_GROUPS[yearGroupKey].years.map(String));
+    return (rows || []).filter((r) => yearSet.has(String(r.event_date || r.market_date).slice(0, 4)));
+  }
+
+  // ---- Custom Event Form ----
+
+  async function submitCustomEvent(date, name, color) {
+    hide(byId("ceError"));
+    hide(byId("ceSuccess"));
+    if (!date || !name) {
+      showError(byId("ceError"), "กรุณากรอกวันที่และชื่อ event");
+      return;
+    }
+    try {
+      const { error } = await sb.from("market_events").insert({
+        event_date: date,
+        name: name,
+        event_type: "custom",
+        color: color || "#3498db",
+        status: "draft"
+      });
+      if (error) throw error;
+      const el = byId("ceSuccess");
+      if (el) { el.textContent = "ส่ง draft สำเร็จ — รอ admin อนุมัติ"; show(el); }
+      byId("ceDate").value = "";
+      byId("ceName").value = "";
+      await loadEventsTab(); // the owner sees the draft in the table + chart right away
+    } catch (e) {
+      showError(byId("ceError"), "ส่งไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  function parseCSVEvents(csvText) {
+    if (!csvText) return [];
+    return csvText.trim().split("\n").map((line) => {
+      const idx = line.indexOf(",");
+      if (idx === -1) return null;
+      const date = line.slice(0, idx).trim();
+      const name = line.slice(idx + 1).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      if (!name) return null;
+      return { date, name };
+    }).filter(Boolean);
+  }
+
+  async function submitCSVEvents(events) {
+    hide(byId("ceCsvError"));
+    if (!events || events.length === 0) {
+      showError(byId("ceCsvError"), "ไม่มี event ที่จะนำเข้า");
+      return;
+    }
+    try {
+      const rows = events.map((e) => ({
+        event_date: e.date,
+        name: e.name,
+        event_type: "custom",
+        color: "#3498db",
+        status: "draft"
+      }));
+      const { error } = await sb.from("market_events").insert(rows);
+      if (error) throw error;
+      const el = byId("ceCsvError");
+      // Reuse the error element for success too
+      if (el) { el.textContent = `นำเข้า ${events.length} รายการสำเร็จ (draft)`; el.classList.remove("text-red-600"); el.classList.add("text-green-600"); show(el); }
+      byId("ceCsvInput").value = "";
+      hide(byId("ceCsvPreview"));
+      hide(byId("ceCsvSubmitBtn"));
+      await loadEventsTab();
+    } catch (e) {
+      showError(byId("ceCsvError"), "นำเข้าไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // =====================================================================
+  // Event groups (Round 3A) -- several occurrences of the same event filed
+  // under one name, so an event study can average across them.
+  // =====================================================================
+
+  const EG_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+  const EG_DOWS = ["อาทิตย์","จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์"];
+  const EG_MAX_ROWS = 500;
+
+  function isoUTC(d) { return d.toISOString().slice(0, 10); }
+
+  // The nth (1..4, or -1 = last) <dow> of that month; null when the month has
+  // no such week (e.g. a 4th Monday that falls into the next month).
+  function nthWeekdayOfMonth(year, month, dow, ord) {
+    if (ord === -1) {
+      const d = new Date(Date.UTC(year, month, 0));
+      while (d.getUTCDay() !== dow) d.setUTCDate(d.getUTCDate() - 1);
+      return d;
+    }
+    const d = new Date(Date.UTC(year, month - 1, 1));
+    while (d.getUTCDay() !== dow) d.setUTCDate(d.getUTCDate() + 1);
+    d.setUTCDate(d.getUTCDate() + (ord - 1) * 7);
+    return d.getUTCMonth() === month - 1 ? d : null;
+  }
+
+  // Pure date generators -> [{start, end, flag}]. The calendar date is kept as
+  // is; market_events_between maps it to the trading day when it is drawn.
+  function generateYearlyDates(day, month, fromY, toY) {
+    const out = [];
+    for (let y = fromY; y <= toY; y++) {
+      const d = new Date(Date.UTC(y, month - 1, day));
+      if (d.getUTCMonth() !== month - 1) continue; // 29 Feb in a non-leap year
+      out.push({ start: isoUTC(d), end: null,
+        flag: [0, 6].includes(d.getUTCDay()) ? "ตรงวันหยุดสุดสัปดาห์ — กราฟจะเลื่อนไปวันทำการถัดไป" : "" });
+    }
+    return out;
+  }
+  function generateNthWeekdayDates(ord, dow, month, fromY, toY) {
+    const out = [];
+    for (let y = fromY; y <= toY; y++) {
+      const months = month === 0 ? [1,2,3,4,5,6,7,8,9,10,11,12] : [month];
+      months.forEach((m) => { const d = nthWeekdayOfMonth(y, m, dow, ord); if (d) out.push({ start: isoUTC(d), end: null, flag: "" }); });
+    }
+    return out;
+  }
+  function sortEventGroupRows(rows) {
+    return (rows || []).slice().sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  }
+  // -> "" when valid, otherwise the reason (Thai)
+  function validateEventGroupRows(rows, kind) {
+    if (!rows || !rows.length) return "ต้องมีอย่างน้อย 1 ครั้ง";
+    if (rows.length > EG_MAX_ROWS) return `มีได้ไม่เกิน ${EG_MAX_ROWS} ครั้ง (ตอนนี้ ${rows.length})`;
+    for (const r of rows) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(r.start || "")) return "มีวันเริ่มที่ยังไม่ได้กรอก";
+      if (kind === "range" && r.end && r.end < r.start) return `วันจบก่อนวันเริ่ม (${r.start})`;
+    }
+    return "";
+  }
+
+  function egKindIsRange() { return (byId("egKind") || {}).value === "range"; }
+
+  function renderEventGroupPreview() {
+    const box = byId("egPreviewBox"), el = byId("egTable");
+    if (!box || !el) return;
+    const rows = state.eventsTab.groupDraft;
+    box.classList.toggle("hidden", rows.length === 0);
+    setText("egCount", rows.length);
+    const isRange = egKindIsRange();
+    const problem = validateEventGroupRows(rows, isRange ? "range" : "point");
+    const hint = byId("egHint");
+    if (hint) {
+      hint.textContent = problem || "แก้วันที่ได้ในตาราง หรือกดลบเฉพาะแถวที่ไม่ต้องการ";
+      hint.className = problem ? "text-[11px] text-red-600" : "text-[11px] text-slate-500";
+    }
+    el.innerHTML = '<thead class="bg-slate-50"><tr>' +
+      '<th class="px-3 py-2 w-6"><input type="checkbox" id="egSelAll" title="เลือกทั้งหมด"></th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">#</th>' +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">วันเริ่ม</th>' +
+      (isRange ? '<th class="text-left px-3 py-2 font-medium text-slate-600">วันจบ</th><th class="text-left px-3 py-2 font-medium text-slate-600">ยาว</th>' : "") +
+      '<th class="text-left px-3 py-2 font-medium text-slate-600">หมายเหตุ</th><th></th></tr></thead><tbody>' +
+      rows.map((r, i) => `<tr class="border-t border-slate-100">` +
+        `<td class="px-3 py-1"><input type="checkbox" data-eg-sel="${i}"></td>` +
+        `<td class="px-3 py-1">${i + 1}</td>` +
+        `<td class="px-3 py-1"><input type="date" data-eg-start="${i}" value="${escapeHtml(r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
+        (isRange ? `<td class="px-3 py-1"><input type="date" data-eg-end="${i}" value="${escapeHtml(r.end || r.start || "")}" class="border border-slate-300 rounded px-2 py-1 text-xs"></td>` +
+                   `<td class="px-3 py-1 text-slate-500">${calendarDayCount(r)} วัน</td>` : "") +
+        `<td class="px-3 py-1 text-[11px] text-amber-700">${escapeHtml(r.flag || "")}</td>` +
+        `<td class="px-3 py-1 text-right"><button class="text-red-600 hover:underline" data-eg-del="${i}">ลบ</button></td></tr>`).join("") +
+      "</tbody>";
+  }
+  function calendarDayCount(r) {
+    if (!r.end) return 1;
+    return Math.round((new Date(r.end + "T00:00:00Z") - new Date(r.start + "T00:00:00Z")) / 86400000) + 1;
+  }
+
+  // remove every ticked row from the builder preview (indices descend so the
+  // splices don't shift each other)
+  function deleteSelectedDraftRows(rootEl) {
+    const root = rootEl || byId("egTable");
+    if (!root) return 0;
+    const picked = Array.from(root.querySelectorAll("[data-eg-sel]"))
+      .filter((c) => c.checked)
+      .map((c) => +c.getAttribute("data-eg-sel"))
+      .sort((a, b) => b - a);
+    picked.forEach((i) => state.eventsTab.groupDraft.splice(i, 1));
+    if (picked.length) renderEventGroupPreview();
+    return picked.length;
+  }
+
+  function setEventGroupDraft(rows) {
+    state.eventsTab.groupDraft = sortEventGroupRows(rows);
+    if (egKindIsRange()) state.eventsTab.groupDraft.forEach((r) => { if (!r.end) r.end = r.start; });
+    renderEventGroupPreview();
+  }
+
+  async function saveEventGroup() {
+    hide(byId("egError")); hide(byId("egSuccess"));
+    const name = ((byId("egName") || {}).value || "").trim();
+    const kind = egKindIsRange() ? "range" : "point";
+    const rows = state.eventsTab.groupDraft;
+    if (!name) { showError(byId("egError"), "กรุณาตั้งชื่อกลุ่ม"); return false; }
+    const problem = validateEventGroupRows(rows, kind);
+    if (problem) { showError(byId("egError"), problem); return false; }
+    try {
+      const payload = rows.map((r) => (kind === "range" ? { start: r.start, end: r.end || r.start } : { start: r.start }));
+      const { data, error } = await sb.rpc("save_event_group", {
+        p_name: name, p_color: (byId("egColor") || {}).value || "#3498db",
+        p_kind: kind, p_rows: payload, p_group_id: state.eventsTab.editingGroupId || null
+      });
+      if (error) throw error;
+      const el = byId("egSuccess");
+      if (el) { el.textContent = `บันทึกกลุ่ม "${name}" (${rows.length} ครั้ง) เป็น draft แล้ว — รอ admin อนุมัติ`; show(el); }
+      state.eventsTab.groupDraft = []; state.eventsTab.editingGroupId = null;
+      renderEventGroupPreview();
+      await loadEventGroups();
+      await loadEventsTab();
+      return data;
+    } catch (e) {
+      showError(byId("egError"), "บันทึกไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function loadEventGroups() {
+    try {
+      const { data, error } = await sb.rpc("list_event_groups");
+      if (error) throw error;
+      state.eventsTab.groups = data || [];
+    } catch (e) {
+      state.eventsTab.groups = [];
+    }
+    renderMyEventGroups();
+    return state.eventsTab.groups;
+  }
+
+  function renderMyEventGroups() {
+    const el = byId("egMyGroups");
+    if (!el) return;
+    const gs = state.eventsTab.groups || [];
+    if (!gs.length) { el.innerHTML = '<p class="text-xs text-slate-400">ยังไม่มีกลุ่ม</p>'; return; }
+    el.innerHTML = '<p class="text-xs font-medium text-slate-600 mb-1">กลุ่มที่มีอยู่</p>' +
+      '<table class="text-xs w-full"><thead class="bg-slate-50"><tr>' +
+      ["ชื่อ", "ประเภท", "จำนวน", "ช่วงปี", "สถานะ", "ผู้สร้าง"].map((h) => `<th class="text-left px-3 py-1.5 font-medium text-slate-600">${h}</th>`).join("") +
+      '</tr></thead><tbody>' + gs.map((g) => `<tr class="border-t border-slate-100">` +
+        `<td class="px-3 py-1"><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${/^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b"}"></span>${escapeHtml(g.name)}</td>` +
+        `<td class="px-3 py-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</td>` +
+        `<td class="px-3 py-1">${g.n_events}</td>` +
+        `<td class="px-3 py-1 text-slate-500">${escapeHtml(String(g.first_date || "").slice(0, 4))}–${escapeHtml(String(g.last_date || "").slice(0, 4))}</td>` +
+        `<td class="px-3 py-1">${g.status === "approved" ? '<span class="qd-badge-pass text-[10px] px-1.5 py-0.5 rounded">approved</span>' : '<span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">draft</span>'}</td>` +
+        `<td class="px-3 py-1 text-slate-400">${escapeHtml(g.creator_email || "—")}</td></tr>`).join("") + "</tbody></table>";
+  }
+
+  // ===================== Event Study (round 3A block 2) =====================
+  // Everything above the render layer is pure: prices + event dates in, series
+  // out. Day 0 = the close of the last trading day on or before the event date,
+  // so a holiday event (4 Jul on a Saturday) anchors on the previous session.
+  const ES_MIN_N = 5, ES_MAX_N = 250, ES_NORM_STEPS = 20, ES_MIN_EVENTS_WARN = 10;
+  const ES_PRESETS = [20, 60, 120];
+
+  // ohlcv rows (ascending) -> { dates, closes, idx }; adj_close preferred so
+  // splits/dividends don't show up as event effects
+  function buildPriceIndex(rows) {
+    const dates = [], closes = [], idx = Object.create(null);
+    (rows || []).forEach((r) => {
+      const d = String(r.date || "").slice(0, 10);
+      const c = Number(r.adj_close != null ? r.adj_close : r.close);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !isFinite(c) || c <= 0) return;
+      idx[d] = dates.length; dates.push(d); closes.push(c);
+    });
+    return { dates, closes, idx };
+  }
+
+  // last trading day on or before `date`; -1 when it precedes the first bar
+  function tradingIndexOnOrBefore(px, date) {
+    const d = String(date || "").slice(0, 10);
+    if (!d || !px || !px.dates.length) return -1;
+    if (px.idx[d] != null) return px.idx[d];
+    let lo = 0, hi = px.dates.length - 1, ans = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (px.dates[m] <= d) { ans = m; lo = m + 1; } else hi = m - 1;
+    }
+    return ans;
+  }
+
+  // [{start,end}] -> anchors sorted by start; occurrences with no price history
+  // are dropped and reported so the UI can say how many were usable
+  function eventAnchors(px, events, kind) {
+    const anchors = [], dropped = [];
+    (events || []).slice()
+      .sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")))
+      .forEach((e) => {
+        // a scheduled-but-not-yet-happened event would otherwise anchor on the
+        // last bar and invent a day 0, so it is dropped
+        const last = px.dates[px.dates.length - 1];
+        if (String(e.start || "") > last) { dropped.push(String(e.start || "")); return; }
+        const i0 = tradingIndexOnOrBefore(px, e.start);
+        const i1 = kind === "range" ? tradingIndexOnOrBefore(px, e.end || e.start) : i0;
+        if (i0 < 0 || i1 < i0) { dropped.push(String(e.start || "")); return; }
+        anchors.push({ start: e.start, end: e.end || e.start, i0, i1, dur: i1 - i0 });
+      });
+    return { anchors, dropped };
+  }
+
+  // trading days from one occurrence's end to the next one's start
+  function eventGapStats(anchors) {
+    const gaps = [];
+    for (let i = 1; i < anchors.length; i++) gaps.push(anchors[i].i0 - anchors[i - 1].i1);
+    if (!gaps.length) return { min: null, med: null, max: null, n: 0 };
+    const s = gaps.slice().sort((a, b) => a - b);
+    return { min: s[0], med: Math.round(percentile(s, 50)), max: s[s.length - 1], n: s.length };
+  }
+
+  // hard ceiling for N: one trading day short of the typical gap, so a window
+  // never reaches the neighbouring occurrence
+  function capFromGaps(gap) {
+    if (!gap || gap.med == null) return ES_MAX_N;
+    return Math.max(ES_MIN_N, Math.min(ES_MAX_N, gap.med - 1));
+  }
+
+  function esColumnStats(values) {
+    const v = values.filter((x) => isFinite(x)).sort((a, b) => a - b);
+    if (!v.length) return { n: 0, med: null, mean: null, p25: null, p75: null, min: null, max: null };
+    let sum = 0; for (let i = 0; i < v.length; i++) sum += v[i];
+    return { n: v.length, med: percentile(v, 50), mean: sum / v.length,
+      p25: percentile(v, 25), p75: percentile(v, 75), min: v[0], max: v[v.length - 1] };
+  }
+
+  const esPct = (px, from, to) => (px.closes[to] / px.closes[from] - 1) * 100;
+
+  // one column of the study: the same offset across every occurrence
+  function esStatsAtOffset(px, anchors, baseKey, offKey, k) {
+    const vals = [];
+    anchors.forEach((a) => {
+      const base = a[baseKey], i = a[offKey] + k;
+      if (i < 0 || i >= px.closes.length) return;
+      vals.push(esPct(px, base, i));
+    });
+    return esColumnStats(vals);
+  }
+
+  // average return over EVERY window of the same shape in the price history —
+  // the "is this different from an ordinary stretch of market?" reference
+  function esBaselineCurve(px, offsets) {
+    const T = px.closes.length;
+    const lo = Math.min.apply(null, offsets), hi = Math.max.apply(null, offsets);
+    return offsets.map((k) => {
+      let sum = 0, n = 0;
+      for (let t = Math.max(0, -lo); t < T - Math.max(0, hi); t++) {
+        const i = t + k;
+        if (i < 0 || i >= T) continue;
+        sum += esPct(px, t, i); n += 1;
+      }
+      return n ? sum / n : null;
+    });
+  }
+
+  // linear interpolation of one occurrence's during-window onto 0..100 %
+  function esNormalisedPath(px, a, steps) {
+    const out = [];
+    for (let s = 0; s <= steps; s++) {
+      const pos = (a.dur * s) / steps;
+      const lo = Math.floor(pos), hi = Math.ceil(pos);
+      const vLo = esPct(px, a.i0, a.i0 + lo);
+      const v = lo === hi ? vLo : vLo + (esPct(px, a.i0, a.i0 + hi) - vLo) * (pos - lo);
+      out.push(v);
+    }
+    return out;
+  }
+
+  function esDurationStats(anchors) {
+    if (!anchors.length) return { min: null, med: null, max: null };
+    const s = anchors.map((a) => a.dur).sort((x, y) => x - y);
+    return { min: s[0], med: percentile(s, 50), max: s[s.length - 1] };
+  }
+
+  // Main entry. opts: { kind, n, duringMode: "raw"|"norm", stat, minDur, maxDur }
+  // Returns labels + one value per column for each statistic, plus n(t), the
+  // boundary indices (start / end of the during block) and the baseline.
+  function computeEventStudy(px, events, opts) {
+    const o = opts || {};
+    const kind = o.kind === "range" ? "range" : "point";
+    const n = Math.max(ES_MIN_N, Math.min(ES_MAX_N, Math.round(o.n || 60)));
+    const res = eventAnchors(px, events, kind);
+    let anchors = res.anchors;
+    const totalWithPrices = anchors.length;
+    if (kind === "range") {
+      if (o.minDur != null) anchors = anchors.filter((a) => a.dur >= o.minDur);
+      if (o.maxDur != null) anchors = anchors.filter((a) => a.dur <= o.maxDur);
+    }
+    const gap = eventGapStats(anchors);
+    const out = {
+      kind, n, nEvents: anchors.length, dropped: res.dropped, totalWithPrices,
+      gap, cap: capFromGaps(gap), duration: esDurationStats(anchors),
+      labels: [], offsets: [], med: [], mean: [], p25: [], p75: [], min: [], max: [], nAt: [],
+      boundaries: [], baseline: [], anchors
+    };
+    if (!anchors.length) return out;
+
+    const push = (label, st) => {
+      out.labels.push(label); out.med.push(st.med); out.mean.push(st.mean);
+      out.p25.push(st.p25); out.p75.push(st.p75); out.min.push(st.min); out.max.push(st.max);
+      out.nAt.push(st.n);
+    };
+
+    if (kind === "point") {
+      const offsets = [];
+      for (let k = -n; k <= n; k++) offsets.push(k);
+      offsets.forEach((k) => push(k === 0 ? "วันเกิดเหตุ" : (k > 0 ? "+" : "") + k,
+        esStatsAtOffset(px, anchors, "i0", "i0", k)));
+      out.offsets = offsets;
+      out.boundaries = [n];                       // index of day 0
+      out.baseline = esBaselineCurve(px, offsets);
+      return out;
+    }
+
+    // ---- range: before (anchored on the start) ----
+    for (let k = -n; k <= 0; k++) push(k === 0 ? "เริ่ม" : String(k), esStatsAtOffset(px, anchors, "i0", "i0", k));
+    out.boundaries.push(out.labels.length - 1);
+
+    // elapsed trading days from the start anchor, for the baseline's x-grid;
+    // inside the during block a typical (median-length) occurrence is assumed
+    const medDur = Math.round(out.duration.med || 0);
+    const elapsed = []; for (let k = -n; k <= 0; k++) elapsed.push(k);
+
+    // ---- during ----
+    if (o.duringMode === "norm") {
+      const paths = anchors.map((a) => esNormalisedPath(px, a, ES_NORM_STEPS));
+      for (let s = 1; s <= ES_NORM_STEPS; s++) {
+        push(Math.round((s * 100) / ES_NORM_STEPS) + "%", esColumnStats(paths.map((p) => p[s])));
+        elapsed.push(Math.round((medDur * s) / ES_NORM_STEPS));
+      }
+      out.duringLen = ES_NORM_STEPS;
+    } else {
+      // raw trading days, truncated at the shortest occurrence so every point
+      // comes from all of them
+      const shortest = Math.min.apply(null, anchors.map((a) => a.dur));
+      for (let k = 1; k <= shortest; k++) {
+        push("วันที่ " + k, esStatsAtOffset(px, anchors, "i0", "i0", k));
+        elapsed.push(k);
+      }
+      out.duringLen = shortest;
+    }
+    out.boundaries.push(out.labels.length - 1);
+
+    // ---- after (anchored on the end) ----
+    for (let k = 1; k <= n; k++) {
+      push("+" + k, esStatsAtOffset(px, anchors, "i1", "i1", k));
+      elapsed.push(medDur + k);
+    }
+
+    // the three blocks are measured from different bases; shift the later ones
+    // so the drawn line is continuous
+    esJoinBlocks(out);
+    out.offsets = elapsed;
+    out.baseline = esBaselineCurve(px, elapsed);
+    return out;
+  }
+
+  // during/after are each re-based to 0 at their own anchor; add the level the
+  // previous block ended on so the line joins instead of jumping back to 0
+  function esJoinBlocks(out) {
+    const keys = ["med", "mean", "p25", "p75", "min", "max"];
+    const b0 = out.boundaries[0], b1 = out.boundaries[1];
+    const shiftRange = (from, to, by) => keys.forEach((k) => {
+      for (let i = from; i <= to && i < out[k].length; i++) if (out[k][i] != null) out[k][i] += by[k] || 0;
+    });
+    const levelAt = (i) => { const o = {}; keys.forEach((k) => { o[k] = out[k][i] || 0; }); return o; };
+    const lvl0 = levelAt(b0);
+    shiftRange(b0 + 1, b1, lvl0);
+    const lvl1 = levelAt(b1);
+    shiftRange(b1 + 1, out.med.length - 1, lvl1);
+  }
+
+  // ---- Event Study: sources, prices, render ----
+
+  const esShow = (el, on) => { if (el) el.classList.toggle("hidden", !on); };
+
+  // every selectable source comes from the rows the Events tab already fetched:
+  // one per system event type, one per approved/own group
+  function esSourcesFromRows(rows) {
+    const groups = {}, types = {}, out = [];
+    (rows || []).forEach((r) => {
+      const start = String(r.event_date || r.market_date || "").slice(0, 10);
+      if (!start) return;
+      if (r.group_id != null) {
+        const k = "g" + r.group_id;
+        if (!groups[k]) groups[k] = { key: k, label: r.group_name || r.event_name || "กลุ่ม " + r.group_id,
+          kind: "point", color: r.color || "#7c3aed", isGroup: true, events: [] };
+        if (r.end_date) { groups[k].kind = "range"; }
+        groups[k].events.push({ start, end: r.end_date ? String(r.end_date).slice(0, 10) : null });
+      } else if (r.event_type && r.event_type !== "custom") {
+        const k = "t:" + r.event_type;
+        if (!types[k]) types[k] = { key: k, label: r.name_th || r.event_type, kind: "point",
+          color: eventStyle(r.event_type).color || "#2563eb", isGroup: false, events: [] };
+        types[k].events.push({ start, end: null });
+      }
+    });
+    Object.keys(types).forEach((k) => out.push(types[k]));
+    Object.keys(groups).forEach((k) => out.push(groups[k]));
+    out.forEach((s) => { s.n = s.events.length; });
+    return out.filter((s) => s.n >= 2).sort((a, b) => (a.isGroup - b.isGroup) || b.n - a.n);
+  }
+
+  function esCurrentSource() {
+    const es = state.eventStudy;
+    return (es.sources || []).find((s) => s.key === es.sourceKey) || (es.sources || [])[0] || null;
+  }
+
+  function renderEsPickers() {
+    const es = state.eventStudy;
+    const aEl = byId("esAsset");
+    if (aEl) {
+      aEl.innerHTML = state.instruments.map((i) =>
+        `<option value="${i.id}">${escapeHtml(i.ticker)} — ${escapeHtml(i.name || "")}</option>`).join("");
+      if (es.assetId == null) es.assetId = state.assetId;
+      if (es.assetId != null) aEl.value = String(es.assetId);
+    }
+    const sEl = byId("esSource");
+    if (sEl) {
+      es.sources = esSourcesFromRows(state.eventsTab.customEvents);
+      sEl.innerHTML = es.sources.map((s) =>
+        `<option value="${s.key}">${escapeHtml(s.label)} — ${s.n} ครั้ง${s.kind === "range" ? " (มีช่วง)" : ""}</option>`).join("");
+      if (!es.sources.some((s) => s.key === es.sourceKey)) es.sourceKey = es.sources[0] ? es.sources[0].key : "";
+      if (es.sourceKey) sEl.value = es.sourceKey;
+    }
+    const src = esCurrentSource();
+    esShow(byId("esDuringBox"), !!(src && src.kind === "range"));
+    esShow(byId("esDurFilterBox"), !!(src && src.kind === "range"));
+    renderEsPresetButtons();
+  }
+
+  function renderEsPresetButtons() {
+    const el = byId("esPresets");
+    if (!el) return;
+    el.innerHTML = ES_PRESETS.map((v) =>
+      `<button type="button" data-es-n="${v}" class="text-xs border rounded px-2 py-1 ${state.eventStudy.n === v ? "bg-slate-800 text-white" : ""}">±${v}</button>`).join("");
+  }
+
+  // prices are fetched once per instrument and kept for the session
+  async function ensureEsPrices(assetId) {
+    const es = state.eventStudy;
+    if (es.pricesByAsset[assetId]) return es.pricesByAsset[assetId];
+    const rows = await loadSeasonalData(assetId);
+    es.pricesByAsset[assetId] = buildPriceIndex(rows);
+    return es.pricesByAsset[assetId];
+  }
+
+  function esReadControls() {
+    const es = state.eventStudy;
+    es.assetId = (byId("esAsset") || {}).value || es.assetId;
+    es.sourceKey = (byId("esSource") || {}).value || es.sourceKey;
+    es.stat = (byId("esStat") || {}).value || "med";
+    es.duringMode = (byId("esDuring") || {}).value || "raw";
+    es.unlock = !!(byId("esUnlock") || {}).checked;
+    es.showBaseline = !!(byId("esBaseline") || {}).checked;
+    const num = (id) => { const v = (byId(id) || {}).value; return v === "" || v == null ? null : Number(v); };
+    es.minDur = num("esDurMin");
+    es.maxDur = num("esDurMax");
+    const n = num("esN");
+    if (n != null && isFinite(n)) es.n = Math.max(ES_MIN_N, Math.min(ES_MAX_N, Math.round(n)));
+  }
+
+  function onEsControlChange(id) {
+    esReadControls();
+    if (id === "esSource" || id === "esAsset") renderEsPickers();
+    if (id === "esN") renderEsPresetButtons();
+    if (state.eventStudy.ran) runEventStudy();
+  }
+
+  async function runEventStudy() {
+    const es = state.eventStudy;
+    esReadControls();
+    const src = esCurrentSource();
+    hide(byId("esError"));
+    if (!src) { showError(byId("esError"), "ยังไม่มีชุด event ให้เลือก"); return null; }
+    if (es.assetId == null) { showError(byId("esError"), "ยังไม่ได้เลือกสินทรัพย์"); return null; }
+    show(byId("esLoading"));
+    try {
+      const px = await ensureEsPrices(es.assetId);
+      // the cap depends on the source, so compute once to learn it, clamp N,
+      // then compute the series the user actually sees
+      const probe = computeEventStudy(px, src.events, { kind: src.kind, n: ES_MIN_N, duringMode: es.duringMode,
+        minDur: es.minDur, maxDur: es.maxDur });
+      const cap = probe.cap;
+      let n = es.n, capped = false;
+      if (!es.unlock && n > cap) { n = cap; capped = true; }
+      es.n = n;
+      const nEl = byId("esN"); if (nEl) nEl.value = String(n);
+      renderEsPresetButtons();
+      const res = computeEventStudy(px, src.events, { kind: src.kind, n, duringMode: es.duringMode,
+        minDur: es.minDur, maxDur: es.maxDur });
+      es.result = res; es.ran = true;
+      renderEventStudy(res, src, { capped, cap });
+      return res;
+    } catch (e) {
+      showError(byId("esError"), "คำนวณไม่สำเร็จ: " + (e.message || e));
+      return null;
+    } finally {
+      hide(byId("esLoading"));
+    }
+  }
+
+  function esWarnTexts(res, src, meta) {
+    const w = [];
+    if (meta.capped) {
+      w.push(`จำกัดไว้ที่ <b>±${meta.cap} วันทำการ</b> เพราะ ${escapeHtml(src.label)} ห่างกันโดยทั่วไป ${res.gap.med} วันทำการ ` +
+        `ถ้ายาวกว่านี้หน้าต่างของแต่ละครั้งจะกินเหตุการณ์ครั้งถัดไป ข้อมูลจะถูกนับซ้ำ · ติ๊ก "ยอมรับการทับซ้อน" ถ้าต้องการดูยาวกว่านี้`);
+    } else if (state.eventStudy.unlock && res.gap.med != null && res.n > meta.cap) {
+      w.push(`กำลังดูแบบทับซ้อน — ±${res.n} ยาวกว่าระยะห่างปกติ (${res.gap.med} วันทำการ) ข้อมูลบางช่วงถูกนับมากกว่าหนึ่งครั้ง ตีความอย่างระมัดระวัง`);
+    }
+    return w;
+  }
+
+  function renderEventStudy(res, src, meta) {
+    const m = meta || {};
+    const capEl = byId("esCapWarn"), nEl = byId("esNWarn");
+    const warns = esWarnTexts(res, src, m);
+    if (capEl) { capEl.innerHTML = warns.join("<br>"); esShow(capEl, warns.length > 0); }
+    if (nEl) {
+      const few = res.nEvents > 0 && res.nEvents < ES_MIN_EVENTS_WARN;
+      nEl.innerHTML = few
+        ? `มีเพียง <b>${res.nEvents} ครั้ง</b> — น้อยกว่า ${ES_MIN_EVENTS_WARN} ค่ากลางที่ได้จึงอ่อนไหวต่อเหตุการณ์เดียวมาก ใช้เป็นภาพประกอบ ไม่ควรใช้สรุปทางสถิติ`
+        : "";
+      esShow(nEl, few);
+    }
+    const info = byId("esInfo");
+    if (info) {
+      const nMin = res.nAt.length ? Math.min.apply(null, res.nAt) : 0;
+      const nMax = res.nAt.length ? Math.max.apply(null, res.nAt) : 0;
+      const bits = [`<b>${escapeHtml(src.label)}</b> · ใช้ได้ ${res.nEvents} ครั้ง` +
+        (res.dropped.length ? ` (ข้าม ${res.dropped.length} ครั้งที่ไม่มีข้อมูลราคา)` : "")];
+      if (res.gap.med != null) bits.push(`ห่างกันโดยทั่วไป ${res.gap.med} วันทำการ (สั้นสุด ${res.gap.min} ยาวสุด ${res.gap.max}) · เพดานแนะนำ ±${res.cap}`);
+      bits.push(`จำนวนครั้งต่อจุด: ${nMin}–${nMax} (ปลายกราฟเหลือน้อยลงเมื่อข้อมูลราคาไม่ครบ)`);
+      bits.push(`เส้นอ้างอิง = ผลตอบแทนเฉลี่ยของทุกช่วงเวลายาวเท่ากันตลอดประวัติราคา`);
+      info.innerHTML = bits.join("<br>");
+    }
+    const durEl = byId("esDurInfo");
+    if (durEl) {
+      if (src.kind !== "range" || !res.nEvents) { durEl.innerHTML = ""; }
+      else {
+        const d = res.duration;
+        const note = state.eventStudy.duringMode === "norm"
+          ? "โหมดยืด 0–100%: ความยาวถูกปรับสัดส่วน เหตุการณ์สั้นกับยาวจึงมีน้ำหนักเท่ากัน และความผันผวนของครั้งสั้นจะดูนิ่งกว่าความจริง"
+          : `โหมดวันทำการจริง: ท่อนระหว่างตัดที่ ${res.duringLen} วัน ซึ่งเป็นความยาวของครั้งที่สั้นที่สุด ทุกจุดจึงมาจากทุกเหตุการณ์ครบ`;
+        durEl.innerHTML = `<div class="border border-slate-200 rounded-lg p-2 bg-slate-50">
+          <div class="text-slate-600">ความยาวเหตุการณ์ (วันทำการ) — สั้นสุด ${d.min} · กลาง ${Number(d.med).toFixed(1)} · ยาวสุด ${d.max}</div>
+          <div class="mt-1 text-slate-500">${res.anchors.slice(0, 8).map((a) => `${escapeHtml(a.start)} → ${escapeHtml(a.end)} (${a.dur} วัน)`).join("<br>")}${res.anchors.length > 8 ? "<br>…" : ""}</div>
+          <div class="mt-1 text-amber-700">${note}</div></div>`;
+      }
+    }
+    renderEventStudyChart(res, src);
+  }
+
+  const esBoundaryPlugin = {
+    id: "esBoundaries",
+    afterDatasetsDraw(chart, _a, opts) {
+      const marks = (opts && opts.marks) || [];
+      const { ctx, chartArea: ar, scales } = chart;
+      if (!ar || !scales || !scales.x) return;
+      ctx.save();
+      const y0 = scales.y.getPixelForValue(0);
+      ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ar.left, y0); ctx.lineTo(ar.right, y0); ctx.stroke();
+      ctx.font = "11px sans-serif";
+      marks.forEach((mk) => {
+        if (mk.index == null || mk.index < 0) return;
+        const x = scales.x.getPixelForValue(mk.index);
+        if (x == null || isNaN(x)) return;
+        ctx.strokeStyle = "#94a3b8"; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x, ar.top); ctx.lineTo(x, ar.bottom); ctx.stroke();
+        ctx.setLineDash([]); ctx.fillStyle = "#475569";
+        ctx.fillText(mk.label, Math.min(x + 3, ar.right - 30), ar.top + 12);
+      });
+      ctx.restore();
+    }
+  };
+
+  function renderEventStudyChart(res, src) {
+    const canvas = byId("esChart");
+    if (!canvas || typeof Chart === "undefined") return;
+    const es = state.eventStudy;
+    if (es.chart) { es.chart.destroy(); es.chart = null; }
+    if (!res.labels.length) return;
+    const stat = es.stat;
+    const main = stat === "mean" ? res.mean : res.med;
+    const wantBand = stat === "p25p75" || stat === "minmax";
+    const lo = stat === "minmax" ? res.min : res.p25;
+    const hi = stat === "minmax" ? res.max : res.p75;
+    const color = /^#[0-9a-f]{6}$/i.test(src.color) ? src.color : "#2563eb";
+    const ds = [];
+    if (wantBand) {
+      ds.push({ label: stat === "minmax" ? "Min" : "P25", data: lo, borderColor: "transparent",
+        backgroundColor: color + "22", pointRadius: 0, fill: "+1" });
+      ds.push({ label: stat === "minmax" ? "Max" : "P75", data: hi, borderColor: "transparent",
+        backgroundColor: color + "22", pointRadius: 0, fill: false });
+    }
+    ds.push({ label: stat === "mean" ? "Mean" : "Median", data: main, borderColor: color,
+      borderWidth: 2, pointRadius: 0, fill: false, tension: 0.12 });
+    if (es.showBaseline) {
+      ds.push({ label: "ช่วงปกติ (อ้างอิง)", data: res.baseline, borderColor: "#94a3b8", borderWidth: 1.5,
+        borderDash: [5, 4], pointRadius: 0, fill: false });
+    }
+    const marks = res.kind === "point"
+      ? [{ index: res.boundaries[0], label: "วันเกิดเหตุ" }]
+      : [{ index: res.boundaries[0], label: "เริ่ม" }, { index: res.boundaries[1], label: "จบ" }];
+    es.chart = new Chart(canvas, {
+      type: "line",
+      data: { labels: res.labels, datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { title: { display: true, text: "ผลตอบแทนสะสม (%)" }, grid: { color: "#f1f5f9" } },
+          x: { ticks: { maxTicksLimit: 14, autoSkip: true }, grid: { display: false } }
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: {
+            label: (c) => `${c.dataset.label}: ${c.parsed.y == null ? "-" : c.parsed.y.toFixed(2)}%`,
+            afterBody: (items) => {
+              const i = items && items[0] ? items[0].dataIndex : -1;
+              return i >= 0 && res.nAt[i] != null ? `จำนวนครั้ง ณ จุดนี้: ${res.nAt[i]}` : "";
+            }
+          } },
+          esBoundaries: { marks }
+        }
+      },
+      plugins: [esBoundaryPlugin]
+    });
+    return es.chart;
+  }
+
+  // ---- Admin: group review ----
+
+  async function loadAdminPendingGroups() {
+    try {
+      const { data, error } = await sb.rpc("admin_pending_groups");
+      if (error) throw error;
+      state.eventsTab.pendingGroups = data || [];
+    } catch (e) {
+      state.eventsTab.pendingGroups = [];
+      showError(byId("adminError"), "โหลดกลุ่มที่รออนุมัติไม่สำเร็จ: " + (e.message || e));
+    }
+    renderAdminGroups();
+  }
+
+  // One renderer for both admin lists. mode "pending" = draft groups waiting for
+  // approval (approve / reject); mode "approved" = already-approved groups the
+  // admin can still fix or delete.
+  function renderGroupAdminList(elId, groups, mode) {
+    const el = byId(elId);
+    if (!el) return;
+    const gs = groups || [];
+    if (!gs.length) {
+      el.innerHTML = `<p class="text-xs text-slate-400">${mode === "pending" ? "ไม่มีกลุ่มที่รออนุมัติ" : "ยังไม่มีกลุ่มที่อนุมัติแล้ว"}</p>`;
+      return;
+    }
+    el.innerHTML = gs.map((g) => {
+      const rows = g.rows || [];
+      const open = String(state.eventsTab.openGroupId) === String(g.id);
+      const color = /^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#64748b";
+      const head = mode === "approved"
+        ? `<div class="flex flex-wrap items-center gap-2 text-xs">
+             <input type="color" value="${color}" data-eg-color="${g.id}" class="border border-slate-300 rounded h-7 w-9" title="สีของกลุ่ม">
+             <input type="text" value="${escapeHtml(g.name)}" data-eg-name="${g.id}" class="border border-slate-300 rounded px-2 py-1 text-xs w-48" title="ชื่อกลุ่ม">
+             <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
+             <span class="text-slate-500">${g.n_events != null ? g.n_events : rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
+           </div>`
+        : `<div class="text-xs">
+             <span class="inline-block w-2 h-2 rounded-full mr-1" style="background:${color}"></span>
+             <b>${escapeHtml(g.name)}</b>
+             <span class="qd-badge-na text-[10px] px-1.5 py-0.5 rounded ml-1">${g.kind === "range" ? "มีช่วง" : "วันเดียว"}</span>
+             <span class="text-slate-500"> · ${rows.length} ครั้ง · โดย ${escapeHtml(g.creator_email || "—")}</span>
+           </div>`;
+      const buttons = mode === "pending"
+        ? `<button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "ดูรายการ"}</button>
+           <button class="bg-green-600 hover:bg-green-700 text-white rounded-lg px-3 py-1" data-eg-approve="${g.id}">อนุมัติทั้งกลุ่ม</button>
+           <button class="text-red-600 hover:underline px-1" data-eg-reject="${g.id}">ปฏิเสธ</button>`
+        : `<button class="border border-slate-300 rounded-lg px-2 py-1 hover:bg-white" data-eg-toggle="${g.id}">${open ? "ซ่อนรายการ" : "แก้ไขรายการ"}</button>
+           <button class="text-red-600 hover:underline px-1" data-eg-delete="${g.id}">ลบทั้งกลุ่ม</button>`;
+      const body = open
+        ? `<table class="text-xs w-full"><thead><tr>
+             <th class="px-2 py-1 w-6"><input type="checkbox" data-eg-selall="${g.id}" title="เลือกทั้งหมด"></th>
+             <th class="text-left px-2 py-1 font-medium text-slate-600">#</th>
+             <th class="text-left px-2 py-1 font-medium text-slate-600">วันเริ่ม</th>
+             ${g.kind === "range" ? '<th class="text-left px-2 py-1 font-medium text-slate-600">วันจบ</th>' : ""}
+             <th></th></tr></thead><tbody>
+             ${rows.map((r, ri) => `<tr class="border-t border-slate-100">
+               <td class="px-2 py-1"><input type="checkbox" data-egsel="${g.id}:${ri}"></td>
+               <td class="px-2 py-1">${ri + 1}</td>
+               <td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.start || ""))}" data-egrow="${g.id}:${ri}:start" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>
+               ${g.kind === "range" ? `<td class="px-2 py-1"><input type="date" value="${escapeHtml(String(r.end || r.start || ""))}" data-egrow="${g.id}:${ri}:end" class="border border-slate-300 rounded px-2 py-0.5 text-xs"></td>` : ""}
+               <td class="px-2 py-1 text-right"><button class="text-red-600 hover:underline" data-egrow-del="${g.id}:${ri}">ลบแถวนี้</button></td></tr>`).join("")}
+           </tbody></table>
+           <div class="mt-2 flex flex-wrap items-center gap-2">
+             <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs hover:bg-slate-50" data-eg-save="${g.id}">บันทึกการแก้ไข</button>
+             <button class="border border-slate-300 rounded-lg px-3 py-1 text-xs text-red-600 hover:bg-red-50" data-eg-delsel="${g.id}">ลบที่เลือก</button>
+             <span class="text-[11px] text-slate-500">${mode === "pending" ? "แก้วันที่ผิดแล้วกดบันทึก ก่อนอนุมัติทั้งกลุ่ม" : "แก้ชื่อ สี หรือวันที่ แล้วกดบันทึก — มีผลกับทุกคนทันที"}</span>
+           </div>`
+        : "";
+      return `<div class="border border-slate-200 rounded-xl mb-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 rounded-t-xl">
+          ${head}<div class="flex gap-2 text-xs">${buttons}</div>
+        </div>
+        <div class="${open ? "" : "hidden"} px-3 py-2">${body}</div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderAdminGroups() {
+    renderGroupAdminList("adminPendingGroups", state.eventsTab.pendingGroups, "pending");
+    renderGroupAdminList("adminApprovedGroups", state.eventsTab.approvedGroups, "approved");
+  }
+
+  function adminGroupById(id) {
+    return (state.eventsTab.pendingGroups || []).concat(state.eventsTab.approvedGroups || [])
+      .find((g) => String(g.id) === String(id));
+  }
+
+  // Approved groups come from list_event_groups (no rows); their occurrences are
+  // fetched the first time the admin opens one.
+  async function loadAdminApprovedGroups() {
+    if (!isAdminSession()) { state.eventsTab.approvedGroups = []; return []; }
+    const known = {};
+    (state.eventsTab.approvedGroups || []).forEach((g) => { known[g.id] = g.rows; });
+    state.eventsTab.approvedGroups = (state.eventsTab.groups || [])
+      .filter((g) => g.status === "approved")
+      .map((g) => Object.assign({}, g, { rows: known[g.id] || null }));
+    renderAdminGroups();
+    return state.eventsTab.approvedGroups;
+  }
+
+  // both admin lists share one refresh: pending comes from its own RPC, approved
+  // is derived from list_event_groups
+  async function refreshAdminGroupLists() {
+    await loadAdminPendingGroups();
+    await loadEventGroups();
+    await loadAdminApprovedGroups();
+  }
+
+  async function loadGroupRows(groupId) {
+    const g = adminGroupById(groupId);
+    if (!g || g.rows) return g && g.rows;
+    try {
+      const { data, error } = await sb.rpc("event_group_rows", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      g.rows = (data || []).map((r) => ({ id: r.id, start: r.start_date, end: r.end_date }));
+    } catch (e) {
+      g.rows = [];
+      showError(byId("adminError"), "โหลดรายการในกลุ่มไม่สำเร็จ: " + (e.message || e));
+    }
+    renderAdminGroups();
+    return g.rows;
+  }
+
+  // checkbox state lives in the DOM; read it when "ลบที่เลือก" is pressed
+  function deleteSelectedGroupRows(groupId, rootEl) {
+    const g = adminGroupById(groupId);
+    if (!g || !g.rows) return 0;
+    const picked = Array.from((rootEl || document).querySelectorAll(`[data-egsel^="${groupId}:"]`))
+      .filter((c) => c.checked)
+      .map((c) => +c.getAttribute("data-egsel").split(":")[1])
+      .sort((a, b) => b - a);
+    picked.forEach((i) => g.rows.splice(i, 1));
+    if (picked.length) renderAdminGroups();
+    return picked.length;
+  }
+
+  async function saveAdminGroupEdits(groupId) {
+    const g = adminGroupById(groupId);
+    if (!g) return false;
+    hide(byId("adminError"));
+    const problem = validateEventGroupRows((g.rows || []).map((r) => ({ start: r.start, end: r.end })), g.kind);
+    if (problem) { showError(byId("adminError"), problem); return false; }
+    try {
+      const { error } = await sb.rpc("save_event_group", {
+        p_name: g.name, p_color: g.color, p_kind: g.kind, p_group_id: g.id,
+        p_rows: (g.rows || []).map((r) => (g.kind === "range" ? { start: r.start, end: r.end || r.start } : { start: r.start }))
+      });
+      if (error) throw error;
+      g.rows = null;                    // row ids are re-created by save_event_group
+      await refreshAdminGroupLists();
+      if (String(state.eventsTab.openGroupId) === String(groupId)) await loadGroupRows(groupId);
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "บันทึกการแก้ไขไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function approveEventGroup(groupId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("approve_event_group", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      await refreshAdminGroupLists();
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "อนุมัติกลุ่มไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  async function deleteEventGroup(groupId, label, confirmFn) {
+    hide(byId("adminError"));
+    const ask = confirmFn || ((m) => window.confirm(m));
+    if (!ask(`ลบกลุ่ม "${label || groupId}" พร้อมทุกวันในกลุ่ม?\nลบแล้วกู้คืนไม่ได้`)) return false;
+    try {
+      const { error } = await sb.rpc("delete_event_group", { p_group_id: Number(groupId) });
+      if (error) throw error;
+      state.eventsTab.approvedGroups = (state.eventsTab.approvedGroups || []).filter((x) => String(x.id) !== String(groupId));
+      if (String(state.eventsTab.openGroupId) === String(groupId)) state.eventsTab.openGroupId = null;
+      await refreshAdminGroupLists();
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("adminError"), "ลบกลุ่มไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  // ---- Admin Panel ----
+
+  async function loadAdminPendingDrafts() {
+    hide(byId("adminError"));
+    try {
+      // Admin-only RPC: all users' non-expired drafts + masked creator email
+      const { data, error } = await sb.rpc("admin_pending_drafts");
+      if (error) throw error;
+      state.eventsTab.pendingDrafts = data || [];
+      renderAdminPanel();
+    } catch (e) {
+      showError(byId("adminError"), "โหลด pending drafts ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  function renderAdminPanel() {
+    const el = byId("adminPendingList");
+    if (!el) return;
+    const drafts = state.eventsTab.pendingDrafts;
+    if (drafts.length === 0) {
+      el.innerHTML = '<p class="text-xs text-slate-400">ไม่มี draft ที่รออนุมัติ</p>';
+      return;
+    }
+    el.innerHTML = '<table class="text-xs w-full"><thead class="bg-slate-50"><tr>' +
+      '<th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Name</th>' +
+      '<th class="text-left px-3 py-2">Creator</th><th class="text-center px-3 py-2">Action</th>' +
+      '</tr></thead><tbody>' +
+      drafts.map((d) => {
+        const eid = d.event_id || d.id;
+        return `<tr class="border-t border-slate-100">` +
+          `<td class="px-3 py-1.5">${escapeHtml(d.event_date || "")}</td>` +
+          `<td class="px-3 py-1.5">${escapeHtml(d.name || "")}</td>` +
+          `<td class="px-3 py-1.5 text-slate-400">${escapeHtml(d.creator_email || "—")}</td>` +
+          `<td class="px-3 py-1.5 text-center">` +
+          `<button class="text-green-600 hover:underline mr-2" data-approve="${eid}">Approve</button>` +
+          `<button class="text-red-600 hover:underline" data-reject="${eid}">Reject</button>` +
+          `</td></tr>`;
+      }).join("") + '</tbody></table>';
+    // Bind approve/reject
+    el.querySelectorAll("[data-approve]").forEach((btn) => {
+      btn.addEventListener("click", () => approveEvent(btn.getAttribute("data-approve")));
+    });
+    el.querySelectorAll("[data-reject]").forEach((btn) => {
+      btn.addEventListener("click", () => rejectEvent(btn.getAttribute("data-reject")));
+    });
+  }
+
+  async function approveEvent(eventId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("approve_custom_event", { p_event_id: eventId });
+      if (error) throw error;
+      await loadAdminPendingDrafts();
+      // Refresh events table too
+      await loadEventsTab();
+    } catch (e) {
+      showError(byId("adminError"), "Approve ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  async function rejectEvent(eventId) {
+    hide(byId("adminError"));
+    try {
+      const { error } = await sb.rpc("reject_custom_event", { p_event_id: eventId });
+      if (error) throw error;
+      // loadEventsTab also reloads the pending list + drill-down markers
+      await loadEventsTab();
+    } catch (e) {
+      showError(byId("adminError"), "Reject ไม่สำเร็จ: " + (e.message || e));
+    }
+  }
+
+  // Admin: delete an approved custom event (DB refuses non-custom types).
+  // confirmFn is injectable for tests; defaults to window.confirm.
+  async function deleteCustomEvent(eventId, label, confirmFn) {
+    hide(byId("eventsError"));
+    const ask = confirmFn || ((msg) => window.confirm(msg));
+    if (!ask(`ลบ Custom Event "${label || eventId}" ?\nลบแล้วกู้คืนไม่ได้`)) return false;
+    try {
+      const { error } = await sb.rpc("delete_custom_event", { p_event_id: Number(eventId) });
+      if (error) throw error;
+      await loadEventsTab();
+      return true;
+    } catch (e) {
+      showError(byId("eventsError"), "ลบไม่สำเร็จ: " + (e.message || e));
+      return false;
+    }
+  }
+
+  // ---- Seasonal Chart ----
+
+  function renderSeasonalAssetPicker() {
+    const el = byId("seasonalAssetPicker");
+    if (!el) return;
+    const byCategory = {};
+    state.instruments.forEach((i) => {
+      byCategory[i.category] = byCategory[i.category] || [];
+      byCategory[i.category].push(i);
+    });
+    el.innerHTML = Object.keys(byCategory).map((cat) => {
+      const opts = byCategory[cat].map((i) =>
+        `<option value="${i.id}">${i.ticker} — ${i.name}</option>`).join("");
+      return `<optgroup label="${cat}">${opts}</optgroup>`;
+    }).join("");
+    // Default to first instrument or current seasonal.assetId
+    if (!state.seasonal.assetId && state.instruments.length > 0) {
+      state.seasonal.assetId = state.instruments[0].id;
+    }
+    if (state.seasonal.assetId) el.value = String(state.seasonal.assetId);
+  }
+
+  function renderSeasonalYearGroupPicker() {
+    const el = byId("seasonalYearGroupPicker");
+    if (!el) return;
+    el.innerHTML = '<button class="text-[10px] border rounded px-2 py-0.5 ' +
+      (state.seasonal.yearGroups.length === 0 ? 'bg-slate-800 text-white' : '') +
+      '" data-yg="">All Years</button>' +
+      Object.keys(YEAR_GROUPS).map((k) => {
+        const active = state.seasonal.yearGroups.includes(k);
+        return `<button class="text-[10px] border rounded px-2 py-0.5 ${active ? 'text-white' : ''}" ` +
+          `style="${active ? 'background:' + YEAR_GROUPS[k].color + ';border-color:' + YEAR_GROUPS[k].color : ''}" ` +
+          `data-yg="${k}">${YEAR_GROUPS[k].label}</button>`;
+      }).join("");
+    el.querySelectorAll("[data-yg]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.getAttribute("data-yg");
+        if (!key) {
+          // "All Years" -- clear selection
+          state.seasonal.yearGroups = [];
+        } else {
+          const idx = state.seasonal.yearGroups.indexOf(key);
+          if (idx !== -1) {
+            state.seasonal.yearGroups.splice(idx, 1);
+          } else if (state.seasonal.yearGroups.length < 3) {
+            state.seasonal.yearGroups.push(key);
+          }
+        }
+        renderSeasonalYearGroupPicker();
+      });
+    });
+  }
+
+  async function loadSeasonalData(assetId) {
+    if (!assetId) return [];
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await sb.from("ohlcv_daily")
+        .select("date,open,high,low,close,adj_close,volume")
+        .eq("instrument_id", assetId)
+        .order("date", { ascending: true })
+        .range(offset, offset + PERIOD_END_CLOSES_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PERIOD_END_CLOSES_PAGE_SIZE) break;
+      offset += PERIOD_END_CLOSES_PAGE_SIZE;
+    }
+    return allRows;
+  }
+
+  function computeSeasonalSeries(rawData, metric, statistic, yearRange, yearGroups) {
+    if (!rawData || rawData.length === 0) return { series: [], note: "" };
+
+    const currentYear = new Date().getFullYear();
+    let minYear = 0;
+    if (yearRange === "5y") minYear = currentYear - 5;
+    else if (yearRange === "10y") minYear = currentYear - 10;
+    else if (yearRange === "20y") minYear = currentYear - 20;
+
+    // Group rows by year
+    const byYear = {};
+    rawData.forEach((r) => {
+      const y = parseInt(String(r.date).slice(0, 4), 10);
+      if (y < minYear) return;
+      if (!byYear[y]) byYear[y] = [];
+      byYear[y].push(r);
+    });
+
+    // For each year, compute metric per trading-day-of-year
+    const yearKeys = Object.keys(byYear).map(Number).sort();
+    if (yearKeys.length === 0) return { series: [], note: "ไม่มีข้อมูลในช่วงที่เลือก" };
+
+    // Compute per-year per-trading-day values
+    const yearData = {}; // year -> { tdoy: value }[]
+    yearKeys.forEach((y) => {
+      const days = byYear[y].sort((a, b) => (a.date < b.date ? -1 : 1));
+      const vals = [];
+      if (metric === "cumReturn") {
+        if (days.length === 0) return;
+        const adjFactor0 = (days[0].adj_close && days[0].close) ? days[0].adj_close / days[0].close : 1;
+        const basePrice = days[0].close * adjFactor0;
+        days.forEach((d, i) => {
+          const af = (d.adj_close && d.close) ? d.adj_close / d.close : 1;
+          const adjClose = d.close * af;
+          vals.push({ tdoy: i + 1, value: (adjClose / basePrice - 1) * 100 }); // percent
+        });
+      } else if (metric === "volume") {
+        days.forEach((d, i) => {
+          vals.push({ tdoy: i + 1, value: Number(d.volume) || 0 });
+        });
+      } else if (metric === "volatility") {
+        // 20-day rolling realized volatility
+        const logReturns = [];
+        for (let i = 1; i < days.length; i++) {
+          const prev = days[i - 1].adj_close || days[i - 1].close;
+          const cur = days[i].adj_close || days[i].close;
+          if (prev > 0 && cur > 0) logReturns.push(Math.log(cur / prev));
+          else logReturns.push(0);
+        }
+        const window = 20;
+        for (let i = 0; i < days.length; i++) {
+          if (i < window) {
+            vals.push({ tdoy: i + 1, value: null });
+          } else {
+            const slice = logReturns.slice(i - window, i);
+            const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+            const variance = slice.reduce((a, b) => a + (b - mean) ** 2, 0) / (slice.length - 1);
+            vals.push({ tdoy: i + 1, value: Math.sqrt(variance) * Math.sqrt(252) * 100 }); // annualized %
+          }
+        }
+      }
+      yearData[y] = vals;
+    });
+
+    // Determine which years belong to which group(s)
+    const activeGroups = (yearGroups || []).filter((k) => YEAR_GROUPS[k]);
+
+    const buildAggregated = (filterYears) => {
+      // Collect all values per trading-day-of-year
+      const byTdoy = {};
+      filterYears.forEach((y) => {
+        if (!yearData[y]) return;
+        yearData[y].forEach((v) => {
+          if (v.value === null) return;
+          if (!byTdoy[v.tdoy]) byTdoy[v.tdoy] = [];
+          byTdoy[v.tdoy].push(v.value);
+        });
+      });
+
+      const tdoys = Object.keys(byTdoy).map(Number).sort((a, b) => a - b);
+      const result = { labels: [], main: [], upper: null, lower: null };
+      tdoys.forEach((td) => {
+        const arr = byTdoy[td].sort((a, b) => a - b);
+        result.labels.push(td);
+        if (statistic === "median") {
+          result.main.push(percentile(arr, 50));
+        } else if (statistic === "mean") {
+          result.main.push(arr.reduce((a, b) => a + b, 0) / arr.length);
+        } else if (statistic === "p25_p75") {
+          result.main.push(percentile(arr, 50));
+          if (!result.upper) { result.upper = []; result.lower = []; }
+          result.upper.push(percentile(arr, 75));
+          result.lower.push(percentile(arr, 25));
+        } else if (statistic === "min_max") {
+          result.main.push(percentile(arr, 50));
+          if (!result.upper) { result.upper = []; result.lower = []; }
+          result.upper.push(arr[arr.length - 1]);
+          result.lower.push(arr[0]);
+        }
+      });
+      return result;
+    };
+
+    const series = [];
+    if (activeGroups.length === 0) {
+      // Single line: all years
+      const agg = buildAggregated(yearKeys);
+      series.push({ label: "All Years", color: SEASONAL_COLORS[0], ...agg });
+    } else {
+      // One line per selected group + "Rest"
+      const usedYears = new Set();
+      activeGroups.forEach((gk, gi) => {
+        const g = YEAR_GROUPS[gk];
+        const gy = yearKeys.filter((y) => g.years.includes(y));
+        gy.forEach((y) => usedYears.add(y));
+        const agg = buildAggregated(gy);
+        series.push({ label: g.label, color: g.color || SEASONAL_COLORS[gi + 1], ...agg });
+      });
+      // Rest
+      const restYears = yearKeys.filter((y) => !usedYears.has(y));
+      if (restYears.length > 0) {
+        const agg = buildAggregated(restYears);
+        series.push({ label: "Rest", color: "#94a3b8", ...agg });
+      }
+    }
+
+    const note = `${yearKeys.length} ปี (${yearKeys[0]}–${yearKeys[yearKeys.length - 1]})`;
+    return { series, note };
+  }
+
+  function percentile(sortedArr, p) {
+    if (sortedArr.length === 0) return 0;
+    if (sortedArr.length === 1) return sortedArr[0];
+    const idx = (p / 100) * (sortedArr.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sortedArr[lo];
+    return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
+  }
+
+  function renderSeasonalChart(seriesData) {
+    const canvas = byId("seasonalChart");
+    if (!canvas) return;
+    if (state.seasonal.chartInstance) {
+      state.seasonal.chartInstance.destroy();
+      state.seasonal.chartInstance = null;
+    }
+    if (!seriesData || seriesData.length === 0) return;
+
+    const datasets = [];
+    seriesData.forEach((s) => {
+      // Main line
+      datasets.push({
+        label: s.label,
+        data: s.labels.map((td, i) => ({ x: td, y: s.main[i] })),
+        borderColor: s.color,
+        backgroundColor: s.color + "20",
+        pointRadius: 0,
+        borderWidth: 1.5,
+        fill: false,
+        tension: 0.1
+      });
+      // Band (upper/lower)
+      if (s.upper && s.lower) {
+        datasets.push({
+          label: s.label + " (upper)",
+          data: s.labels.map((td, i) => ({ x: td, y: s.upper[i] })),
+          borderColor: s.color + "40",
+          pointRadius: 0,
+          borderWidth: 0.5,
+          borderDash: [3, 3],
+          fill: false
+        });
+        datasets.push({
+          label: s.label + " (lower)",
+          data: s.labels.map((td, i) => ({ x: td, y: s.lower[i] })),
+          borderColor: s.color + "40",
+          backgroundColor: s.color + "10",
+          pointRadius: 0,
+          borderWidth: 0.5,
+          borderDash: [3, 3],
+          fill: "-1"
+        });
+      }
+    });
+
+    const metricLabels = { cumReturn: "Cumulative Return (%)", volume: "Volume", volatility: "Realized Volatility (%, annualized)" };
+    state.seasonal.chartInstance = new Chart(canvas, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+          x: {
+            type: "linear",
+            title: { display: true, text: "Trading Day of Year" },
+            min: 1,
+            max: 252,
+            ticks: { stepSize: 21 }
+          },
+          y: {
+            title: { display: true, text: metricLabels[state.seasonal.metric] || "" }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: {
+              filter: (item) => !item.text.includes("(upper)") && !item.text.includes("(lower)")
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const ds = ctx.dataset;
+                if (ds.label.includes("(upper)") || ds.label.includes("(lower)")) return null;
+                return `${ds.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : "N/A"}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ---- Bind all Events tab handlers ----
+
+  function bindEventsTabHandlers() {
+    const eventsBtn = byId("tabBtnEvents");
+    if (eventsBtn) eventsBtn.addEventListener("click", () => switchTab("events"));
+
+    const refreshBtn = byId("eventsRefreshBtn");
+    if (refreshBtn) refreshBtn.addEventListener("click", () => {
+      state.eventsTab.loaded = false;
+      loadEventsTab();
+    });
+
+    const yearFilter = byId("eventsYearFilter");
+    if (yearFilter) yearFilter.addEventListener("change", () => {
+      state.eventsTab.yearFilter = yearFilter.value || null;
+      rerenderEventsTable();
+    });
+
+    const typeFilter = byId("eventsTypeFilter");
+    if (typeFilter) typeFilter.addEventListener("change", rerenderEventsTable);
+
+    const collapseBtn = byId("eventsCollapseBtn");
+    if (collapseBtn) collapseBtn.addEventListener("click", toggleEventsCollapsed);
+
+    // ---- Event group builder ----
+    const mSel = byId("egMonth"), nmSel = byId("egNthMonth"), dowSel = byId("egDow");
+    if (mSel && !mSel.options.length) EG_MONTHS.forEach((m, i) => mSel.insertAdjacentHTML("beforeend", `<option value="${i + 1}" ${i === 6 ? "selected" : ""}>${m}</option>`));
+    if (nmSel && nmSel.options.length <= 1) EG_MONTHS.forEach((m, i) => nmSel.insertAdjacentHTML("beforeend", `<option value="${i + 1}">${m}</option>`));
+    if (dowSel && !dowSel.options.length) EG_DOWS.forEach((d, i) => dowSel.insertAdjacentHTML("beforeend", `<option value="${i}" ${i === 5 ? "selected" : ""}>${d}</option>`));
+    const thisYear = new Date().getFullYear();
+    if (byId("egTo") && !byId("egTo").value) byId("egTo").value = thisYear;
+    if (byId("egNthTo") && !byId("egNthTo").value) byId("egNthTo").value = thisYear;
+
+    const egMode = byId("egMode");
+    if (egMode) egMode.addEventListener("change", () => {
+      byId("egCtlYearly").classList.toggle("hidden", egMode.value !== "yearly");
+      byId("egCtlNth").classList.toggle("hidden", egMode.value !== "nth");
+      byId("egCtlManual").classList.toggle("hidden", egMode.value !== "manual");
+    });
+    const egKind = byId("egKind");
+    if (egKind) egKind.addEventListener("change", () => {
+      byId("egEndBox").classList.toggle("hidden", egKind.value !== "range");
+      setEventGroupDraft(state.eventsTab.groupDraft);
+    });
+    const egGen = byId("egGenBtn");
+    if (egGen) egGen.addEventListener("click", () => setEventGroupDraft(generateYearlyDates(
+      +byId("egDay").value, +byId("egMonth").value, +byId("egFrom").value, +byId("egTo").value)));
+    const egGenNth = byId("egGenNthBtn");
+    if (egGenNth) egGenNth.addEventListener("click", () => setEventGroupDraft(generateNthWeekdayDates(
+      +byId("egOrd").value, +byId("egDow").value, +byId("egNthMonth").value, +byId("egNthFrom").value, +byId("egNthTo").value)));
+    const breadthBtn = byId("breadthCalcBtn");
+    if (breadthBtn) breadthBtn.addEventListener("click", () => loadBreadth());
+    const breadthRange = byId("breadthRange");
+    if (breadthRange) breadthRange.addEventListener("change", () => { if (state.momentum.breadth.loaded) loadBreadth(); });
+
+    // ---- Event Study controls ----
+    const esCalc = byId("esCalcBtn");
+    if (esCalc) esCalc.addEventListener("click", () => runEventStudy());
+    ["esAsset", "esSource", "esStat", "esDuring", "esUnlock", "esBaseline", "esDurMin", "esDurMax", "esN"]
+      .forEach((id) => { const el = byId(id); if (el) el.addEventListener("change", () => onEsControlChange(id)); });
+    const esPre = byId("esPresets");
+    if (esPre) esPre.addEventListener("click", (ev) => {
+      const b = ev.target && ev.target.closest ? ev.target.closest("[data-es-n]") : null;
+      if (!b) return;
+      state.eventStudy.n = +b.getAttribute("data-es-n");
+      const nEl = byId("esN"); if (nEl) nEl.value = String(state.eventStudy.n);
+      renderEsPresetButtons();
+      if (state.eventStudy.ran) runEventStudy();
+    });
+
+    const egAdd = byId("egAddBtn");
+    if (egAdd) egAdd.addEventListener("click", () => {
+      const s = (byId("egStart") || {}).value;
+      if (!s) return;
+      const e = egKindIsRange() ? ((byId("egEnd") || {}).value || s) : null;
+      setEventGroupDraft(state.eventsTab.groupDraft.concat([{ start: s, end: e, flag: "" }]));
+    });
+    const egDelSel = byId("egDelSelBtn");
+    if (egDelSel) egDelSel.addEventListener("click", () => deleteSelectedDraftRows());
+    const egClear = byId("egClearBtn");
+    if (egClear) egClear.addEventListener("click", () => { state.eventsTab.editingGroupId = null; setEventGroupDraft([]); });
+    const egSave = byId("egSaveBtn");
+    if (egSave) egSave.addEventListener("click", () => saveEventGroup());
+
+    const egTable = byId("egTable");
+    if (egTable) {
+      egTable.addEventListener("change", (ev) => {
+        const t = ev.target;
+        if (!t || !t.getAttribute) return;
+        if (t.id === "egSelAll") {
+          egTable.querySelectorAll("[data-eg-sel]").forEach((c) => { c.checked = t.checked; });
+          return;
+        }
+        const si = t.getAttribute("data-eg-start"), ei = t.getAttribute("data-eg-end");
+        if (si != null) { state.eventsTab.groupDraft[+si].start = t.value; state.eventsTab.groupDraft[+si].flag = ""; renderEventGroupPreview(); }
+        else if (ei != null) { state.eventsTab.groupDraft[+ei].end = t.value; renderEventGroupPreview(); }
+      });
+      egTable.addEventListener("click", (ev) => {
+        const b = ev.target && ev.target.closest ? ev.target.closest("[data-eg-del]") : null;
+        if (!b) return;
+        state.eventsTab.groupDraft.splice(+b.getAttribute("data-eg-del"), 1);
+        renderEventGroupPreview();
+      });
+    }
+
+    // ---- Admin group review (delegated: the list is re-rendered often) ----
+    ["adminPendingGroups", "adminApprovedGroups"].forEach((elId) => {
+      const agEl = byId(elId);
+      if (!agEl) return;
+      agEl.addEventListener("click", (ev) => {
+        const t = ev.target && ev.target.closest ? ev.target : null;
+        if (!t) return;
+        const tg = t.closest("[data-eg-toggle]");
+        if (tg) { const id = tg.getAttribute("data-eg-toggle");
+          const opening = String(state.eventsTab.openGroupId) !== String(id);
+          state.eventsTab.openGroupId = opening ? id : null;
+          renderAdminGroups();
+          if (opening) loadGroupRows(id);   // approved groups arrive without rows
+          return; }
+        const ap = t.closest("[data-eg-approve]");
+        if (ap) { approveEventGroup(ap.getAttribute("data-eg-approve")); return; }
+        const rj = t.closest("[data-eg-reject]");
+        if (rj) { const g = adminGroupById(rj.getAttribute("data-eg-reject"));
+          deleteEventGroup(rj.getAttribute("data-eg-reject"), g && g.name); return; }
+        const dg = t.closest("[data-eg-delete]");
+        if (dg) { const g = adminGroupById(dg.getAttribute("data-eg-delete"));
+          deleteEventGroup(dg.getAttribute("data-eg-delete"), g && g.name); return; }
+        const sv = t.closest("[data-eg-save]");
+        if (sv) { saveAdminGroupEdits(sv.getAttribute("data-eg-save")); return; }
+        const ds = t.closest("[data-eg-delsel]");
+        if (ds) { deleteSelectedGroupRows(ds.getAttribute("data-eg-delsel"), agEl); return; }
+        const dl = t.closest("[data-egrow-del]");
+        if (dl) {
+          const [gid, ri] = dl.getAttribute("data-egrow-del").split(":");
+          const g = adminGroupById(gid);
+          if (g && g.rows) { g.rows.splice(+ri, 1); renderAdminGroups(); }
+        }
+      });
+      agEl.addEventListener("change", (ev) => {
+        const t = ev.target;
+        if (!t || !t.getAttribute) return;
+        const all = t.getAttribute("data-eg-selall");
+        if (all != null) {
+          agEl.querySelectorAll(`[data-egsel^="${all}:"]`).forEach((c) => { c.checked = t.checked; });
+          return;
+        }
+        const nm = t.getAttribute("data-eg-name"), cl = t.getAttribute("data-eg-color");
+        if (nm != null) { const g = adminGroupById(nm); if (g) g.name = t.value; return; }
+        if (cl != null) { const g = adminGroupById(cl); if (g) g.color = t.value; return; }
+        const key = t.getAttribute("data-egrow");
+        if (!key) return;
+        const [gid, ri, field] = key.split(":");
+        const g = adminGroupById(gid);
+        if (g && g.rows && g.rows[+ri]) g.rows[+ri][field] = t.value;
+      });
+    });
+
+    // One delegated listener for the (re-rendered) table: header sort + admin delete
+    const eventsTableEl = byId("eventsTable");
+    if (eventsTableEl) eventsTableEl.addEventListener("click", (ev) => {
+      const target = ev.target && ev.target.closest ? ev.target : null;
+      if (!target) return;
+      const th = target.closest("th[data-sort]");
+      if (th) { setEventsSort(th.getAttribute("data-sort")); return; }
+      const del = target.closest("[data-delete-event]");
+      if (del) deleteCustomEvent(del.getAttribute("data-delete-event"), del.getAttribute("data-event-label"));
+    });
+
+    // Custom event form
+    const ceSubmit = byId("ceSubmitBtn");
+    if (ceSubmit) ceSubmit.addEventListener("click", () => {
+      const date = (byId("ceDate") || {}).value;
+      const name = (byId("ceName") || {}).value;
+      const color = (byId("ceColor") || {}).value || "#3498db";
+      submitCustomEvent(date, name, color);
+    });
+
+    // CSV preview
+    const csvPreview = byId("ceCsvPreviewBtn");
+    if (csvPreview) csvPreview.addEventListener("click", () => {
+      const text = (byId("ceCsvInput") || {}).value || "";
+      const parsed = parseCSVEvents(text);
+      const previewEl = byId("ceCsvPreview");
+      const submitBtn = byId("ceCsvSubmitBtn");
+      hide(byId("ceCsvError"));
+      if (parsed.length === 0) {
+        showError(byId("ceCsvError"), "ไม่พบข้อมูลที่ถูกต้อง (format: YYYY-MM-DD,ชื่อ)");
+        hide(previewEl);
+        hide(submitBtn);
+        return;
+      }
+      if (previewEl) {
+        previewEl.innerHTML = '<table class="text-xs w-full border border-slate-200 rounded"><thead class="bg-slate-50"><tr>' +
+          '<th class="px-2 py-1 text-left">Date</th><th class="px-2 py-1 text-left">Name</th></tr></thead><tbody>' +
+          parsed.map((e) => `<tr class="border-t border-slate-100"><td class="px-2 py-1">${escapeHtml(e.date)}</td><td class="px-2 py-1">${escapeHtml(e.name)}</td></tr>`).join("") +
+          '</tbody></table>' +
+          `<p class="text-[10px] text-slate-500 mt-1">${parsed.length} รายการ</p>`;
+        show(previewEl);
+      }
+      if (submitBtn) show(submitBtn);
+      // Store parsed for submission
+      if (submitBtn) {
+        submitBtn._parsedEvents = parsed;
+      }
+    });
+
+    const csvSubmit = byId("ceCsvSubmitBtn");
+    if (csvSubmit) csvSubmit.addEventListener("click", () => {
+      submitCSVEvents(csvSubmit._parsedEvents || []);
+    });
+
+    // Seasonal chart controls
+    const assetPicker = byId("seasonalAssetPicker");
+    if (assetPicker) assetPicker.addEventListener("change", (e) => {
+      state.seasonal.assetId = Number(e.target.value);
+    });
+
+    const metricPicker = byId("seasonalMetricPicker");
+    if (metricPicker) metricPicker.addEventListener("change", (e) => {
+      state.seasonal.metric = e.target.value;
+    });
+
+    const statPicker = byId("seasonalStatPicker");
+    if (statPicker) statPicker.addEventListener("change", (e) => {
+      state.seasonal.statistic = e.target.value;
+    });
+
+    // Year range buttons
+    const yearRangeBtns = byId("seasonalYearRangeBtns");
+    if (yearRangeBtns) {
+      yearRangeBtns.querySelectorAll("button[data-range]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.seasonal.yearRange = btn.getAttribute("data-range");
+          // Update button styles
+          yearRangeBtns.querySelectorAll("button[data-range]").forEach((b) => {
+            b.classList.remove("bg-slate-800", "text-white");
+          });
+          btn.classList.add("bg-slate-800", "text-white");
+        });
+      });
+    }
+
+    // Calculate seasonal
+    const calcBtn = byId("seasonalCalcBtn");
+    if (calcBtn) calcBtn.addEventListener("click", async () => {
+      hide(byId("seasonalError"));
+      show(byId("seasonalLoading"));
+      try {
+        const assetId = state.seasonal.assetId;
+        if (!assetId) throw new Error("กรุณาเลือกสินทรัพย์");
+        // Fetch data if needed (different asset or not loaded)
+        if (!state.seasonal.loaded || state.seasonal.rawData.length === 0 ||
+            state.seasonal.rawData._assetId !== assetId) {
+          state.seasonal.rawData = await loadSeasonalData(assetId);
+          state.seasonal.rawData._assetId = assetId;
+          state.seasonal.loaded = true;
+        }
+        const { series, note } = computeSeasonalSeries(
+          state.seasonal.rawData,
+          state.seasonal.metric,
+          state.seasonal.statistic,
+          state.seasonal.yearRange,
+          state.seasonal.yearGroups
+        );
+        renderSeasonalChart(series);
+        setText("seasonalNote", note);
+      } catch (e) {
+        showError(byId("seasonalError"), e.message || String(e));
+      } finally {
+        hide(byId("seasonalLoading"));
+      }
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // =====================================================================
+  // Data Health tab (2026-09-21, Round 1 item A)
+  // =====================================================================
+  // Thresholds match the cron alert (data_health_report / fetch_prices.py):
+  // 3 consecutive error run-days or 3+ trading days behind = problem.
+  const HEALTH_ERROR_DAYS = 3;
+  const HEALTH_STALE_DAYS = 3;
+  // maxAgeDays = how old the latest observation may be before it is flagged.
+  // Weekly FRED series are dated the Friday of the week and published the
+  // following week; GDPNow is dated the 1st day of the quarter it nowcasts and
+  // the next quarter's nowcast only starts ~4 weeks into that quarter.
+  const MACRO_SERIES_INFO = {
+    DGS10:    { label: "US 10Y Treasury Yield", freq: "daily",   maxAgeDays: 7 },
+    FEDFUNDS: { label: "Fed Funds Rate",        freq: "monthly", maxAgeDays: 70 },
+    // CPI ลงวันที่ต้นงวดแล้วประกาศกลางเดือนถัดไป อายุของแถวล่าสุดจึงแกว่งถึง ~75 วันตามปกติ
+    // เกณฑ์ 70 วันเดิมทำให้ติดธง "มีปัญหา" ทุกเดือนทั้งที่ pipeline ปกติ (เหตุผลเดียวกับ MICH)
+    CPIAUCSL: { label: "US CPI YoY",            freq: "monthly", maxAgeDays: 100 },
+    UNRATE:   { label: "US Unemployment Rate",  freq: "monthly", maxAgeDays: 70 },
+    // added 2026-09-22
+    DGS2:     { label: "US 2Y Treasury Yield",                    freq: "daily",     maxAgeDays: 7 },
+    DGS30:    { label: "US 30Y Treasury Yield",                   freq: "daily",     maxAgeDays: 7 },
+    T10Y2Y:   { label: "10Y minus 2Y Treasury spread",            freq: "daily",     maxAgeDays: 7 },
+    T5YIE:    { label: "5Y Breakeven Inflation",                  freq: "daily",     maxAgeDays: 7 },
+    T10YIE:   { label: "10Y Breakeven Inflation",                 freq: "daily",     maxAgeDays: 7 },
+    T5YIFR:   { label: "5Y5Y Forward Inflation Expectation",      freq: "daily",     maxAgeDays: 7 },
+    MICH:     { label: "UMich 1Y Inflation Expectation (survey)", freq: "monthly",   maxAgeDays: 100 }, // FRED posts MICH ~1 month late (licensing)
+    NFCI:     { label: "Chicago Fed Financial Conditions (NFCI)", freq: "weekly",    maxAgeDays: 14 },
+    STLFSI4:  { label: "St. Louis Fed Financial Stress Index",    freq: "weekly",    maxAgeDays: 14 },
+    GDPNOW:   { label: "Atlanta Fed GDPNow (real GDP nowcast)",   freq: "quarterly", maxAgeDays: 125 }
+  };
+  const HEALTH_STATUS_LABEL = { ok: "ปกติ", warn: "ต้องจับตา", error: "มีปัญหา" };
+  const HEALTH_STATUS_CLASS = {
+    ok: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    warn: "bg-amber-50 text-amber-700 border-amber-200",
+    error: "bg-red-50 text-red-700 border-red-200"
+  };
+
+  // -> { status: ok|warn|error, reasons: [thai text] }
+  function classifyInstrumentHealth(r) {
+    const reasons = [];
+    let status = "ok";
+    const bump = (s) => { if (s === "error" || (s === "warn" && status === "ok")) status = s; };
+    if (!r || !r.rows) { return { status: "error", reasons: ["ไม่มีข้อมูลราคา"] }; }
+    if (r.error_streak >= HEALTH_ERROR_DAYS) { bump("error"); reasons.push(`ดึงข้อมูลล้มเหลว ${r.error_streak} วันติด`); }
+    else if (r.error_streak > 0) { bump("warn"); reasons.push(`ดึงข้อมูลล้มเหลว ${r.error_streak} วันล่าสุด`); }
+    if (r.days_behind >= HEALTH_STALE_DAYS) { bump("error"); reasons.push(`ช้ากว่าตลาด ${r.days_behind} วันทำการ`); }
+    else if (r.days_behind > 0) { bump("warn"); reasons.push(`ช้ากว่าตลาด ${r.days_behind} วันทำการ`); }
+    if (r.missing_1y > 0) { bump("warn"); reasons.push(`ข้อมูลขาด ${r.missing_1y} วันในรอบ 1 ปี`); }
+    if (r.last_status && r.last_status !== "ok" && !(r.error_streak > 0)) { bump("warn"); reasons.push(`ผลดึงล่าสุด: ${r.last_status}`); }
+    return { status, reasons };
+  }
+
+  function daysBetween(a, b) {
+    const da = new Date(String(a).slice(0, 10) + "T00:00:00Z"), db = new Date(String(b).slice(0, 10) + "T00:00:00Z");
+    if (isNaN(da.getTime()) || isNaN(db.getTime())) return null;
+    return Math.round((db - da) / 86400000);
+  }
+
+  // Monthly series are dated the 1st of the month they describe and are
+  // published weeks later, so they are judged on a longer allowance.
+  function classifyMacroHealth(m, today) {
+    const info = MACRO_SERIES_INFO[m.series_id] || { label: m.series_id, freq: "unknown", maxAgeDays: 70 };
+    const age = daysBetween(m.last_date, today);
+    if (age == null) return { status: "error", age: null, info, reason: "ไม่มีข้อมูล" };
+    if (age > info.maxAgeDays) return { status: "warn", age, info, reason: `ข้อมูลล่าสุดเก่า ${age} วัน (เกณฑ์ ${info.maxAgeDays} วัน)` };
+    return { status: "ok", age, info, reason: "" };
+  }
+
+  function classifyEventTypeHealth(e) {
+    if (!e.count) return { status: "warn", reason: "ยังไม่มีข้อมูล (รอ workflow ดึงครั้งแรก)" };
+    if (!e.next_date && e.source !== "manual") return { status: "warn", reason: "ไม่มีวันนัดครั้งถัดไป" };
+    return { status: "ok", reason: "" };
+  }
+
+  function summarizeHealth(instruments) {
+    const out = { total: 0, ok: 0, warn: 0, error: 0 };
+    (instruments || []).forEach((r) => { out.total += 1; out[classifyInstrumentHealth(r).status] += 1; });
+    return out;
+  }
+
+  // problems first (error, warn, ok), then ticker
+  function sortHealthRows(instruments) {
+    const rank = { error: 0, warn: 1, ok: 2 };
+    return (instruments || []).map((r) => Object.assign({ health: classifyInstrumentHealth(r) }, r))
+      .sort((a, b) => (rank[a.health.status] - rank[b.health.status]) || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
+  }
+
+  async function fetchDataHealth() {
+    const { data, error } = await sb.rpc("data_health_overview");
+    if (error) throw error;
+    return data || { instruments: [], macro: [], events: [] };
+  }
+
+  async function loadDataHealth() {
+    const h = state.health;
+    h.loading = true;
+    setLoading("healthLoading", true);
+    hide(byId("healthError"));
+    try {
+      h.data = await fetchDataHealth();
+      h.loaded = true;
+    } catch (e) {
+      showError(byId("healthError"), `โหลด Data Health ไม่สำเร็จ: ${(e && e.message) || e}`);
+    }
+    h.loading = false;
+    setLoading("healthLoading", false);
+    renderDataHealth();
+  }
+
+  function healthBadge(status) {
+    return `<span class="inline-block text-[11px] px-2 py-0.5 rounded-full border ${HEALTH_STATUS_CLASS[status]}">${HEALTH_STATUS_LABEL[status]}</span>`;
+  }
+
+  function formatDateTimeTh(ts) {
+    if (!ts) return "–";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "–";
+    const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const date = formatThaiDate(local);
+    const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0");
+    return `${date} ${hh}:${mm}`;
+  }
+
+  function renderDataHealth() {
+    const data = state.health.data;
+    if (!data) return;
+    const today = new Date().toISOString().slice(0, 10);
+    setText("healthAsOf", `ข้อมูลราคาล่าสุดในระบบ: ${data.as_of ? formatThaiDate(data.as_of) : "–"} · ` +
+      `cron รันล่าสุด: ${formatDateTimeTh(data.last_fetch_run)}`);
+
+    const sum = summarizeHealth(data.instruments);
+    const cards = byId("healthSummary");
+    if (cards) {
+      const card = (label, n, cls) => `<div class="rounded-xl border ${cls} px-4 py-3"><div class="text-[11px]">${label}</div><div class="text-xl font-semibold">${n}</div></div>`;
+      cards.innerHTML = card("Instrument ทั้งหมด", sum.total, "border-slate-200 text-slate-700") +
+        card(HEALTH_STATUS_LABEL.ok, sum.ok, HEALTH_STATUS_CLASS.ok) +
+        card(HEALTH_STATUS_LABEL.warn, sum.warn, HEALTH_STATUS_CLASS.warn) +
+        card(HEALTH_STATUS_LABEL.error, sum.error, HEALTH_STATUS_CLASS.error);
+    }
+
+    const onlyProblems = state.health.onlyProblems;
+    const rows = sortHealthRows(data.instruments).filter((r) => !onlyProblems || r.health.status !== "ok");
+    const tbl = byId("healthInstrumentTable");
+    if (tbl) {
+      const head = ["สถานะ", "Ticker", "ชื่อ", "หมวด", "ข้อมูลล่าสุด", "ช้ากว่าตลาด (วัน)", "ขาดใน 1 ปี (วัน)", "error ติดกัน", "ดึงล่าสุด", "หมายเหตุ"];
+      tbl.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${head.map((h) => `<th class="text-left font-medium px-2 py-1.5 whitespace-nowrap">${h}</th>`).join("")}</tr></thead>` +
+        `<tbody>` + (rows.length ? rows.map((r) =>
+          `<tr class="border-t border-slate-100" data-health-ticker="${escapeHtml(r.ticker)}">` +
+          `<td class="px-2 py-1">${healthBadge(r.health.status)}</td>` +
+          `<td class="px-2 py-1 font-medium">${escapeHtml(r.ticker)}</td>` +
+          `<td class="px-2 py-1 text-slate-600">${escapeHtml(r.name)}</td>` +
+          `<td class="px-2 py-1 text-slate-500">${escapeHtml(r.category)}</td>` +
+          `<td class="px-2 py-1 whitespace-nowrap">${r.last_date ? formatThaiDate(r.last_date) : "–"}</td>` +
+          `<td class="px-2 py-1 text-right">${r.days_behind}</td>` +
+          `<td class="px-2 py-1 text-right">${r.missing_1y}</td>` +
+          `<td class="px-2 py-1 text-right">${r.error_streak}</td>` +
+          `<td class="px-2 py-1 whitespace-nowrap text-slate-500" title="${escapeHtml(r.last_message || "")}">${escapeHtml(r.last_status || "–")} · ${formatDateTimeTh(r.last_run_at)}</td>` +
+          `<td class="px-2 py-1 text-slate-600">${escapeHtml(r.health.reasons.join(" · "))}</td>` +
+          `</tr>`).join("") : `<tr><td colspan="${head.length}" class="px-2 py-3 text-center text-slate-400">ไม่มีรายการที่มีปัญหา</td></tr>`) + `</tbody>`;
+    }
+
+    const mt = byId("healthMacroTable");
+    if (mt) {
+      mt.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${["สถานะ", "Series", "ความหมาย", "ข้อมูลล่าสุด", "อายุ (วัน)", "เพิ่มแถวใหม่ล่าสุด", "หมายเหตุ"].map((h) => `<th class="text-left font-medium px-2 py-1.5">${h}</th>`).join("")}</tr></thead><tbody>` +
+        (data.macro || []).map((m) => {
+          const c = classifyMacroHealth(m, today);
+          return `<tr class="border-t border-slate-100"><td class="px-2 py-1">${healthBadge(c.status)}</td>` +
+            `<td class="px-2 py-1 font-medium">${escapeHtml(m.series_id)}</td><td class="px-2 py-1 text-slate-600">${escapeHtml(c.info.label)}</td>` +
+            `<td class="px-2 py-1">${m.last_date ? formatThaiDate(m.last_date) : "–"}</td><td class="px-2 py-1 text-right">${c.age == null ? "–" : c.age}</td>` +
+            `<td class="px-2 py-1 text-slate-500">${formatDateTimeTh(m.last_loaded_at)}</td><td class="px-2 py-1 text-slate-600">${escapeHtml(c.reason)}</td></tr>`;
+        }).join("") + `</tbody>`;
+    }
+
+    const et = byId("healthEventTable");
+    if (et) {
+      const srcLabel = { fred: "FRED", rule: "คำนวณจากกฎ", curated: "ไฟล์ที่รวบรวมไว้", manual: "กรอกเอง" };
+      et.innerHTML = `<thead class="bg-slate-50 text-slate-600"><tr>${["สถานะ", "Event", "แหล่งข้อมูล", "จำนวน", "ตั้งแต่", "ครั้งล่าสุด", "ครั้งถัดไป", "หมายเหตุ"].map((h) => `<th class="text-left font-medium px-2 py-1.5">${h}</th>`).join("")}</tr></thead><tbody>` +
+        (data.events || []).map((e) => {
+          const c = classifyEventTypeHealth(e);
+          return `<tr class="border-t border-slate-100"><td class="px-2 py-1">${healthBadge(c.status)}</td>` +
+            `<td class="px-2 py-1 font-medium">${escapeHtml(e.name_th)}</td><td class="px-2 py-1 text-slate-500">${escapeHtml(srcLabel[e.source] || e.source)}</td>` +
+            `<td class="px-2 py-1 text-right">${e.count}</td><td class="px-2 py-1">${e.first_date ? formatThaiDate(e.first_date) : "–"}</td>` +
+            `<td class="px-2 py-1">${e.last_past ? formatThaiDate(e.last_past) : "–"}</td><td class="px-2 py-1">${e.next_date ? formatThaiDate(e.next_date) : "–"}</td>` +
+            `<td class="px-2 py-1 text-slate-600">${escapeHtml(c.reason)}</td></tr>`;
+        }).join("") + `</tbody>`;
+    }
+  }
+
+  function bindHealthUIHandlers() {
+    const btn = byId("tabBtnHealth");
+    if (btn) btn.addEventListener("click", () => switchTab("health"));
+    const refresh = byId("healthRefreshBtn");
+    if (refresh) refresh.addEventListener("click", () => loadDataHealth());
+    const only = byId("healthOnlyProblems");
+    if (only) only.addEventListener("change", (e) => { state.health.onlyProblems = e.target.checked; renderDataHealth(); });
+  }
+
+  // ---------------------------------------------------------------------
+  // Small DOM utilities
+  // ---------------------------------------------------------------------
+  function byId(id) { return document.getElementById(id); }
+  function hide(el) { if (el) el.classList.add("hidden"); }
+  function show(el) { if (el) el.classList.remove("hidden"); }
+  function showError(el, msg) { if (!el) return; el.textContent = msg; show(el); }
+  function setLoading(id, on) { const el = byId(id); if (!el) return; if (on) show(el); else hide(el); }
+  function setStatus(msg) { const el = byId("calculateStatus"); if (el) el.textContent = msg; }
+  function setText(id, msg) { const el = byId(id); if (el) el.textContent = msg; }
+
+  // ---------------------------------------------------------------------
+  // Auth
+  // ---------------------------------------------------------------------
+  function renderAuthState() {
+    const authScreen = byId("authScreen");
+    const dashScreen = byId("dashboardScreen");
+    if (!authScreen || !dashScreen) return;
+    if (state.session) {
+      hide(authScreen);
+      show(dashScreen);
+      dashScreen.classList.remove("hidden");
+    } else {
+      show(authScreen);
+      dashScreen.classList.add("hidden");
+    }
+  }
+
+  async function login(email, password) {
+    const errEl = byId("loginError");
+    hide(errEl);
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      showError(errEl, error.message || "เข้าสู่ระบบไม่สำเร็จ");
+      return false;
+    }
+    return true;
+  }
+
+  async function logout() {
+    await sb.auth.signOut();
+  }
+
+  async function bootDashboard() {
+    if (state.instrumentsLoaded) return;
+    state.instrumentsLoaded = true;
+    try {
+      await loadInstruments();
+      renderAssetPicker();
+      syncTopControlsFromState();
+      renderVariantForms();
+      renderRollingStatPicker();
+      await fetchDataAsOf();
+      renderSeasonalAsOfNote();
+      await fetchOverview();
+
+      // Momentum tab: static pickers only -- price data loads lazily on first
+      // switch to the tab (switchTab), so logging in never pays for it.
+      const spy = state.instruments.find((i) => i.ticker === "SPY");
+      state.momentum.benchmarkAssetId = spy ? spy.id : (state.instruments[0] ? state.instruments[0].id : null);
+      renderMomentumBenchmarkPicker();
+      renderMomentumLookbackSmaPickers();
+    } catch (e) {
+      showError(byId("overviewError"), `โหลดข้อมูลเริ่มต้นไม่สำเร็จ: ${e.message || e}`);
+    }
+  }
+
+  function renderAssetPicker() {
+    const el = byId("assetPicker");
+    if (!el) return;
+    const byCategory = {};
+    state.instruments.forEach((i) => {
+      byCategory[i.category] = byCategory[i.category] || [];
+      byCategory[i.category].push(i);
+    });
+    el.innerHTML = Object.keys(byCategory).map((cat) => {
+      const opts = byCategory[cat].map((i) =>
+        `<option value="${i.id}" ${i.id === state.assetId ? "selected" : ""}>${i.ticker} — ${i.name}</option>`).join("");
+      return `<optgroup label="${cat}">${opts}</optgroup>`;
+    }).join("");
+  }
+
+  function renderRollingStatPicker() {
+    const el = byId("rollingStatPicker");
+    if (!el) return;
+    el.innerHTML = ROLLING_STATS.map((s) =>
+      `<option value="${s.key}" ${s.key === state.rollingStatKey ? "selected" : ""}>${s.label}</option>`).join("");
+  }
+
+  const GLOSSARY_GROUP_LABELS = {
+    returns: "ผลตอบแทน (Returns)",
+    upside: "ฝั่งบวก (Upside)",
+    downside: "ฝั่งลบ (Downside)",
+    risk: "ความเสี่ยง / อัตราส่วน (Risk & Ratios)"
+  };
+  const GLOSSARY_GROUP_ORDER = ["returns", "upside", "downside", "risk"];
+  const GLOSSARY_EXTRA_NOTES = [
+    { label: "n", desc: "จำนวนงวด (ปี) ทั้งหมดที่ใช้คำนวณสถิติของช่วงนั้น" },
+    { label: "CVaR (5%) n", desc: "จำนวนงวดที่ตกอยู่ในกลุ่ม 5% เลวร้ายสุด ซึ่งถูกนำมาเฉลี่ยเป็นค่า CVaR (5%)" }
+  ];
+
+  function renderStatGlossary() {
+    const el = byId("statGlossary");
+    if (!el) return;
+    const byGroup = {};
+    STAT_FIELDS.forEach((f) => {
+      byGroup[f.group] = byGroup[f.group] || [];
+      byGroup[f.group].push(f);
+    });
+    const groupsHtml = GLOSSARY_GROUP_ORDER.filter((g) => byGroup[g]).map((g) => {
+      const items = byGroup[g].map((f) =>
+        `<div class="text-xs"><span class="font-semibold text-slate-700">${f.label}</span>` +
+        `<span class="text-slate-500"> — ${f.desc || ""}</span></div>`
+      ).join("");
+      return `<div><h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">${GLOSSARY_GROUP_LABELS[g] || g}</h3>` +
+        `<div class="space-y-1">${items}</div></div>`;
+    }).join("");
+    const extraHtml = GLOSSARY_EXTRA_NOTES.map((n) =>
+      `<div class="text-xs"><span class="font-semibold text-slate-700">${n.label}</span>` +
+      `<span class="text-slate-500"> — ${n.desc}</span></div>`
+    ).join("");
+    el.innerHTML = groupsHtml +
+      `<div><h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">อื่นๆ</h3>` +
+      `<div class="space-y-1">${extraHtml}</div></div>`;
+  }
+
+  function syncTopControlsFromState() {
+    const a = byId("assetPicker"); if (a) a.value = String(state.assetId);
+    const pt = byId("periodTypePicker"); if (pt) pt.value = state.periodType;
+    const lb = byId("lookbackPicker"); if (lb) lb.value = lookbackToSelectValue(state.lookback);
+  }
+
+  function bindStaticUIHandlers() {
+    const loginForm = byId("loginForm");
+    if (loginForm) {
+      loginForm.addEventListener("submit", async (evt) => {
+        evt.preventDefault();
+        const email = byId("loginEmail").value.trim();
+        const password = byId("loginPassword").value;
+        await login(email, password);
+      });
+    }
+
+    const logoutBtn = byId("logoutBtn");
+    if (logoutBtn) logoutBtn.addEventListener("click", () => logout());
+
+    const assetPicker = byId("assetPicker");
+    if (assetPicker) assetPicker.addEventListener("change", (e) => { state.assetId = Number(e.target.value); fetchOverview(); });
+
+    const periodTypePicker = byId("periodTypePicker");
+    if (periodTypePicker) periodTypePicker.addEventListener("change", (e) => { state.periodType = e.target.value; renderSeasonalAsOfNote(); fetchOverview(); });
+
+    const lookbackPicker = byId("lookbackPicker");
+    if (lookbackPicker) lookbackPicker.addEventListener("change", (e) => { state.lookback = parseLookbackValue(e.target.value); fetchOverview(); });
+
+    const calcBtn = byId("calculateBtn");
+    if (calcBtn) calcBtn.addEventListener("click", () => runCalculate());
+
+    const rollingStatPicker = byId("rollingStatPicker");
+    if (rollingStatPicker) rollingStatPicker.addEventListener("change", (e) => renderChart(e.target.value));
+
+    const exportBtn = byId("exportBtn");
+    if (exportBtn) exportBtn.addEventListener("click", () => exportToExcel());
+  }
+
+  // ---------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------
+  async function init(overrideClient) {
+    sb = overrideClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    setText("appVersionChip", "v" + APP_VERSION);
+    bindStaticUIHandlers();
+    bindMomentumUIHandlers();
+    bindMergedTableUIHandlers();
+    bindCorrelationUIHandlers();
+    bindHealthUIHandlers();
+    bindEventsTabHandlers();
+    renderStatGlossary();
+    renderMomentumGlossary();
+    initTableLayout();
+    switchTab(state.activeTab);
+
+    const { data: { session } } = await sb.auth.getSession();
+    state.session = session || null;
+
+    sb.auth.onAuthStateChange((_event, session) => {
+      state.session = session || null;
+      renderAuthState();
+      if (state.session) bootDashboard();
+    });
+
+    renderAuthState();
+    if (state.session) await bootDashboard();
+  }
+
+  return {
+    // constants
+    STAT_FIELDS, ROLLING_STATS, MONTHS, LOOKBACK_OPTIONS,
+    // pure helpers (unit-testable)
+    periodOptions, periodLabel, lookbackLabel, parseLookbackValue, lookbackToSelectValue,
+    formatVal, computeEndYearRange, tickerFor, variantLabel, yearFromDateStr,
+    computeColumnRange, heatmapColor, buildOverviewChartDatasets,
+    // state (exposed for tests / debugging)
+    state,
+    // data + flows
+    callRpc, getYearRange, loadInstruments, fetchOverview, applyRowToVariant,
+    renderVariantForms, runCalculate, calculateVariant, renderChart, renderCompareTable,
+    renderOverviewTable, renderOverviewChart, renderAssetPicker, renderRollingStatPicker, syncTopControlsFromState,
+    login, logout, bootDashboard, renderAuthState,
+    fieldHeaderLabel, buildExportColumns, buildExportSheets, updateExportAvailability, exportToExcel,
+    renderStatGlossary,
+    // Momentum & Rotation (Phase 2) -- pure helpers (unit-testable)
+    getUniverseInstruments, computeTrailingReturn, computeSMASignal, computeReturnSeries, stdevSample,
+    computePeriodicVolatility, computeWindowVolatility, computeRiskAdjustedScore,
+    ema, sma, classifyOctant, classifyQuadrant, alignTwoSeries, computeRotationGraphData,
+    quadrantMapFromRotation, buildPriceVolumeScatterDatasets, formatPvScatterTooltip,
+    renderPriceVolumeScatter, QUADRANT_ORDER, QUADRANT_COLORS, QUADRANT_UNKNOWN_LABEL, QUADRANT_UNKNOWN_COLOR,
+    rankUniverseFromSeries, rankUniverseNow,
+    buildLeaderboardChartDatasets, momentumRankParams, computeMomentumFetchKey,
+    fetchRiskMetrics, loadBreadth, renderBreadth, renderBreadthChart, breadthSummary, buildBreadthDatasets,
+    tickerShortName, computeDefaultRrgSelection, buildRrgCheckboxItems, buildRotationSummaryRows,
+    // Momentum & Rotation -- data + flows
+    fetchPeriodEndCloses, fetchLatestMacroValue,
+    loadMomentumUniverseData, renderMomentumLeaderboard, runMomentumCalculate, autofillRiskFreeRate,
+    renderRotationGraph, renderRrgCheckboxPanel, rerenderRotationDisplay, renderRotationSummaryTable,
+    buildMomentumExportSheets, updateMomExportAvailability, exportMomentumToExcel,
+    renderMomentumGlossary, renderMomentumBenchmarkPicker, renderMomentumLookbackSmaPickers, switchTab,
+    volumeHaloColor, buildRotationPointStyles, buildRotationDatasets, formatRotationTooltip,
+    // Volume anomaly (log-based) -- pure helpers
+    VOLUME_BASELINE_OPTIONS, VOLUME_BASELINE_DEFAULTS, VOLUME_ANOMALY_Z_THRESHOLD,
+    MOMENTUM_TIMEFRAME_OPTIONS, MOMENTUM_TIMEFRAME_DEFAULTS, MOMENTUM_TAIL_DEFAULTS,
+    logVolume, volumeBaselineStats, computeVolumeAnomaly, computeVolumeBandSeries, computeVolumeAnomalyMap,
+    volumeAnomalyMagnitude, computeSymmetricRange, volumeDivergingColor, formatVolumeNumber,
+    approxStartDateForPeriods, volumeFetchPlan,
+    fetchDataAsOf, formatThaiDate, dataAsOfMessage, renderAsOfNote, renderSeasonalAsOfNote,
+    // Volume data access
+    fetchPeriodVolumes, groupVolumeRows,
+    // Merged Leaderboard table
+    MOMENTUM_TABLE_COLUMNS, MOMENTUM_COLUMN_IDS, MOMENTUM_TABLE_PRESETS, MOMENTUM_CHART_TOP_N,
+    momentumColumnById, buildMergedRows, sortMergedRows, visibleOrderedColumns,
+    buildVolumeChartDatasets, buildVolumeDrilldownData,
+    recomputeMomentumRows, sortedMomentumRows, renderMomentumTable, renderMomColumnPanel,
+    renderMomSelectionPanel, renderMomVolumeChart, renderMomDrilldown, openDrilldown,
+    momentumPriceLookbackPeriods, momentumNeedsFetch,
+    // Custom Lookback / SMA (2026-09-15)
+    MOMENTUM_CUSTOM_OPTION, MOMENTUM_CUSTOM_MIN, MOMENTUM_CUSTOM_MAX, MOMENTUM_REVERSAL_ZONE_DAYS,
+    momentumParamBounds, momentumReversalWarning, validateMomentumParam, applyMomentumParam,
+    onParamSelectChange, onParamInputChange, renderMomentumParamMessages,
+    // Table layout (order / visibility / sort / persistence)
+    initTableLayout, applyTablePreset, resetTableLayout, moveColumn, toggleColumn, setSort,
+    currentLayout, sanitizeLayout, saveLayout, loadLayout, applyLayout, MOMENTUM_LAYOUT_KEY,
+    // Correlation Explorer (2026-09) -- pure helpers
+    CORR_DEFAULT_WINDOW, pearson, buildAlignedReturns, correlationForWindow, computeCorrelationMatrix,
+    computeRollingPairCorrelation, computeAverageCorrelationSeries, correlationColor,
+    // Correlation Explorer -- data + flows
+    ensureCorrelationSeries, runCorrelationCalculate, recomputeCorrelation, corrSelectedItems,
+    renderCorrCheckboxPanel, renderCorrelationMatrix, selectCorrelationPair, renderCorrPairChart, renderCorrAvgChart,
+    // Market events + Data Health (2026-09-21)
+    EVENT_TYPE_STYLE, eventStyle, fetchMarketEvents, eventTypesFromRows, eventPeriodKey, mapEventsToPeriods,
+    buildEventMarkers, drawEventMarkers, eventMarkersPlugin, ensureMarketEvents, renderEventToggles, escapeHtml,
+    HEALTH_ERROR_DAYS, HEALTH_STALE_DAYS, MACRO_SERIES_INFO, classifyInstrumentHealth, classifyMacroHealth,
+    classifyEventTypeHealth, summarizeHealth, sortHealthRows, fetchDataHealth, loadDataHealth, renderDataHealth,
+    // Events / Seasonal tab (Round 2)
+    YEAR_GROUPS, SEASONAL_COLORS,
+    loadEventsTab, renderEventsCalendarStrip, renderEventsTable, renderCustomEventForm: renderSeasonalAssetPicker,
+    submitCustomEvent, parseCSVEvents, submitCSVEvents,
+    renderAdminPanel, approveEvent, rejectEvent, maskEmail, filterEventsByYear,
+    loadSeasonalData, computeSeasonalSeries, renderSeasonalChart, renderSeasonalAssetPicker,
+    renderSeasonalYearGroupPicker, bindEventsTabHandlers, percentile, populateEventsFilters,
+    loadAdminPendingDrafts,
+    // Round 2 close-out (2026-09-22)
+    toDrilldownEventRows, applyMarketEventRows, sortEventRows, setEventsSort, rerenderEventsTable,
+    toggleEventsCollapsed, deleteCustomEvent, isAdminSession, EVENTS_TABLE_COLUMNS,
+    // Event groups (round 3A)
+    nthWeekdayOfMonth, generateYearlyDates, generateNthWeekdayDates, sortEventGroupRows,
+    validateEventGroupRows, setEventGroupDraft, renderEventGroupPreview, saveEventGroup,
+    loadEventGroups, renderMyEventGroups, loadAdminPendingGroups, renderAdminGroups,
+    saveAdminGroupEdits, approveEventGroup, deleteEventGroup, EG_MAX_ROWS,
+    APP_VERSION, APP_BUILD_DATE, buildAboutSheet,
+    buildPriceIndex, tradingIndexOnOrBefore, eventAnchors, eventGapStats, capFromGaps,
+    esColumnStats, esStatsAtOffset, esBaselineCurve, esNormalisedPath, esDurationStats,
+    computeEventStudy, esSourcesFromRows, esCurrentSource, renderEsPickers, renderEsPresetButtons,
+    ensureEsPrices, esReadControls, runEventStudy, renderEventStudy, renderEventStudyChart,
+    onEsControlChange, ES_MIN_N, ES_MAX_N, ES_NORM_STEPS, ES_PRESETS,
+    loadAdminApprovedGroups, refreshAdminGroupLists, loadGroupRows,
+    deleteSelectedGroupRows, deleteSelectedDraftRows, renderGroupAdminList, adminGroupById,
+    init
+  };
+})();
+
+if (!window.__QD_TEST__) {
+  document.addEventListener("DOMContentLoaded", () => window.QD.init());
+}
