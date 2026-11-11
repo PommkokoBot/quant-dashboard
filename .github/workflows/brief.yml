@@ -1,0 +1,58 @@
+# Runs the daily brief by hand, at one of three depths.
+#
+# The daily path is a step inside daily-fetch.yml, because the brief can only
+# be written once that run has landed the day's prices. This workflow exists
+# for the other case: trying the thing out, or re-running a day, without
+# re-fetching anything.
+#
+# The three modes are the rollout. Nothing about the model call can be tested
+# from a sandbox with no key and no route to Google, so the first real call
+# happens here, reading the output in the log before anything is allowed near
+# the database or Telegram.
+name: brief
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "ระดับที่จะรัน"
+        type: choice
+        default: dry-run
+        options:
+          - dry-run    # ประกอบ prompt แล้วพิมพ์ ไม่ยิง API ไม่เขียนอะไร
+          - no-write   # ยิง API จริง รันด่านครบ พิมพ์ผล ไม่เขียน DB ไม่ส่ง Telegram
+          - full       # ครบวงจร
+      force:
+        description: "สร้างใหม่แม้วันนั้นมีบทสรุปที่เผยแพร่แล้ว"
+        type: boolean
+        default: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the brief
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          FLAGS=""
+          case "${{ inputs.mode }}" in
+            dry-run)  FLAGS="--dry-run" ;;
+            no-write) FLAGS="--no-write" ;;
+          esac
+          if [ "${{ inputs.force }}" = "true" ]; then FLAGS="$FLAGS --force"; fi
+          echo "โหมด: ${{ inputs.mode }}  (flags: ${FLAGS:-ไม่มี})"
+          python scripts/brief.py $FLAGS

@@ -80,3 +80,23 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python scripts/fetch_events.py
+
+      # The brief lives here rather than on a schedule of its own because the
+      # fact sheet it reads only exists once the steps above have landed the
+      # day's prices -- and the GitHub queue makes "a time by which the data is
+      # surely in" impossible to name (measured 6h late on 2026-11-10).
+      # Chaining it means the brief goes out as soon as the data is ready
+      # instead of at a fixed hour that is wrong on both the fast and slow days.
+      #
+      # A held brief exits 0 on purpose: the gates refusing to publish is the
+      # system working, and Telegram carries the reason. Only a real failure
+      # turns this step red, so red keeps meaning "something needs fixing".
+      - name: Daily brief
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/brief.py

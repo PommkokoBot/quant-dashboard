@@ -40,7 +40,10 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Test suite
-        run: pytest tests/test_watchdog.py -q
+        run: pytest tests -q
 
-      - name: The suite can go red
+      - name: The watchdog suite can go red
         run: python tests/mutate_watchdog.py
+
+      - name: The brief's gates can go red
+        run: python tests/mutate_brief.py
