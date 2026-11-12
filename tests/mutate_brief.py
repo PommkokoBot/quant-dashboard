@@ -95,6 +95,46 @@ MUTATIONS = [
     ("M16", "scripts/brief.py", "empty answer passed along silently",
      "if not text.strip():", "if False and not text.strip():",
      "an empty brief would reach the gates and be reported as a gate failure"),
+
+    ("M17", "scripts/brief.py", "a busy model no longer retried",
+     "RETRY_STATUSES = (429, 500, 502, 503, 504)", "RETRY_STATUSES = ()",
+     "one 503 would cost the day's brief and redden the morning fetch"),
+
+    ("M18", "scripts/brief.py", "503 dropped from the retry list",
+     "RETRY_STATUSES = (429, 500, 502, 503, 504)",
+     "RETRY_STATUSES = (429, 500, 502, 504)",
+     "503 is the one we actually hit -- the others are the rare ones"),
+
+    ("M19", "scripts/brief.py", "retries fire back-to-back",
+     "RETRY_WAITS_S = (15,)", "RETRY_WAITS_S = (0,)",
+     "an instant retry hits the same busy second and fails the same way"),
+
+    ("M20", "scripts/brief.py", "timeout stops being retried",
+     "        except timeout_exc:", "        except NotImplementedError:",
+     "a single slow answer would end the run instead of being tried again"),
+
+    ("M21", "scripts/brief.py", "a real break disguised as a busy model",
+     "class ModelUnavailable(RuntimeError):", "ModelUnavailable = RuntimeError",
+     "every failure would be reported as 'Google is busy' and nothing would go red"),
+
+    ("M22", "scripts/brief.py", "no quieter model to fall back to",
+     'or "gemini-3.6-flash,gemini-2.5-flash").split(",")',
+     'or "").split(",")',
+     "one busy model would again cost the whole day's brief"),
+
+    ("M23", "scripts/brief.py", "the fallback is never reached",
+     "        except ModelUnavailable as exc:\n            last = exc",
+     "        except NotImplementedError as exc:\n            last = exc",
+     "a busy first model would end the run instead of handing over"),
+
+    ("M24", "scripts/brief.py", "the configured model is reported, not the real one",
+     "            return attempt(model), model",
+     "            return attempt(model), models[0]",
+     "daily_brief.model would name a model that never wrote the row"),
+
+    ("M25", "scripts/brief.py", "read timeout long enough to blow the step cap",
+     "READ_TIMEOUT_S = 180", "READ_TIMEOUT_S = 600",
+     "the walk would be cut off at 30 minutes instead of reporting a busy model"),
 ]
 
 

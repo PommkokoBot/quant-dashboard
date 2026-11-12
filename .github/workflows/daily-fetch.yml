@@ -92,12 +92,14 @@ jobs:
       # system working, and Telegram carries the reason. Only a real failure
       # turns this step red, so red keeps meaning "something needs fixing".
       - name: Daily brief
+        timeout-minutes: 30
         if: success()
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          GEMINI_FALLBACK_MODELS: ${{ secrets.GEMINI_FALLBACK_MODELS }}
           GEMINI_THINKING_LEVEL: ${{ secrets.GEMINI_THINKING_LEVEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

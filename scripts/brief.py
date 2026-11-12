@@ -68,14 +68,107 @@ LIST_URL = API_BASE + "/models"
 # timeout says the runner cannot reach Google at all, a read timeout says it
 # got through and the model is simply taking its time. The first run of this
 # script hit a 120s read timeout and could not tell us which.
+# Tried in order when the configured model is busy. Measured, not guessed: on
+# 12 Nov gemini-3.8-flash returned 503 "high demand" on three runs in a row,
+# once after holding the connection open for five minutes. Waiting longer on a
+# swamped model is the one thing that reliably does not work -- a quieter
+# model answers now. Older flash models carry far less traffic.
+FALLBACK_MODELS = [m.strip() for m in
+                   (os.environ.get("GEMINI_FALLBACK_MODELS")
+                    or "gemini-3.6-flash,gemini-2.5-flash").split(",")
+                   if m.strip()]
+
 CONNECT_TIMEOUT_S = 15
-READ_TIMEOUT_S = 300
+
+# Down from 300. With a fallback chain behind it, five minutes spent holding a
+# queue open is five minutes not spent asking a model that would have answered.
+READ_TIMEOUT_S = 180
+
+# Statuses that mean "ask again later", not "you asked wrong". A 503 on a
+# popular model is routine and clears in minutes; without this the brief that
+# runs chained to the morning fetch would be lost on any busy day, and the
+# fetch would go red for something that had nothing to do with the data.
+RETRY_STATUSES = (429, 500, 502, 503, 504)
+# Two tries per model rather than four, because the chain now provides the
+# other attempts and they are worth more: the whole walk has to finish inside
+# the step's 30-minute cap.
+RETRY_WAITS_S = (15,)
+
 BANGKOK = timezone(timedelta(hours=7))
+
+
+class ModelUnavailable(RuntimeError):
+    """The API answered and said it cannot serve us right now.
+
+    Separate from every other failure on purpose: nothing in this repo can fix
+    it, so it must not be reported the same way as a broken sheet or a bad
+    prompt, which can.
+    """
 
 
 # --------------------------------------------------------------------------
 # the model call -- the only part of this file that touches the network
 # --------------------------------------------------------------------------
+
+def model_chain(primary: str = MODEL, fallbacks=None) -> list[str]:
+    """The models to try, best first, each named once."""
+    out: list[str] = []
+    for m in [primary] + list(FALLBACK_MODELS if fallbacks is None else fallbacks):
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def try_models(attempt, models):
+    """Runs attempt(model) down the chain, returning (result, the model used).
+
+    Which model answered has to travel back to the caller: it is written into
+    daily_brief.model, and a row that names the configured model while a
+    fallback actually wrote it would quietly corrupt every later comparison
+    between models.
+    """
+    last = None
+    tried = []
+    for model in models:
+        tried.append(model)
+        try:
+            return attempt(model), model
+        except ModelUnavailable as exc:
+            last = exc
+            print(f"  {model} ไม่ว่าง ลองรุ่นถัดไป")
+    raise ModelUnavailable(
+        f"ลองครบทุกรุ่นแล้ว ({', '.join(tried)}) · ครั้งสุดท้าย: {last}")
+
+
+def is_retryable(status: int) -> bool:
+    return status in RETRY_STATUSES
+
+
+def with_retries(send, timeout_exc, waits=RETRY_WAITS_S, sleep=time.sleep):
+    """Calls send() until it gives an answer worth keeping.
+
+    Takes the sleeper and the timeout class as arguments so a test can run the
+    whole ladder in no time at all and without the network -- a retry path that
+    has never been exercised is a retry path that does not work.
+    """
+    note = ""
+    for i in range(len(waits) + 1):
+        if i:
+            print(f"  {note} · รอ {waits[i - 1]} วินาทีแล้วลองใหม่ "
+                  f"(ครั้งที่ {i} จาก {len(waits)})")
+            sleep(waits[i - 1])
+        try:
+            r = send()
+        except timeout_exc:
+            note = f"หมดเวลารอคำตอบ ({READ_TIMEOUT_S} วินาที)"
+            continue
+        if not is_retryable(r.status_code):
+            return r
+        note = f"Gemini ตอบ HTTP {r.status_code} (ฝั่งโมเดลไม่ว่าง)"
+
+    raise ModelUnavailable(
+        f"เรียก Gemini ไม่สำเร็จหลังลอง {len(waits) + 1} ครั้ง · ครั้งสุดท้าย: {note}")
+
 
 def build_body(system: str, user: str) -> dict:
     """The request, built without touching the network so a test can read it.
@@ -125,12 +218,18 @@ def extract_text(data: dict) -> str:
     return text
 
 
-def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
-    """Returns the raw text the model produced.
+def call_model(system: str, user: str, api_key: str, models=None):
+    """Returns (the raw text the model produced, the model that produced it).
 
     The key travels in a header, never in the URL: Actions logs are public on
     this repo and a URL is the easiest thing in the world to end up in one.
     """
+    return try_models(
+        lambda model: _ask_one_model(system, user, api_key, model),
+        models or model_chain())
+
+
+def _ask_one_model(system: str, user: str, api_key: str, model: str) -> str:
     import requests
 
     body = build_body(system, user)
@@ -148,18 +247,14 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
             print(f"  เรียก {model} ใช้เวลา {time.monotonic() - started:.1f} วินาที")
         return resp
 
-    try:
-        r = post()
-    except requests.Timeout:
-        print("  หมดเวลารอบแรก ลองอีกครั้ง")
-        r = post()
+    r = with_retries(post, requests.Timeout)
 
     # Older endpoints reject responseMimeType. Losing it only means the model
     # may wrap its JSON in prose, which extract_json already copes with, so
     # one retry without it beats failing the day's brief over a field name.
     if r.status_code == 400 and "responseMimeType" in r.text:
         body["generationConfig"].pop("responseMimeType", None)
-        r = post()
+        r = with_retries(post, requests.Timeout)
 
     # Same reasoning for the thinking level: the field name and its allowed
     # values are model-specific, so a model swap could make it invalid. Losing
@@ -168,7 +263,7 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
     if r.status_code == 400 and "thinking" in r.text.lower():
         print("  รุ่นนี้ไม่รับ thinkingConfig ถอดออกแล้วลองใหม่")
         body["generationConfig"].pop("thinkingConfig", None)
-        r = post()
+        r = with_retries(post, requests.Timeout)
 
     if r.status_code != 200:
         raise RuntimeError(f"Gemini ตอบ HTTP {r.status_code}: {r.text[:400]}")
@@ -356,7 +451,21 @@ def main() -> int:
     if not api_key:
         sys.exit("ERROR: GEMINI_API_KEY must be set.")
 
-    raw = call_model(bp.SYSTEM, user, api_key)
+    try:
+        raw, model_used = call_model(bp.SYSTEM, user, api_key)
+    except ModelUnavailable as exc:
+        # Deliberately not a failure. The sheet is fine, the prompt is fine,
+        # the gates are fine -- Google is busy. Going red here would put a red
+        # mark on the morning fetch for something no one can act on, and a red
+        # that no one can act on is a red that stops being read.
+        print(f"โมเดลไม่ว่าง: {exc}")
+        if not no_write:
+            notify.send(
+                f"⏳ ยังไม่มีบทสรุปของข้อมูลวันที่ {trade_date}\n"
+                f"โมเดลฝั่ง Google ไม่ว่าง ลองแล้ว {len(RETRY_WAITS_S) + 1} ครั้ง\n"
+                f"ข้อมูลในแดชบอร์ดไม่มีปัญหา · สั่งสร้างใหม่ได้ที่ Actions → brief")
+        return 0
+
     try:
         response = extract_json(raw)
     except json.JSONDecodeError as exc:
@@ -369,7 +478,7 @@ def main() -> int:
     body = bg.to_text(response)
     status = "published" if not findings else "held"
 
-    print(f"\n----- บทสรุป ({status}) -----\n{body}\n")
+    print(f"\n----- บทสรุป ({status}) · {model_used} -----\n{body}\n")
     for f in findings:
         print(f.line())
 
@@ -381,7 +490,7 @@ def main() -> int:
         "publish_date": date.today().isoformat(),
         "body_th": body,
         "body_json": response,
-        "model": MODEL,
+        "model": model_used,
         "prompt_version": bp.PROMPT_VERSION,
         "status": status,
         "validation_log": [f.__dict__ for f in findings],
@@ -392,9 +501,10 @@ def main() -> int:
     print(f"บันทึกแล้ว · สถานะ {status} · "
           f"{datetime.now(BANGKOK).strftime('%-d %b %H:%M')}")
     # A held brief is the system working, not the system breaking: the gates
-    # did their job and Telegram carries the reason. Only a real failure --
-    # no sheet, the model unreachable, an answer that is not JSON -- returns
-    # non-zero, so a red run keeps meaning "something needs fixing".
+    # did their job and Telegram carries the reason. The same now goes for a
+    # model that is simply busy. Only a failure someone here can act on --
+    # no sheet, a rejected key, an answer that is not JSON -- returns non-zero,
+    # so a red run keeps meaning "something needs fixing".
     return 0
 
 
