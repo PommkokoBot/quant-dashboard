@@ -73,6 +73,16 @@ TIME_UNITS = ["วัน", "สัปดาห์", "เดือน", "ไต�
 STRUCTURAL_MAX = 31
 
 NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
+
+# "อันดับ 1" names a position in a ranking, not a measurement. Left to gate 1's
+# ordinary handling it is compared against the cited fact's value and always
+# fails, which is what happened to the first brief a model ever produced here
+# (11 พ.ย.). It is not simply skipped: the rank is in the fact's own id
+# (rank.all_top.1), so the claim is checked against that instead -- a number
+# the gate could not read before is now a number it verifies.
+RANK_WORDS = ["อันดับ", "ลำดับ"]
+RANK_RE = re.compile(r"(?:" + "|".join(RANK_WORDS) + r")\s*(?:ที่\s*)?(\d+)")
+RANK_ID_RE = re.compile(r"\.(\d+)$")
 TICKER_RE = re.compile(r"\b[A-Z]{2,6}\b")
 ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 THAI_DATE_RE = re.compile(r"\d{1,2}\s*(?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|"
@@ -132,7 +142,11 @@ def _numbers(text: str) -> list[tuple[float, str]]:
     """
     out = []
     cleaned = _strip_dates(text)
+    rank_spans = [m.span(1) for m in RANK_RE.finditer(cleaned)]
     for m in NUMBER_RE.finditer(cleaned):
+        # positions are checked by _rank_claims against the fact id instead
+        if any(a <= m.start() < b for a, b in rank_spans):
+            continue
         # Digits glued to the end of a word are part of the word, not a
         # measurement: SMA200, ATR14, S&P500. Without this the gate rejects
         # every sentence that names an indicator.
@@ -148,6 +162,25 @@ def _numbers(text: str) -> list[tuple[float, str]]:
                 and any(tail.startswith(u) for u in TIME_UNITS)):
             continue
         out.append((val, tail))
+    return out
+
+
+def _rank_claims(text: str) -> list[int]:
+    """Every position the sentence claims, as in 'อันดับ 1'."""
+    return [int(m.group(1)) for m in RANK_RE.finditer(_strip_dates(text))]
+
+
+def _ranks_offered(cited_ids) -> set[int]:
+    """The positions the cited facts actually stand for.
+
+    rank.all_top.1 is position 1. A fact id with no trailing number offers no
+    position at all, so a sentence citing only those cannot claim one.
+    """
+    out = set()
+    for fid in cited_ids:
+        m = RANK_ID_RE.search(str(fid))
+        if m and str(fid).startswith("rank."):
+            out.add(int(m.group(1)))
     return out
 
 
@@ -188,6 +221,14 @@ def gate1_numbers(response: dict, sel: Selection) -> list[Finding]:
 
         cited = [index[fid] for fid in cited_ids if fid in index]
         numeric = [f for f in cited if f.value is not None]
+
+        offered = _ranks_offered(cited_ids)
+        for pos in _rank_claims(text):
+            if pos not in offered:
+                out.append(Finding(
+                    1, "unbacked_rank", where,
+                    f"ประโยคอ้างอันดับที่ {pos} แต่ fact ที่อ้างไม่ได้เป็นอันดับนั้น "
+                    f"({', '.join(str(f) for f in cited_ids) or 'ไม่ได้อ้างอะไรเลย'})"))
 
         for n, _tail in _numbers(text):
             hits = [f for f in numeric if _matches(abs(n) if n >= 0 else n, f.value)
