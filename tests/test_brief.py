@@ -695,3 +695,51 @@ def test_the_whole_walk_fits_inside_the_step_cap():
     assert worst < 30 * 60, (
         f"กรณีเลวร้ายสุด {worst / 60:.1f} นาที เกิน timeout-minutes: 30 "
         "ของสเตปใน workflow — งานจะถูกตัดกลางคันแทนที่จะรายงานว่าโมเดลไม่ว่าง")
+
+
+# --------------------------------------------------------------------------
+# positions in a ranking ("อันดับ 1") -- the first thing a real model wrote
+# that the gates got wrong
+# --------------------------------------------------------------------------
+
+def test_a_true_rank_claim_passes():
+    s = say("PAWZ มาแรงเป็นอันดับ 1 ของ all_top ด้วยผลตอบแทน 21 วันที่ 15.92%",
+            ["rank.all_top.1"])
+    assert bg.gate1_numbers(s, SEL) == [], (
+        "เลขหลัง 'อันดับ' คือตำแหน่ง ไม่ใช่ค่าที่วัดได้ "
+        "ประโยคนี้คือสิ่งที่โมเดลเขียนจริงเมื่อ 11 พ.ย. และด่านเคยฟ้องผิด")
+
+
+def test_a_rank_the_cited_fact_does_not_hold_fails():
+    s = say("PAWZ เป็นอันดับ 3 ด้วยผลตอบแทน 21 วันที่ 15.92%", ["rank.all_top.1"])
+    findings = bg.gate1_numbers(s, SEL)
+    assert any(f.code == "unbacked_rank" for f in findings), \
+        "อ้างอันดับ 3 ขณะที่ fact เป็นอันดับ 1 ต้องไม่ผ่าน"
+
+
+def test_claiming_a_rank_with_no_rank_fact_fails():
+    s = say("XLV เป็นอันดับ 1 ที่ 10.26%", ["rank.us_sector.XLV"])
+    assert any(f.code == "unbacked_rank" for f in bg.gate1_numbers(s, SEL)), \
+        "fact ที่ไม่มีเลขอันดับอยู่ในชื่อ พิสูจน์ตำแหน่งไม่ได้"
+
+
+def test_a_percentile_written_with_thi_is_not_read_as_a_rank():
+    s = say("ส่วนต่าง Low Beta − High Beta อยู่ที่ 13.92 จุด "
+            "เปอร์เซ็นไทล์ที่ 98.74 จาก 717 วัน",
+            ["pair.lowbeta_highbeta.spread", "pair.lowbeta_highbeta.pctile_3y",
+             "pair.lowbeta_highbeta.n_days"])
+    assert bg.gate1_numbers(s, SEL) == [], \
+        "'ที่ 98.74' เป็นค่า ไม่ใช่อันดับ ต้องยังถูกตรวจเทียบ fact ตามเดิม"
+
+
+def test_a_wrong_percentile_after_thi_still_fails():
+    s = say("เปอร์เซ็นไทล์ที่ 50.00 จาก 717 วัน",
+            ["pair.lowbeta_highbeta.pctile_3y", "pair.lowbeta_highbeta.n_days"])
+    assert bg.gate1_numbers(s, SEL), \
+        "การยกเว้นอันดับต้องไม่เผลอเปิดช่องให้ตัวเลขหลังคำว่า 'ที่' ผ่านฟรี"
+
+
+def test_the_value_next_to_a_rank_is_still_checked():
+    s = say("PAWZ เป็นอันดับ 1 ด้วยผลตอบแทน 21 วันที่ 99.99%", ["rank.all_top.1"])
+    assert any(f.code == "unbacked_number" for f in bg.gate1_numbers(s, SEL)), \
+        "ยกเว้นเฉพาะตัวเลขอันดับ ตัวเลขอื่นในประโยคเดียวกันต้องยังถูกตรวจ"

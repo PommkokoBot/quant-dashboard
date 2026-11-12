@@ -135,6 +135,19 @@ MUTATIONS = [
     ("M25", "scripts/brief.py", "read timeout long enough to blow the step cap",
      "READ_TIMEOUT_S = 180", "READ_TIMEOUT_S = 600",
      "the walk would be cut off at 30 minutes instead of reporting a busy model"),
+
+    ("M26", "scripts/brief_gates.py", "rank claims go unchecked",
+     "            if pos not in offered:", "            if False and pos not in offered:",
+     "the brief could call anything number one and nothing would object"),
+
+    ("M27", "scripts/brief_gates.py", "any fact id accepted as proof of a rank",
+     'if m and str(fid).startswith("rank."):', "if m:",
+     "a spread or a count ending in .1 would pass as 'อันดับ 1'"),
+
+    ("M28", "scripts/brief_gates.py", "the rank exemption swallows the value too",
+     "        if any(a <= m.start() < b for a, b in rank_spans):",
+     "        if rank_spans:",
+     "one 'อันดับ' in a sentence would let every other number through unchecked"),
 ]
 
 
