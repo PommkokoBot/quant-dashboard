@@ -453,3 +453,75 @@ def test_model_list_survives_an_empty_or_odd_answer():
 def test_timeouts_are_split_so_the_two_failures_can_be_told_apart():
     assert brief_main.CONNECT_TIMEOUT_S < brief_main.READ_TIMEOUT_S
     assert brief_main.READ_TIMEOUT_S >= 300, "รอบแรกหมดเวลาที่ 120 วินาที จึงต้องนานกว่านั้น"
+
+
+def test_request_asks_for_the_lowest_thinking_the_model_allows():
+    body = brief_main.build_body("sys", "user")
+    cfg = body["generationConfig"]
+    assert cfg["thinkingConfig"] == {"thinkingLevel": brief_main.THINKING_LEVEL}
+    assert brief_main.THINKING_LEVEL in ("low", "medium", "high"), (
+        "3.8 Flash ไม่รับ 'minimal' และปิดคิดสนิทไม่ได้ — ต่ำสุดที่ใช้ได้คือ low")
+
+
+def test_token_ceiling_leaves_room_for_thinking_and_the_brief():
+    assert brief_main.MAX_OUTPUT_TOKENS >= 8192, (
+        "เพดานนี้แชร์กับ thought token · 4096 เคยทำให้คำตอบขาดกลางทาง")
+    assert brief_main.build_body("s", "u")["generationConfig"][
+        "maxOutputTokens"] == brief_main.MAX_OUTPUT_TOKENS
+
+
+def test_the_prompt_is_sent_in_the_two_places_the_api_expects():
+    body = brief_main.build_body("ระบบ", "ผู้ใช้")
+    assert body["system_instruction"]["parts"][0]["text"] == "ระบบ"
+    assert body["contents"][0]["parts"][0]["text"] == "ผู้ใช้"
+    assert body["contents"][0]["role"] == "user"
+
+
+def test_a_truncated_answer_says_it_hit_the_token_ceiling():
+    data = {"candidates": [{"finishReason": "MAX_TOKENS",
+                            "content": {"parts": [{"text": '{"sections": ['}]}}],
+            "usageMetadata": {"thoughtsTokenCount": 16380}}
+    try:
+        brief_main.extract_text(data)
+    except RuntimeError as exc:
+        msg = str(exc)
+    else:
+        raise AssertionError("คำตอบที่ถูกตัดกลางทางต้องไม่ถูกส่งต่อไปให้ด่านตรวจ")
+    assert "MAX_OUTPUT_TOKENS" in msg or "maxOutputTokens" in msg
+    assert "16380" in msg, "ต้องบอกจำนวน token ที่ใช้คิดไป ไม่งั้นแก้ไม่ถูกจุด"
+    assert "thinking" in msg.lower() or "THINKING" in msg
+
+
+def test_an_empty_answer_names_the_finish_reason_instead_of_blaming_the_parser():
+    for data in ({"candidates": [{"finishReason": "SAFETY", "content": {}}]},
+                 {"candidates": [{"content": {"parts": [{"text": "  "}]}}]},
+                 {}):
+        try:
+            brief_main.extract_text(data)
+        except RuntimeError as exc:
+            assert "ไม่ได้ส่งข้อความกลับมา" in str(exc)
+        else:
+            raise AssertionError(f"คำตอบว่างต้องฟ้อง: {data}")
+    assert "SAFETY" in _reason_of({"candidates": [
+        {"finishReason": "SAFETY", "content": {}}]})
+
+
+def _reason_of(data):
+    try:
+        brief_main.extract_text(data)
+    except RuntimeError as exc:
+        return str(exc)
+    return ""
+
+
+def test_thought_parts_are_not_glued_onto_the_json():
+    data = {"candidates": [{"finishReason": "STOP", "content": {"parts": [
+        {"text": "ขอคิดก่อน...", "thought": True},
+        {"text": '{"sections": []}'}]}}]}
+    assert brief_main.extract_text(data) == '{"sections": []}'
+
+
+def test_a_normal_answer_still_comes_through():
+    data = {"candidates": [{"finishReason": "STOP",
+                            "content": {"parts": [{"text": '{"sections": []}'}]}}]}
+    assert brief_main.extract_json(brief_main.extract_text(data)) == {"sections": []}

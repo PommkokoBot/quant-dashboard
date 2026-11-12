@@ -47,6 +47,19 @@ import notify
 # Overridable so a model can be swapped from the workflow without a code change
 # -- useful precisely when the configured one turns out not to exist.
 MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"
+
+# Gemini 3 Flash thinks before answering and cannot be told to stop entirely --
+# "low" is the floor the model accepts ("minimal" is rejected on 3.8 Flash, and
+# thinkingBudget: 0 only works on the 2.5 family). The level matters for more
+# than speed: thought tokens are spent out of maxOutputTokens, so a model left
+# to think freely can use up the budget and return a truncated brief, or none.
+THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL") or "low"
+
+# Generous on purpose. The brief itself is ~2k characters, but this ceiling is
+# shared with the thinking above, and hitting it produces an empty answer that
+# still costs money -- the opposite of a saving.
+MAX_OUTPUT_TOKENS = 16384
+
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 API_URL = API_BASE + "/models/{model}:generateContent"
 LIST_URL = API_BASE + "/models"
@@ -64,6 +77,54 @@ BANGKOK = timezone(timedelta(hours=7))
 # the model call -- the only part of this file that touches the network
 # --------------------------------------------------------------------------
 
+def build_body(system: str, user: str) -> dict:
+    """The request, built without touching the network so a test can read it.
+
+    Kept separate because every field in here has already cost us a run: the
+    mime type, the token ceiling and the thinking level each decide whether an
+    answer comes back at all, and none of them are visible in a log.
+    """
+    return {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "maxOutputTokens": MAX_OUTPUT_TOKENS,
+            "thinkingConfig": {"thinkingLevel": THINKING_LEVEL},
+        },
+    }
+
+
+def extract_text(data: dict) -> str:
+    """The model's text, or an error that says what actually went wrong.
+
+    Worth the length. A brief cut off mid-thought arrives as a candidate with
+    finishReason MAX_TOKENS and no usable text, and the obvious reading of that
+    -- "the response shape is wrong" -- sends you looking at the parser instead
+    of at the token ceiling. Thought parts are skipped rather than concatenated,
+    so turning on thought summaries later cannot quietly corrupt the JSON.
+    """
+    cand = (data.get("candidates") or [{}])[0]
+    reason = str(cand.get("finishReason") or "")
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts
+                   if isinstance(p, dict) and not p.get("thought"))
+
+    if reason == "MAX_TOKENS":
+        usage = json.dumps(data.get("usageMetadata") or {}, ensure_ascii=False)
+        raise RuntimeError(
+            f"Gemini ชนเพดาน maxOutputTokens ({MAX_OUTPUT_TOKENS}) กลางทาง "
+            f"— เพดานนี้นับ thought token ด้วย · usage={usage} · "
+            f"ทางแก้: ลด GEMINI_THINKING_LEVEL (ตอนนี้ {THINKING_LEVEL}) "
+            f"หรือเพิ่ม MAX_OUTPUT_TOKENS")
+
+    if not text.strip():
+        raise RuntimeError(
+            f"Gemini ไม่ได้ส่งข้อความกลับมา (finishReason="
+            f"{reason or 'ไม่ระบุ'}): {json.dumps(data, ensure_ascii=False)[:400]}")
+    return text
+
+
 def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
     """Returns the raw text the model produced.
 
@@ -72,12 +133,7 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
     """
     import requests
 
-    body = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "generationConfig": {"responseMimeType": "application/json",
-                             "maxOutputTokens": 4096},
-    }
+    body = build_body(system, user)
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     url = API_URL.format(model=model)
     timeout = (CONNECT_TIMEOUT_S, READ_TIMEOUT_S)
@@ -105,14 +161,19 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
         body["generationConfig"].pop("responseMimeType", None)
         r = post()
 
+    # Same reasoning for the thinking level: the field name and its allowed
+    # values are model-specific, so a model swap could make it invalid. Losing
+    # it costs speed and risks a truncated answer, both of which beat losing
+    # the day's brief to a rejected field.
+    if r.status_code == 400 and "thinking" in r.text.lower():
+        print("  รุ่นนี้ไม่รับ thinkingConfig ถอดออกแล้วลองใหม่")
+        body["generationConfig"].pop("thinkingConfig", None)
+        r = post()
+
     if r.status_code != 200:
         raise RuntimeError(f"Gemini ตอบ HTTP {r.status_code}: {r.text[:400]}")
 
-    data = r.json()
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"รูปคำตอบของ Gemini ไม่ใช่ที่คาด: {json.dumps(data)[:400]}") from exc
+    return extract_text(r.json())
 
 
 def usable_models(payload: dict) -> list[str]:

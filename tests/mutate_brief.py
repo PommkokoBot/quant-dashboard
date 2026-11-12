@@ -73,6 +73,28 @@ MUTATIONS = [
      "คุณเขียนสรุปภาวะตลาด ETF ประจำวัน",
      "คุณเขียนสรุปภาวะตลาด ETF รายวัน",
      "two briefs would claim the same prompt_version with different rules behind them"),
+
+    ("M12", "scripts/brief.py", "thinking level the model rejects",
+     'os.environ.get("GEMINI_THINKING_LEVEL") or "low"',
+     'os.environ.get("GEMINI_THINKING_LEVEL") or "minimal"',
+     '3.8 Flash answers 400 to "minimal" -- the brief would fail every day'),
+
+    ("M13", "scripts/brief.py", "token ceiling squeezed back down",
+     "MAX_OUTPUT_TOKENS = 16384", "MAX_OUTPUT_TOKENS = 4096",
+     "thinking would eat the budget and the brief would arrive truncated"),
+
+    ("M14", "scripts/brief.py", "truncation no longer detected",
+     'if reason == "MAX_TOKENS":', 'if False and reason == "MAX_TOKENS":',
+     "half a brief would be handed to the gates as if it were whole"),
+
+    ("M15", "scripts/brief.py", "thought text glued onto the answer",
+     'if isinstance(p, dict) and not p.get("thought"))',
+     "if isinstance(p, dict))",
+     "the model's reasoning would be prepended to the JSON and break the parse"),
+
+    ("M16", "scripts/brief.py", "empty answer passed along silently",
+     "if not text.strip():", "if False and not text.strip():",
+     "an empty brief would reach the gates and be reported as a gate failure"),
 ]
 
 
