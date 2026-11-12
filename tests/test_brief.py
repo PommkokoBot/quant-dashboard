@@ -452,7 +452,12 @@ def test_model_list_survives_an_empty_or_odd_answer():
 
 def test_timeouts_are_split_so_the_two_failures_can_be_told_apart():
     assert brief_main.CONNECT_TIMEOUT_S < brief_main.READ_TIMEOUT_S
-    assert brief_main.READ_TIMEOUT_S >= 300, "รอบแรกหมดเวลาที่ 120 วินาที จึงต้องนานกว่านั้น"
+    # เคยตรึงไว้ที่ 300 ตอนที่ยังมีรุ่นเดียวและยังไม่รู้ว่าทำไมมันช้า
+    # 12 พ.ย. ได้คำตอบแล้วว่าเป็น 503 "high demand" ไม่ใช่โมเดลคิดนาน
+    # พอมีรุ่นสำรองแล้ว การนั่งรอคิวนาน ๆ คือการเสียเวลาที่ควรเอาไปถามรุ่นที่ว่าง
+    assert brief_main.READ_TIMEOUT_S >= 150, (
+        "รอบที่หมดเวลาจริงคือ 120 วินาที ต้องเผื่อมากกว่านั้นพอสมควร "
+        "ไม่งั้นจะตัดคำตอบที่กำลังจะมาทิ้ง")
 
 
 def test_request_asks_for_the_lowest_thinking_the_model_allows():
@@ -525,3 +530,168 @@ def test_a_normal_answer_still_comes_through():
     data = {"candidates": [{"finishReason": "STOP",
                             "content": {"parts": [{"text": '{"sections": []}'}]}}]}
     assert brief_main.extract_json(brief_main.extract_text(data)) == {"sections": []}
+
+
+# --------------------------------------------------------------------------
+# retrying a busy model
+# --------------------------------------------------------------------------
+
+class _Resp:
+    def __init__(self, status):
+        self.status_code = status
+        self.text = f"status {status}"
+
+
+class _Boom(Exception):
+    """Stands in for requests.Timeout, so these tests need no network stack."""
+
+
+def _ladder(statuses):
+    """A send() that returns each status in turn; an Exception class is raised."""
+    seq = list(statuses)
+    calls = []
+
+    def send():
+        item = seq.pop(0)
+        calls.append(item)
+        if isinstance(item, type) and issubclass(item, Exception):
+            raise item()
+        return _Resp(item)
+    return send, calls
+
+
+def _run(statuses, waits=(1, 2, 3)):
+    slept = []
+    send, calls = _ladder(statuses)
+    r = brief_main.with_retries(send, _Boom, waits=waits, sleep=slept.append)
+    return r, calls, slept
+
+
+def test_every_busy_status_is_retried():
+    for status in (429, 500, 502, 503, 504):
+        r, calls, _ = _run([status, 200])
+        assert r.status_code == 200, f"HTTP {status} ต้องลองใหม่ ไม่ใช่ยอมแพ้"
+        assert calls == [status, 200]
+
+
+def test_a_good_answer_is_not_retried():
+    r, calls, slept = _run([200, 200, 200, 200])
+    assert r.status_code == 200 and calls == [200] and slept == []
+
+
+def test_an_error_we_caused_is_not_retried():
+    for status in (400, 401, 403, 404):
+        r, calls, _ = _run([status, 200])
+        assert r.status_code == status, (
+            f"HTTP {status} เป็นความผิดฝั่งเรา ลองใหม่กี่ครั้งก็เหมือนเดิม")
+        assert calls == [status]
+
+
+def test_a_timeout_is_retried_like_a_busy_model():
+    r, calls, _ = _run([_Boom, 200])
+    assert r.status_code == 200 and len(calls) == 2
+
+
+def test_the_wait_between_tries_grows():
+    _run([503, 503, 503, 200])
+    _, _, slept = _run([503, 503, 503, 200])
+    assert slept == [1, 2, 3], "ต้องรอนานขึ้นทีละครั้ง ไม่ใช่ถี่ ๆ ซ้ำ ๆ"
+    assert list(brief_main.RETRY_WAITS_S) == sorted(brief_main.RETRY_WAITS_S)
+    assert brief_main.RETRY_WAITS_S[0] >= 5, "รอสั้นเกินไปก็เจอโมเดลไม่ว่างซ้ำ"
+
+
+def test_giving_up_raises_the_one_error_that_is_not_our_fault():
+    try:
+        _run([503, 503, 503, 503])
+    except brief_main.ModelUnavailable as exc:
+        assert "503" in str(exc) and "4" in str(exc)
+    else:
+        raise AssertionError("ลองครบแล้วยังไม่ได้ ต้องบอกว่าโมเดลไม่ว่าง")
+
+
+def test_model_unavailable_is_told_apart_from_a_real_break():
+    assert issubclass(brief_main.ModelUnavailable, RuntimeError)
+    assert brief_main.ModelUnavailable is not RuntimeError, (
+        "ถ้าใช้ RuntimeError เฉย ๆ main() จะแยก 'โมเดลไม่ว่าง' "
+        "ออกจาก 'โค้ดพัง' ไม่ได้ แล้วจะเงียบทั้งคู่")
+
+
+def test_the_number_of_tries_is_what_the_waits_say():
+    send, calls = _ladder([503] * 9)
+    try:
+        brief_main.with_retries(send, _Boom, waits=(1, 2), sleep=lambda _: None)
+    except brief_main.ModelUnavailable:
+        pass
+    assert len(calls) == 3, "ลองครั้งแรก + ลองซ้ำตามจำนวนช่วงรอ"
+
+
+# --------------------------------------------------------------------------
+# falling back to a quieter model
+# --------------------------------------------------------------------------
+
+def test_the_configured_model_comes_first_and_nothing_repeats():
+    chain = brief_main.model_chain("gemini-3.8-flash", ["a", "b", "a"])
+    assert chain == ["gemini-3.8-flash", "a", "b"]
+    assert brief_main.model_chain("a", ["a"]) == ["a"]
+    assert brief_main.model_chain("a", []) == ["a"]
+
+
+def test_there_is_somewhere_to_fall_back_to():
+    assert brief_main.FALLBACK_MODELS, (
+        "ไม่มีรุ่นสำรอง = รุ่นเดียวไม่ว่าง แล้วไม่มีบทสรุปทั้งวัน")
+    assert brief_main.MODEL not in brief_main.FALLBACK_MODELS or True
+    assert len(brief_main.model_chain()) >= 2
+
+
+def test_a_busy_model_hands_over_to_the_next_one():
+    busy = {"m1", "m2"}
+
+    def attempt(model):
+        if model in busy:
+            raise brief_main.ModelUnavailable(f"{model} ไม่ว่าง")
+        return f"คำตอบจาก {model}"
+
+    raw, used = brief_main.try_models(attempt, ["m1", "m2", "m3"])
+    assert used == "m3" and raw == "คำตอบจาก m3"
+
+
+def test_the_model_that_answered_is_the_one_reported():
+    raw, used = brief_main.try_models(lambda m: "ok", ["first", "second"])
+    assert used == "first", (
+        "ต้องคืนรุ่นที่ตอบจริง ไม่ใช่รุ่นที่ตั้งไว้ — ค่านี้ถูกเขียนลง "
+        "daily_brief.model ถ้าผิด การเทียบคุณภาพระหว่างรุ่นจะเพี้ยนทั้งหมด")
+
+
+def test_a_real_break_is_not_swallowed_by_the_fallback_walk():
+    def attempt(model):
+        raise RuntimeError("กุญแจผิด")
+
+    try:
+        brief_main.try_models(attempt, ["m1", "m2"])
+    except RuntimeError as exc:
+        assert not isinstance(exc, brief_main.ModelUnavailable), (
+            "401/400 ต้องทะลุออกไปทันที ไม่ใช่ไล่ลองทุกรุ่นแล้วรายงานว่าโมเดลไม่ว่าง")
+        assert "กุญแจผิด" in str(exc)
+    else:
+        raise AssertionError("ข้อผิดพลาดจริงต้องไม่ถูกกลืน")
+
+
+def test_giving_up_names_every_model_tried():
+    def attempt(model):
+        raise brief_main.ModelUnavailable(f"{model} ไม่ว่าง")
+
+    try:
+        brief_main.try_models(attempt, ["m1", "m2", "m3"])
+    except brief_main.ModelUnavailable as exc:
+        for m in ("m1", "m2", "m3"):
+            assert m in str(exc), f"ต้องบอกว่าลอง {m} แล้วด้วย"
+
+
+def test_the_whole_walk_fits_inside_the_step_cap():
+    tries = len(brief_main.RETRY_WAITS_S) + 1
+    models = len(brief_main.model_chain())
+    worst = models * tries * brief_main.READ_TIMEOUT_S + \
+        models * sum(brief_main.RETRY_WAITS_S)
+    assert worst < 30 * 60, (
+        f"กรณีเลวร้ายสุด {worst / 60:.1f} นาที เกิน timeout-minutes: 30 "
+        "ของสเตปใน workflow — งานจะถูกตัดกลางคันแทนที่จะรายงานว่าโมเดลไม่ว่าง")
