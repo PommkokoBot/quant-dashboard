@@ -18,9 +18,11 @@ whose numbers it could not verify.
 Env vars:
   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   the fact sheet and the brief table
   GEMINI_API_KEY                            the model
+  GEMINI_MODEL                              optional override of the model id
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID      where the result is reported
 
 Usage:
+  python scripts/brief.py --ping        list the models this key may use, stop
   python scripts/brief.py --dry-run     build the prompt, print it, stop
   python scripts/brief.py --no-write    call the model and the gates, print, stop
   python scripts/brief.py               the whole thing
@@ -32,6 +34,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import date, datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,9 +44,19 @@ import brief_gates as bg
 import brief_prompt as bp
 import notify
 
-MODEL = "gemini-3.8-flash"
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-TIMEOUT_S = 120
+# Overridable so a model can be swapped from the workflow without a code change
+# -- useful precisely when the configured one turns out not to exist.
+MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"
+API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+API_URL = API_BASE + "/models/{model}:generateContent"
+LIST_URL = API_BASE + "/models"
+
+# Split, because the two failures mean completely different things: a connect
+# timeout says the runner cannot reach Google at all, a read timeout says it
+# got through and the model is simply taking its time. The first run of this
+# script hit a 120s read timeout and could not tell us which.
+CONNECT_TIMEOUT_S = 15
+READ_TIMEOUT_S = 300
 BANGKOK = timezone(timedelta(hours=7))
 
 
@@ -67,14 +80,30 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
     }
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     url = API_URL.format(model=model)
+    timeout = (CONNECT_TIMEOUT_S, READ_TIMEOUT_S)
 
-    r = requests.post(url, headers=headers, json=body, timeout=TIMEOUT_S)
+    def post():
+        started = time.monotonic()
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+        finally:
+            # Printed whether it worked or not: how long the model actually
+            # takes is the number that decides what the timeout should be.
+            print(f"  เรียก {model} ใช้เวลา {time.monotonic() - started:.1f} วินาที")
+        return resp
+
+    try:
+        r = post()
+    except requests.Timeout:
+        print("  หมดเวลารอบแรก ลองอีกครั้ง")
+        r = post()
+
     # Older endpoints reject responseMimeType. Losing it only means the model
     # may wrap its JSON in prose, which extract_json already copes with, so
     # one retry without it beats failing the day's brief over a field name.
     if r.status_code == 400 and "responseMimeType" in r.text:
         body["generationConfig"].pop("responseMimeType", None)
-        r = requests.post(url, headers=headers, json=body, timeout=TIMEOUT_S)
+        r = post()
 
     if r.status_code != 200:
         raise RuntimeError(f"Gemini ตอบ HTTP {r.status_code}: {r.text[:400]}")
@@ -84,6 +113,59 @@ def call_model(system: str, user: str, api_key: str, model: str = MODEL) -> str:
         return data["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError) as exc:
         raise RuntimeError(f"รูปคำตอบของ Gemini ไม่ใช่ที่คาด: {json.dumps(data)[:400]}") from exc
+
+
+def usable_models(payload: dict) -> list[str]:
+    """Model ids from a ListModels response that can actually generate text.
+
+    Pure, so the shape of the answer is pinned by a test rather than by one
+    lucky call.
+    """
+    out = []
+    for m in payload.get("models") or []:
+        name = str(m.get("name", ""))
+        methods = m.get("supportedGenerationMethods") or m.get("supportedActions") or []
+        if name.startswith("models/") and (not methods or "generateContent" in methods):
+            out.append(name[len("models/"):])
+    return sorted(out)
+
+
+def ping(api_key: str) -> int:
+    """Ask the API which models this key may use, and how fast it answers.
+
+    This is the lightest call the API has. Running it separates three failures
+    the generateContent timeout could not: a runner with no route to Google
+    (this hangs too), a key without access (this returns 401/403), and a model
+    name that does not exist (this answers fine and the name is missing from
+    the list).
+    """
+    import requests
+
+    started = time.monotonic()
+    try:
+        r = requests.get(LIST_URL, headers={"x-goog-api-key": api_key},
+                         timeout=(CONNECT_TIMEOUT_S, 60))
+    except requests.Timeout:
+        print(f"หมดเวลาหลัง {time.monotonic() - started:.1f} วินาที — "
+              "แม้แต่คำขอที่เบาที่สุดก็ไม่มีคำตอบ "
+              "แปลว่าเครื่องที่รันออกไปหา Google ไม่ได้ ไม่ใช่เรื่องของโมเดลหรือกุญแจ")
+        return 1
+
+    print(f"ตอบกลับใน {time.monotonic() - started:.1f} วินาที · HTTP {r.status_code}")
+    if r.status_code != 200:
+        print(r.text[:400])
+        return 1
+
+    models = usable_models(r.json())
+    print(f"รุ่นที่บัญชีนี้ใช้ได้ {len(models)} รุ่น:")
+    for name in models:
+        mark = "  <-- ที่ตั้งไว้ตอนนี้" if name == MODEL else ""
+        print(f"  {name}{mark}")
+    if MODEL not in models:
+        print(f"\n*** {MODEL} ไม่อยู่ในรายการ — นี่คือสาเหตุ ***")
+        print("ตั้ง GEMINI_MODEL ใน Secrets เป็นชื่อจากรายการข้างบน แล้วรันใหม่")
+        return 1
+    return 0
 
 
 def extract_json(text: str) -> dict:
@@ -162,6 +244,15 @@ def main() -> int:
     dry_run = "--dry-run" in args
     no_write = "--no-write" in args
     force = "--force" in args
+
+    # Needs neither the database nor a fact sheet: it answers "can this runner
+    # talk to Gemini at all, and under what model name".
+    if "--ping" in args:
+        key = os.environ.get("GEMINI_API_KEY")
+        if not key:
+            sys.exit("ERROR: GEMINI_API_KEY must be set.")
+        print(f"รุ่นที่ตั้งไว้: {MODEL}")
+        return ping(key)
 
     sb = client()
     trade_date = latest_trade_date(sb)

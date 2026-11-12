@@ -19,6 +19,7 @@ on:
         type: choice
         default: dry-run
         options:
+          - ping       # ถามว่ากุญแจนี้ใช้รุ่นอะไรได้บ้าง ไม่แตะฐานข้อมูล เบาที่สุด
           - dry-run    # ประกอบ prompt แล้วพิมพ์ ไม่ยิง API ไม่เขียนอะไร
           - no-write   # ยิง API จริง รันด่านครบ พิมพ์ผล ไม่เขียน DB ไม่ส่ง Telegram
           - full       # ครบวงจร
@@ -45,11 +46,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           FLAGS=""
           case "${{ inputs.mode }}" in
+            ping)     FLAGS="--ping" ;;
             dry-run)  FLAGS="--dry-run" ;;
             no-write) FLAGS="--no-write" ;;
           esac

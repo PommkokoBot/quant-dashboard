@@ -426,3 +426,30 @@ def test_held_message_names_the_date_and_the_findings():
 def test_published_message_carries_the_body():
     msg = brief_main.published_message("2026-11-09", "เนื้อหา")
     assert "2026-11-09" in msg and "เนื้อหา" in msg
+
+
+def test_model_list_is_read_correctly():
+    payload = {"models": [
+        {"name": "models/gemini-3.8-flash",
+         "supportedGenerationMethods": ["generateContent", "countTokens"]},
+        {"name": "models/text-embedding-004",
+         "supportedGenerationMethods": ["embedContent"]},
+        {"name": "models/gemini-3.5-flash-lite",
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "not-a-model"},
+    ]}
+    got = brief_main.usable_models(payload)
+    assert got == ["gemini-3.5-flash-lite", "gemini-3.8-flash"], \
+        "เอาเฉพาะรุ่นที่เขียนข้อความได้ ตัด embedding และรายการที่ผิดรูปทิ้ง"
+
+
+def test_model_list_survives_an_empty_or_odd_answer():
+    assert brief_main.usable_models({}) == []
+    assert brief_main.usable_models({"models": []}) == []
+    # a model that lists no methods at all is kept rather than silently dropped
+    assert brief_main.usable_models({"models": [{"name": "models/x"}]}) == ["x"]
+
+
+def test_timeouts_are_split_so_the_two_failures_can_be_told_apart():
+    assert brief_main.CONNECT_TIMEOUT_S < brief_main.READ_TIMEOUT_S
+    assert brief_main.READ_TIMEOUT_S >= 300, "รอบแรกหมดเวลาที่ 120 วินาที จึงต้องนานกว่านั้น"
