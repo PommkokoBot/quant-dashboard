@@ -739,6 +739,17 @@ def test_a_wrong_percentile_after_thi_still_fails():
         "การยกเว้นอันดับต้องไม่เผลอเปิดช่องให้ตัวเลขหลังคำว่า 'ที่' ผ่านฟรี"
 
 
+def test_an_event_number_is_not_proof_of_a_rank():
+    """events.1 is the first item on the calendar, not first place in a
+    ranking. Both ids end in a number, and only the "rank." prefix tells them
+    apart -- so a sentence citing an event must not be able to claim a
+    position. Without this the prefix check could be deleted and nothing in
+    the suite would notice (mutation M27 survived exactly here)."""
+    s = say("XLV เป็นอันดับ 1 ของกลุ่ม", ["events.1"])
+    assert any(f.code == "unbacked_rank" for f in bg.gate1_numbers(s, SEL)), \
+        "เลขท้าย id ของ fact ปฏิทินไม่ใช่อันดับ จึงพิสูจน์ตำแหน่งไม่ได้"
+
+
 def test_the_value_next_to_a_rank_is_still_checked():
     s = say("PAWZ เป็นอันดับ 1 ด้วยผลตอบแทน 21 วันที่ 99.99%", ["rank.all_top.1"])
     assert any(f.code == "unbacked_number" for f in bg.gate1_numbers(s, SEL)), \

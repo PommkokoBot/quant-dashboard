@@ -152,7 +152,12 @@ MUTATIONS = [
 
 
 def run_suite(cwd: Path) -> int:
-    return subprocess.run([sys.executable, "-m", "pytest", SUITE, "-q"],
+    # -B (no .pyc) is not tidiness: with bytecode caching on, a mutation can
+    # be scored against bytecode compiled during the PREVIOUS mutation's run
+    # and report "caught" when the suite in fact stays green. M27 was reported
+    # caught for a week that way and was not caught at all. A harness whose
+    # verdict depends on a cache cannot be used to trust the gates.
+    return subprocess.run([sys.executable, "-B", "-m", "pytest", SUITE, "-q"],
                           cwd=cwd, capture_output=True).returncode
 
 

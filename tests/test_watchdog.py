@@ -25,6 +25,8 @@ sys.path.insert(
 import notify  # noqa: E402
 import watchdog as wd  # noqa: E402
 
+thai_day = wd.thai_date
+
 TODAY = date(2026, 11, 9)          # a Monday
 AS_OF = date(2026, 11, 6)          # the Friday before
 NOW = datetime(2026, 11, 9, 15, 42, tzinfo=wd.BANGKOK)
@@ -64,10 +66,25 @@ def classification_rows(quarter: date, computed: date, moved: int = 0, total: in
     return rows
 
 
+def coverage_row(n: int = 93, baseline: int = 93, complete: bool = True) -> dict:
+    """One row of coverage_report(), shaped as PostgREST returns it."""
+    pct = round(100.0 * n / baseline, 1) if baseline else None
+    return {
+        "trade_date": AS_OF.isoformat(),
+        "n_priced": n,
+        "baseline": baseline,
+        "pct": pct,
+        "is_complete": complete,
+        "reason": (f"ครบ — {n} กอง จากค่าปกติ {baseline} ({pct}%)" if complete
+                   else f"ไม่ครบ — {n} กอง จากค่าปกติ {baseline} ({pct}%) · ขั้นต่ำ 98.0%"),
+    }
+
+
 def healthy_snapshot() -> wd.Snapshot:
     return wd.Snapshot(
         as_of=AS_OF,
         facts_max=AS_OF,
+        coverage=coverage_row(),
         integrity=integrity_rows(TODAY),
         health_issues=[],
         flagged=[],
@@ -338,3 +355,75 @@ def test_send_without_credentials_raises_rather_than_failing_silently(monkeypatc
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     with pytest.raises(notify.NotifyError):
         notify.send("hello")
+
+
+# --------------------------------------------------------------------------
+# 8. the day's prices actually all arrived (round B1)
+#
+# The gap this closes: on 2026-11-10 only 54 of 93 funds had prices, every
+# existing check stayed green because 15/24 = 62.5% is internally consistent,
+# and the sheet built from it looked perfectly ordinary.
+# --------------------------------------------------------------------------
+
+
+def test_complete_coverage_says_nothing():
+    assert wd.check_coverage(coverage_row(93, 93, True), AS_OF) == []
+
+
+def test_incomplete_coverage_is_an_alert():
+    findings = wd.check_coverage(coverage_row(54, 93, False), AS_OF)
+    assert [f.level for f in findings] == [wd.ALERT]
+    assert findings[0].code == "coverage_incomplete"
+
+
+def test_the_alert_carries_the_numbers_not_just_a_verdict():
+    """"ข้อมูลไม่ครบ" on its own cannot be acted on. 54 of 93 can."""
+    text = wd.check_coverage(coverage_row(54, 93, False), AS_OF)[0].text
+    assert "54" in text and "93" in text
+    assert thai_day(AS_OF) in text
+
+
+def test_a_single_missing_fund_is_tolerated():
+    """92/93 = 98.9%: funds do occasionally report late one at a time, and an
+    alert every time one does is an alert nobody reads."""
+    assert wd.check_coverage(coverage_row(92, 93, True), AS_OF) == []
+
+
+def test_missing_coverage_data_is_not_an_alarm():
+    """If the RPC gave nothing back, say nothing rather than cry wolf."""
+    assert wd.check_coverage(None, AS_OF) == []
+    assert wd.check_coverage({}, AS_OF) == []
+
+
+def test_incomplete_prices_report_one_cause_not_two():
+    """A missing sheet on a day with incomplete prices is the gate doing its
+    job. Reporting both would train the reader to skim past the pair."""
+    snap = healthy_snapshot()
+    snap.coverage = coverage_row(54, 93, False)
+    snap.facts_max = AS_OF - timedelta(days=1)
+    findings = wd.build_findings(snap, TODAY)
+    codes = [f.code for f in findings]
+    assert codes == ["coverage_incomplete"]
+
+
+def test_a_missing_sheet_on_a_complete_day_is_still_reported():
+    """The suppression above must not swallow the original check."""
+    snap = healthy_snapshot()
+    snap.facts_max = AS_OF - timedelta(days=1)
+    codes = [f.code for f in wd.build_findings(snap, TODAY)]
+    assert "facts_behind" in codes
+
+
+def test_heartbeat_shows_the_count_every_day():
+    """A universe sliding from 93 to 88 over a month trips no single-day
+    threshold. Printing it daily is what makes that visible to a person."""
+    snap = healthy_snapshot()
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    assert "ราคา 93/93" in message
+
+
+def test_heartbeat_without_coverage_does_not_invent_a_number():
+    snap = healthy_snapshot()
+    snap.coverage = None
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    assert "ราคา —" in message
