@@ -95,8 +95,11 @@ MUTATIONS = [
 
 def run_suite(root: Path) -> bool:
     """True when the suite passes."""
+    # -B for the same reason as tests/mutate_brief.py: a cached .pyc from the
+    # previous mutation's run can make this script report "caught" for a
+    # mutation the suite never catches.
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/test_watchdog.py", "-q"],
+        [sys.executable, "-B", "-m", "pytest", "tests/test_watchdog.py", "-q"],
         cwd=root,
         capture_output=True,
         text=True,
