@@ -65,6 +65,24 @@ MUTATIONS = [
         '            ALERT,\n            "flagged",',
     ),
     (
+        "M9 completeness check disabled",
+        "a sheet built from a partial universe would pass unmentioned",
+        '    if coverage.get("is_complete"):\n        return []',
+        "    if True:\n        return []",
+    ),
+    (
+        "M10 duplicate-alert suppression inverted",
+        "one bad morning would send two alerts about the same cause",
+        "    findings += coverage\n    if not coverage:",
+        "    findings += coverage\n    if True:",
+    ),
+    (
+        "M11 heartbeat drops the count",
+        "a universe shrinking week by week would never be seen",
+        '    return f"ราคา {coverage[\'n_priced\']}/{baseline}"',
+        '    return "ราคา —"',
+    ),
+    (
         "M8 integrity reads every run",
         "a failure fixed days ago would keep alerting forever",
         '    latest_rows = [r for r, d in zip(rows, days) if d == latest]\n'

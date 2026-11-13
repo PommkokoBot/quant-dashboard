@@ -16,8 +16,9 @@ notifier that is dead, so silence has to mean something.
 
 Read-only. This script never writes to the database, and it deliberately
 contains no trading-calendar logic of its own -- "what is the latest data date"
-comes from data_as_of() and "which instruments are stale" from
-data_health_report(), so there is no second implementation to drift
+comes from data_as_of(), "which instruments are stale" from
+data_health_report(), and "did all of the day's prices arrive" from
+coverage_report(), so there is no second implementation to drift
 (tool-quant-dashboard.md rule 7.2).
 
 Env vars required:
@@ -64,6 +65,14 @@ CLASSIFICATION_NEWS_DAYS = 7
 FOMC_NOTE_DAYS = 183
 FOMC_ALERT_DAYS = 61
 
+# One threshold is deliberately NOT here: "are the day's prices complete".
+# It lives in SQL, in coverage_report(), because build_daily_facts refuses to
+# build a sheet on the same verdict. Two copies of "98% of the median of the
+# last 5 trading days" would be free to drift apart, and rule 7.2 (one
+# definition, one place) outranks the convention that every threshold in this
+# file is a constant at the top. This watchdog reads the verdict, never
+# recomputes it.
+
 BANGKOK = timezone(timedelta(hours=7))
 
 THAI_MONTHS = [
@@ -91,6 +100,7 @@ class Snapshot:
     integrity: list[dict] = field(default_factory=list)      # run_day/check_name/status/bad_rows
     health_issues: list[dict] = field(default_factory=list)  # data_health_report() rows
     flagged: list[dict] = field(default_factory=list)        # non-ok rows of the latest fetch run
+    coverage: dict | None = None                   # coverage_report(as_of): one row, or None
     classification: list[dict] = field(default_factory=list) # latest quarter's rows
     fomc_last: date | None = None                  # max(market_events.event_date) for fomc
 
@@ -148,6 +158,30 @@ def check_data_arrival(as_of: date | None, today: date) -> list[Finding]:
             )
         ]
     return []
+
+
+def check_coverage(coverage: dict | None, as_of: date | None) -> list[Finding]:
+    """Did the whole universe actually report a price that day?
+
+    This is the gap that let 2026-11-10 through: every other check asks
+    whether the numbers are consistent with each other, and 15/24 = 62.5% is
+    perfectly consistent with itself. Completeness is a different question and
+    needs a check of its own. The verdict comes from coverage_report() so the
+    builder and the watchdog can never disagree about what "complete" means.
+    """
+    if not coverage or as_of is None:
+        return []
+    if coverage.get("is_complete"):
+        return []
+    return [
+        Finding(
+            ALERT,
+            "coverage_incomplete",
+            f"ราคาของวันที่ {thai_date(as_of)} มาไม่ครบ — "
+            f"{coverage.get('reason') or 'ไม่ทราบรายละเอียด'} "
+            f"· แผ่น fact ของวันนั้นจึงยังไม่ถูกสร้าง",
+        )
+    ]
 
 
 def check_fact_sheet(facts_max: date | None, as_of: date | None) -> list[Finding]:
@@ -292,7 +326,14 @@ def check_fomc_runway(last_fomc: date | None, today: date) -> list[Finding]:
 def build_findings(snapshot: Snapshot, today: date) -> list[Finding]:
     findings: list[Finding] = []
     findings += check_data_arrival(snapshot.as_of, today)
-    findings += check_fact_sheet(snapshot.facts_max, snapshot.as_of)
+
+    # When the prices are incomplete, the missing sheet is the completeness
+    # gate doing its job, not a second fault. Report the cause once rather
+    # than sending two alerts about the same morning.
+    coverage = check_coverage(snapshot.coverage, snapshot.as_of)
+    findings += coverage
+    if not coverage:
+        findings += check_fact_sheet(snapshot.facts_max, snapshot.as_of)
     findings += check_integrity(snapshot.integrity, today)
     findings += check_health_report(snapshot.health_issues)
     findings += check_flagged(snapshot.flagged)
@@ -311,6 +352,18 @@ def integrity_summary(rows: list[dict]) -> str:
     return f"ความถูกต้อง {ok}/{len(latest_rows)}"
 
 
+def coverage_summary(coverage: dict | None) -> str:
+    """Printed every day even when fine: a number that drifts down over weeks
+    would never trip a single-day threshold, but a person reading the same
+    line each morning will notice it."""
+    if not coverage or coverage.get("n_priced") is None:
+        return "ราคา —"
+    baseline = coverage.get("baseline")
+    if not baseline:
+        return f"ราคา {coverage['n_priced']} กอง"
+    return f"ราคา {coverage['n_priced']}/{baseline}"
+
+
 def format_message(snapshot: Snapshot, findings: list[Finding], now: datetime) -> str:
     today = now.date()
     alerts = [f for f in findings if f.level == ALERT]
@@ -321,6 +374,7 @@ def format_message(snapshot: Snapshot, findings: list[Finding], now: datetime) -
         facts_ok = snapshot.facts_max is not None and snapshot.as_of == snapshot.facts_max
         line = (
             f"✅ {stamp} · ข้อมูล {thai_date(snapshot.as_of)} · "
+            f"{coverage_summary(snapshot.coverage)} · "
             f"{'fact sheet ครบ' if facts_ok else 'fact sheet ไม่ครบ'} · "
             f"{integrity_summary(snapshot.integrity)} · flagged {len(snapshot.flagged)}"
         )
@@ -350,6 +404,17 @@ def read_snapshot(client) -> Snapshot:
     snapshot.as_of = parse_date(as_of_payload.get("as_of"))
 
     snapshot.health_issues = client.rpc("data_health_report", {}).execute().data or []
+
+    if snapshot.as_of is not None:
+        coverage = (
+            client.rpc("coverage_report", {"p_date": snapshot.as_of.isoformat()})
+            .execute()
+            .data
+            or []
+        )
+        if isinstance(coverage, list):
+            coverage = coverage[0] if coverage else None
+        snapshot.coverage = coverage
 
     facts = (
         client.table("daily_facts")

@@ -2,11 +2,21 @@ name: Daily data fetch
 
 on:
   schedule:
-    # 22:23 UTC = 05:23 Thailand time, ~1.5h after the US close in winter time.
-    # Moved earlier from 23:30 UTC on 2026-11-09 to leave more room before the
-    # daily-facts-builder window (pg_cron, 00:00-08:30 UTC) for the queue delay
-    # that GitHub adds on top of this schedule.
-    - cron: "23 22 * * *"
+    # 04:00 UTC = 11:00 Thailand time. The number that matters is the distance
+    # from the US close (21:00 UTC in winter, 20:00 in summer), not the local
+    # hour: Yahoo posts the big funds within a couple of hours but small
+    # thematic ETFs lag by several more, and a fetch that runs too early
+    # returns a PARTIAL universe with no error at all -- 54 of 93 on
+    # 2026-11-10, which then became a fact sheet whose Breadth was computed
+    # over 24 funds instead of 93. The boundary measured across those two runs
+    # sits between 5 and 7 hours after the close, so 7 is the floor here and
+    # 04:00 UTC clears it all year without any DST handling.
+    #
+    # The previous 22:23 UTC was moved here on 2026-11-13 (round B1). It was
+    # set on 2026-11-09 to buy room before the pg_cron window, which looked
+    # safe only because the GitHub queue was running 3-4 hours late and had
+    # been hiding the problem; shortening the delay uncovered it.
+    - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
       full_history:
@@ -80,6 +90,32 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python scripts/fetch_events.py
+
+      # Build the day's fact sheet here, in the same job, the moment the three
+      # fetch steps above have landed their data. pg_cron also tries every 30
+      # minutes between 04:00 and 08:30 UTC, but that window is a guess about
+      # when the data will arrive, and the GitHub queue has been measured
+      # between 1.9 and 10.5 hours late -- on a slow day the window closes
+      # before the prices land and the sheet for that day is never built at
+      # all. Doing it here removes the guess; pg_cron stays as the backstop
+      # for the day this whole job fails to run.
+      #
+      # It must come AFTER the macro and event steps, not just after prices:
+      # the sheet has a macro group and a 14-day event group in it.
+      #
+      # The script also fills in any sheet missing from the last 10 trading
+      # days. Without that, a day the completeness gate refuses would stay
+      # empty forever: once tomorrow's prices arrive the "latest date" has
+      # moved on, and nothing would ever come back for it.
+      #
+      # Exits 0 when the gate refuses -- that is the gate working, and the
+      # watchdog reports it at 09:00 UTC. Only a database error turns it red.
+      - name: Build fact sheets
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/build_facts.py
 
       # The brief lives here rather than on a schedule of its own because the
       # fact sheet it reads only exists once the steps above have landed the
