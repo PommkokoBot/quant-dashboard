@@ -350,13 +350,44 @@ def gate3_language(response: dict) -> list[Finding]:
 # Gate 4 -- adjectives have to be earned
 # ---------------------------------------------------------------------------
 
+def _section_pools(response: dict, index: dict) -> list[list]:
+    """fact ที่ถูกอ้างในแต่ละหัวข้อ รวมทุกประโยคของหัวข้อนั้น
+
+    มีไว้สำหรับคำขยายที่ต้องใช้สองค่าเทียบกัน (ดู FRAGILE_WORDS) · ร้อยแก้ว
+    ธรรมชาติมักแยกการเปรียบเทียบเป็นสองประโยค ("ลดลงมาอยู่ที่ A · เทียบกับ
+    21 วันก่อนที่ B") · 15 พ.ย. 2026 บรีฟเดียวกัน ข้อมูลเดียวกัน ผ่านเมื่อ
+    โมเดลเขียนรวมประโยค ถูกกักเมื่อโมเดลแยกประโยค — ด่านที่คำตัดสินขึ้นกับ
+    ตำแหน่งจุดฟูลสต็อปกำลังวัดสไตล์ ไม่ใช่ความจริง
+    """
+    pools = []
+    for section in response.get("sections") or []:
+        ids = set()
+        for s in section.get("sentences") or []:
+            ids.update(str(f) for f in (s.get("facts") or []) if str(f) in index)
+        pools.append([index[f] for f in ids])
+    return pools
+
+
+def _sentences_by_section(response: dict):
+    for si, section in enumerate(response.get("sections") or [], start=1):
+        heading = str(section.get("heading", f"ส่วนที่ {si}"))
+        for qi, sentence in enumerate(section.get("sentences") or [], start=1):
+            yield si - 1, f"{heading} ประโยคที่ {qi}", sentence
+
+
+def _value_in(facts, fid: str):
+    return next((f.value for f in facts if f.id == fid), None)
+
+
 def gate4_adjectives(response: dict, sel: Selection) -> list[Finding]:
     out: list[Finding] = []
     index = sel.by_id()
+    pools = _section_pools(response, index)
 
-    for where, sentence in _sentences(response):
+    for si, where, sentence in _sentences_by_section(response):
         text = str(sentence.get("text", ""))
         cited = [index[f] for f in (sentence.get("facts") or []) if f in index]
+        pool_facts = pools[si] if si < len(pools) else []
         pctiles = [f.value for f in cited if f.unit == "pctile" and f.value is not None]
         has_rank_top = any(f.id.startswith("rank.") and "_top" in f.id for f in cited)
 
@@ -413,17 +444,20 @@ def gate4_adjectives(response: dict, sel: Selection) -> list[Finding]:
                     f"ที่อ้างมา z={zs or 'ไม่มี'} เท่า={rv or 'ไม่มี'})"))
 
         # ความกว้างของตลาดแย่ลง: ต้องมีทั้งระดับที่ต่ำกว่าครึ่ง และทิศทางที่ลง
+        # ไม่สมมาตรโดยตั้งใจ: ค่าหลัก (ล่าสุด) ต้องอยู่ประโยคเดียวกับคำขยาย
+        # เพราะคำนั้นกำลังตัดสินตัวเลขนั้น · ค่าเทียบ (21 วันก่อน) อยู่ที่ไหน
+        # ก็ได้ในหัวข้อเดียวกัน · ด่าน 1 ยังตรึงทุกตัวเลขกับประโยคของมันเอง
         for w in FRAGILE_WORDS:
             if w not in text:
                 continue
-            now = next((f.value for f in cited if f.id == "breadth.today.pct"), None)
-            was = next((f.value for f in cited if f.id == "breadth.prior_21d.pct"), None)
+            now = _value_in(cited, "breadth.today.pct")
+            was = _value_in(pool_facts, "breadth.prior_21d.pct")
             if now is None or was is None or not (now < BREADTH_WEAK_PCT and now < was):
                 out.append(Finding(
                     4, "unbacked_adjective", where,
-                    f'ใช้คำว่า "{w}" ต้องอ้างทั้งความกว้างล่าสุดและค่า 21 วันก่อน '
-                    f"และล่าสุดต้องต่ำกว่า {BREADTH_WEAK_PCT:g}% และต่ำกว่าเดิม "
-                    f"(ที่อ้างมา: ล่าสุด={now} เดิม={was})"))
+                    f'ใช้คำว่า "{w}" ต้องอ้างความกว้างล่าสุดในประโยคนี้ และค่า 21 วันก่อน '
+                    f"ในหัวข้อเดียวกัน และล่าสุดต้องต่ำกว่า {BREADTH_WEAK_PCT:g}% "
+                    f"และต่ำกว่าเดิม (ที่อ้างมา: ล่าสุด={now} เดิม={was})"))
 
         # สวนทาง: ต้องมีตัวเลขสองตัวที่เครื่องหมายต่างกันจริง
         for w in DIVERGE_WORDS:

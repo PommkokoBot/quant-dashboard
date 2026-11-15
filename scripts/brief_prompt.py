@@ -17,13 +17,13 @@ from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
                          SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
                          VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v2.1"
+PROMPT_VERSION = "v2.2"
 
 # Changing the rules below changes what the model writes, so two briefs must
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "d0b4c0705395"
+PROMPT_FINGERPRINT = "0c472f7dbfca"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -80,8 +80,9 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
    - {leader}: ต้องอ้าง fact ที่เป็นอันดับต้น (rank.*_top.*)
    - {volume}: ต้องอ้างปริมาณซื้อขายรายสัปดาห์ของกองนั้น และต้องถึง
      z {vol_z:g} ขึ้นไป หรือ {vol_r:g} เท่าของฐานขึ้นไป
-   - {fragile}: ต้องอ้างความกว้างของตลาดทั้งค่าล่าสุดและค่า 21 วันก่อน
-     และค่าล่าสุดต้องต่ำกว่า {weak:g}% และต่ำกว่าค่าเดิม
+   - {fragile}: ประโยคนั้นต้องอ้างความกว้างของตลาดค่าล่าสุด และต้องมีประโยค
+     ในหัวข้อเดียวกันที่อ้างค่า 21 วันก่อน โดยค่าล่าสุดต้องต่ำกว่า {weak:g}%
+     และต่ำกว่าค่าเดิม
    - {diverge}: ต้องอ้างตัวเลขสองตัวที่ทิศทางต่างกันจริงในประโยคเดียวกัน
    ถ้าไม่ถึงเกณฑ์ ให้พูดเป็นตัวเลขเปล่า ๆ ไม่ต้องใส่คำประเมิน
 7. ห้ามอธิบายสาเหตุ ห้ามคาดการณ์ ห้ามบอกว่าจะเกิดอะไรต่อ
