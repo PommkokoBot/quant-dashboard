@@ -50,9 +50,9 @@ MUTATIONS = [
      "return abs(round(v, decimals) - n) < 1.0",
      "9.9% would be accepted as 9.57% -- wrong numbers, quietly published"),
 
-    ("M6", "scripts/brief_facts.py", "a timeframe nobody agreed to",
-     "RET_LOOKBACKS = [5, 21]", "RET_LOOKBACKS = [1, 5, 21]",
-     "an unused number in the prompt is a number the model may decide to mention"),
+    ("M6", "scripts/brief_facts.py", "the duplicate 5-day timeframe comes back",
+     "RET_LOOKBACKS = [21]", "RET_LOOKBACKS = [5, 21]",
+     "the same number under two names made the brief call a week '5 trading days'"),
 
     ("M7", "scripts/brief_gates.py", "gate 0 stops checking the date",
      "if got != want_trade_date:", "if False and got != want_trade_date:",
@@ -248,6 +248,23 @@ MUTATIONS = [
      '    - cron: "0 4 * * *"',
      '    - cron: "0 4 * * *"\n    - cron: "0 6 * * 6"',
      "two schedules means two runs a day on Saturday, and one of them too early"),
+
+    # ----------------------------------------------- รอบ B2a.1 (15 พ.ย. 2026)
+
+    ("M49", "scripts/brief_facts.py", "a finished week called current again",
+     '    windows = (("week_current", "สัปดาห์ที่ปิดแล้ว"),',
+     '    windows = (("week_current", "สัปดาห์ปัจจุบัน"),',
+     "the label is where the reader-relative wording came from, not the model"),
+
+    ("M50", "scripts/brief_gates.py", "the week-level time word dropped",
+     '"เมื่อเช้า",\n                 "สัปดาห์ปัจจุบัน"]',
+     '"เมื่อเช้า"]',
+     "a brief could call a closed week current and nothing would object"),
+
+    ("M51", "scripts/brief_facts.py", "weekly volume labels stop naming the week",
+     '    week_of = f"สัปดาห์ที่เริ่ม {week_start}" if week_start else "สัปดาห์ที่ปิดแล้ว"',
+     '    week_of = "สัปดาห์นี้"',
+     "every volume sentence would be wrong to anyone reading it a week later"),
 ]
 
 

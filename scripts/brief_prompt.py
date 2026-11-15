@@ -17,13 +17,13 @@ from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
                          SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
                          VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v2.1"
 
 # Changing the rules below changes what the model writes, so two briefs must
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "8ceadab1c110"
+PROMPT_FINGERPRINT = "d0b4c0705395"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -31,8 +31,9 @@ PROMPT_FINGERPRINT = "8ceadab1c110"
 # รายสัปดาห์ และเพิ่มหัวข้อฤดูกาลเป็นหัวข้อที่ 6
 SECTIONS = [
     ("ภาพรวม",
-     "ผลตอบแทน 1 สัปดาห์และ 21 วันของ asset class หลักและ broad market "
-     "อะไรนำอะไรตามในสัปดาห์ที่ผ่านมา"),
+     "ผลตอบแทน 1 สัปดาห์และ 4 สัปดาห์ของ asset class หลักและ broad market "
+     "แล้วจึงเทียบกับแนวโน้ม 21 วัน · ให้พูดเป็นสัปดาห์ก่อนเป็นวัน "
+     "เพราะบทสรุปนี้เป็นรายสัปดาห์"),
     ("กลุ่มตามพฤติกรรม",
      "กลุ่ม Low Beta / Market Beta / High Beta / สวนทางตลาด กลุ่มไหนนำกลุ่มไหนตาม"),
     ("เด่นและแย่",

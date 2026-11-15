@@ -28,10 +28,16 @@ from typing import Any
 ASSET_CLASS_FALLBACK = ["SPY", "EFA", "EEM", "IEF", "VNQ", "DBC"]
 BROAD_EXTRA = ["QQQ", "IWM"]
 
-# The brief is weekly now, so the day's own move is noise: it is one fifth of
-# what the reader is being told about. 5 and 21 days are the two the weekly
-# lens actually uses (มติ ข้อ 11).
-RET_LOOKBACKS = [5, 21]
+# เหลือ 21 วันตัวเดียว (รอบ B2a.1 · 15 พ.ย.)
+#
+# บทสรุปออกจากแผ่นของวันศุกร์เสมอ (มติ 17) และ "5 วันทำการที่จบวันศุกร์"
+# คือสัปดาห์นั้นพอดี · วัดกับของจริงแล้วเท่ากันทุกหลัก: SPY วันที่ 13 พ.ย.
+# ได้ 2.5948969331844 ทั้งใน ret.day 5 วัน และ ret.week 1 สัปดาห์
+#
+# ตัวเลขเดียวกันที่ส่งไปสองชื่อ ไม่ได้เพิ่มข้อมูลให้โมเดล แต่เพิ่มโอกาสที่
+# โมเดลจะเรียกสัปดาห์ว่า "5 วันทำการ" ซึ่งเกิดขึ้นจริงในบรีฟทดลองฉบับแรก
+# จนหัวข้อ "ภาพรวม" ของบทสรุปรายสัปดาห์ไม่มีคำว่าสัปดาห์เลย
+RET_LOOKBACKS = [21]
 # Weekly returns, which is the granularity the brief's own title claims.
 # Without these every sentence about "this week" had no fact to cite -- the
 # gap that made every volume claim in the 14 พ.ย. draft contradict the sheet.
@@ -202,6 +208,11 @@ def select_facts(sheet: dict) -> Selection:
     # ---- ปริมาณซื้อขายรายสัปดาห์ เฉพาะกองที่อยู่หัวแถว ----------------------
     # เฉพาะห้าตัวบนเท่านั้นโดยตั้งใจ: ตัวเลขที่ส่งเข้า prompt แต่ไม่ได้ใช้
     # คือตัวเลขที่โมเดลอาจหยิบมาพูด (เหตุผลเดียวกับที่ v1 ตัด 5 วันออก)
+    # ยึดป้ายไว้กับวันเริ่มสัปดาห์จริงจากแผ่น แทนคำว่า "สัปดาห์นี้" ซึ่ง
+    # กลายเป็นคำผิดทันทีที่ใครย้อนมาอ่านในสัปดาห์ถัดไป (กติกาเดียวกับที่
+    # ห้ามคำว่า "วันนี้": ให้ระบุวันที่จริงแทนคำที่อ้างอิงเวลาของผู้อ่าน)
+    week_start = str((groups.get("ret.week", {}) or {}).get("week_start") or "")
+    week_of = f"สัปดาห์ที่เริ่ม {week_start}" if week_start else "สัปดาห์ที่ปิดแล้ว"
     volw = (groups.get("vol.week", {}).get("values") or {})
     for pair in (rank.get("all_top") or [])[:5]:
         if not (isinstance(pair, list) and len(pair) == 2):
@@ -213,11 +224,13 @@ def select_facts(sheet: dict) -> Selection:
         z, rvol = _num(row[0]), _num(row[1])
         if z is not None:
             out.append(Fact(id=f"volw.{ticker}.z",
-                            label=f"{ticker} ปริมาณซื้อขายสัปดาห์นี้ เทียบฐาน 20 สัปดาห์ (z)",
+                            label=f"{ticker} ปริมาณซื้อขาย{week_of} "
+                                  "เทียบฐาน 20 สัปดาห์ (z)",
                             value=z, unit="sigma", ticker=ticker))
         if rvol is not None:
             out.append(Fact(id=f"volw.{ticker}.rvol",
-                            label=f"{ticker} ปริมาณซื้อขายสัปดาห์นี้ เป็นกี่เท่าของฐาน 20 สัปดาห์",
+                            label=f"{ticker} ปริมาณซื้อขาย{week_of} "
+                                  "เป็นกี่เท่าของฐาน 20 สัปดาห์",
                             value=rvol, unit="times", ticker=ticker))
 
     # ---- สถิติฤดูกาล ต้องมาคู่กับฐานเทียบเสมอ (รอบ B2a) --------------------
@@ -289,7 +302,9 @@ def _seasonal_facts(seasonal: dict) -> list[Fact]:
     if not isinstance(seasonal, dict):
         return out
 
-    windows = (("week_current", "สัปดาห์ปัจจุบัน"),
+    # "สัปดาห์ปัจจุบัน" ผิดในสายตาคนอ่าน: สัปดาห์ที่ 46 จบไปแล้วตอนศุกร์เย็น
+    # และบรีฟออกเสาร์หรืออาทิตย์ · ป้ายของเราเองเป็นคนชวนให้โมเดลเขียนคำนี้
+    windows = (("week_current", "สัปดาห์ที่ปิดแล้ว"),
                ("week_next", "สัปดาห์ถัดไป"),
                ("month_next", "เดือนที่กำลังจะถึง"))
     for key, th in windows:
