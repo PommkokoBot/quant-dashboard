@@ -117,6 +117,8 @@ def sheet(trade_date: str = "2026-11-09", version: str = "v2") -> dict:
     s["groups"]["ret.week"] = {
         "unit": "pct", "keys": [1, 4, 13],
         "source": "trailing_returns(active,'week',[1,4,13])",
+        # trade_date ของฟิกซ์เจอร์คือจันทร์ 9 พ.ย. สัปดาห์ที่ปิดแล้วจึงเริ่ม 2 พ.ย.
+        "week_start": "2026-11-02", "days_in_week": 5,
         "values": {
             "SPY": [1.85, -2.10, 3.40], "QQQ": [2.40, -6.80, -1.20],
             "IWM": [1.10, 0.90, 4.50], "EFA": [0.70, 1.80, 6.20],
@@ -170,11 +172,17 @@ def test_universe_is_the_whole_active_list():
 
 
 def test_only_the_two_agreed_timeframes_are_offered():
-    # รอบ B2a เปลี่ยนจาก 1 วัน เป็น 5 วัน: บทสรุปเป็นรายสัปดาห์ การเคลื่อนไหว
-    # ของวันเดียวคือหนึ่งในห้าของสิ่งที่คนอ่านกำลังถูกเล่าถึง
-    ids = {f.id for f in SEL.facts if f.id.startswith("ret.")}
-    assert "ret.SPY.5d" in ids and "ret.SPY.21d" in ids
+    """กรอบเวลาที่ส่งให้โมเดล: 1 และ 4 สัปดาห์ จาก retw · 21 วัน จาก ret.day
+
+    รอบ B2a เปลี่ยน 1 วัน เป็น 5 วัน · รอบ B2a.1 ตัด 5 วันออกอีก เพราะ
+    บทสรุปออกจากแผ่นของวันศุกร์เสมอ และ 5 วันทำการที่จบวันศุกร์คือสัปดาห์
+    นั้นพอดี — เป็นตัวเลขเดียวกันที่ส่งไปสองชื่อ
+    """
+    ids = {f.id for f in SEL.facts if f.id.startswith(("ret.", "retw."))}
+    assert "ret.SPY.21d" in ids
+    assert "retw.SPY.1w" in ids and "retw.SPY.4w" in ids
     assert not any(i.endswith(".1d") for i in ids), "1 วันออกไปแล้วในรอบ B2a"
+    assert not any(i.endswith(".5d") for i in ids), "5 วันออกไปแล้วในรอบ B2a.1"
 
 
 def test_values_carry_through_unrounded():
@@ -389,8 +397,8 @@ def test_leader_word_needs_a_top_rank_fact():
 def test_validate_runs_every_gate_and_a_clean_brief_passes():
     r = {"sections": [
         {"heading": "ภาพรวม", "sentences": [
-            {"text": "SPY บวก 0.08% ในรอบ 5 วัน แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
-             "facts": ["ret.SPY.5d", "ret.SPY.21d"]}]},
+            {"text": "SPY บวก 1.85% ในสัปดาห์ที่ปิดแล้ว แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
+             "facts": ["retw.SPY.1w", "ret.SPY.21d"]}]},
         {"heading": "คู่เทียบ", "sentences": [
             {"text": "QQQ ตามหลัง SPY 6.25 จุด ซึ่งผิดปกติ ที่เปอร์เซ็นไทล์ 0.9 จาก 873 วัน",
              "facts": ["pair.qqq_spy.spread", "pair.qqq_spy.pctile_3y",
@@ -443,7 +451,7 @@ def test_user_prompt_carries_every_fact_and_the_five_headings():
 def test_user_prompt_shows_signs_so_the_model_cannot_miss_a_fall():
     text = bp.build_user(SEL)
     assert "-9.57%" in text          # ret.QQQ.21d
-    assert "+0.08%" in text          # ret.SPY.5d
+    assert "+1.85%" in text          # retw.SPY.1w
 
 
 def test_prompt_rules_and_gates_agree_on_every_word():
@@ -838,12 +846,13 @@ def test_weekly_volume_is_offered_only_for_the_top_five():
 
 def test_asset_class_list_comes_from_the_sheet_not_the_constant():
     # แผ่นเรียง EEM มาก่อน SPY ซึ่งต่างจากลำดับในค่าคงที่
-    order = [f.ticker for f in SEL.facts if f.id.endswith(".5d")]
+    order = [f.ticker for f in SEL.facts if f.id.endswith(".21d")
+             and f.id.startswith("ret.")]
     assert order[0] == "EEM", order
     assert bf.ASSET_CLASS_FALLBACK[0] == "SPY"
     # แผ่น v1 ไม่มีอันดับ asset class จึงต้องตกมาที่ค่าคงที่ได้จริง
-    order_v1 = [f.ticker for f in SEL_V1.facts if f.id.endswith(".1d")] or \
-        [f.ticker for f in SEL_V1.facts if f.id.endswith(".5d")]
+    order_v1 = [f.ticker for f in SEL_V1.facts if f.id.endswith(".21d")
+                and f.id.startswith("ret.")]
     assert order_v1[0] == "SPY", order_v1
 
 
@@ -1077,15 +1086,90 @@ def test_a_refusal_by_design_is_not_a_failed_job():
     assert not brief_main.refusal_is_by_design("")
 
 
-def test_daily_and_weekly_return_labels_cannot_be_mistaken_for_each_other():
-    """5 วันทำการ กับ 1 สัปดาห์ ISO เป็นคนละค่า และต่างกันมากพอจะหลอกคนอ่าน
+def test_the_duplicate_five_day_timeframe_is_gone():
+    """13 พ.ย. 2026 ของจริง: SPY ret.day 5 วัน = 2.5948969331844 และ
+    ret.week 1 สัปดาห์ = 2.5948969331844 — เท่ากันทุกหลัก
 
-    9 พ.ย. 2026 ของจริง: SPY 5 วัน = +0.08% แต่สัปดาห์ = +1.85% · ถ้าป้ายชื่อ
-    สองอันนี้อ่านเหมือนกัน โมเดลจะหยิบเลขหนึ่งมาเรียกชื่อของอีกเลขหนึ่ง
+    บทสรุปออกจากแผ่นของวันศุกร์เสมอ (มติ 17) จึงเป็นวันที่สองค่านี้ตรงกัน
+    เสมอ · ผลของการส่งทั้งคู่: บรีฟทดลองฉบับแรกเรียกสัปดาห์ว่า "5 วันทำการ"
+    ทั้งหัวข้อ และคำว่าสัปดาห์ไม่ปรากฏในหัวข้อ "ภาพรวม" เลย
     """
-    index = SEL.by_id()
-    d = index["ret.SPY.5d"].label
-    w = index["retw.SPY.1w"].label
-    assert "วันทำการ" in d and "สัปดาห์" not in d
+    assert bf.RET_LOOKBACKS == [21]
+    ids = {f.id for f in SEL.facts}
+    assert not any(i.startswith("ret.") and i.endswith("d") and "21d" not in i
+                   for i in ids)
+    # และของที่เหลือต้องเรียกตัวเองว่าสัปดาห์จริง ๆ
+    w = SEL.by_id()["retw.SPY.1w"].label
     assert "สัปดาห์" in w and "วันทำการ" not in w
-    assert index["ret.SPY.5d"].value != index["retw.SPY.1w"].value
+
+
+# ===========================================================================
+# รอบ B2a.1 · คำบอกเวลาระดับสัปดาห์
+# ===========================================================================
+
+# คำที่อ้างอิงเวลาของผู้อ่าน ไม่ใช่เวลาของข้อมูล · ป้ายชื่อ fact ห้ามมีคำพวกนี้
+# เพราะ prompt คือที่มาของภาษาที่หลุดออกไปถึงคนอ่าน (บทเรียนข้อ 10)
+READER_RELATIVE_WORDS = ["วันนี้", "สัปดาห์นี้", "สัปดาห์ปัจจุบัน", "เดือนนี้",
+                         "ตอนนี้", "ขณะนี้", "เมื่อวาน", "พรุ่งนี้"]
+
+
+def test_no_fact_label_uses_a_word_that_depends_on_when_it_is_read():
+    """ครอบทุกป้ายชื่อ ไม่ใช่แค่ breadth
+
+    บรีฟทดลองฉบับแรกเขียน "สัปดาห์ปัจจุบันของ SPY" และ "ปริมาณซื้อขายใน
+    สัปดาห์นี้" — ทั้งสองคำมาจากป้ายชื่อที่เราเขียนเอง ไม่ใช่โมเดลดื้อ
+    """
+    for f in SEL.facts:
+        for w in READER_RELATIVE_WORDS:
+            assert w not in f.label, f"{f.id} มีคำว่า {w} อยู่ในป้ายชื่อ"
+    for f in SEL_V1.facts:
+        for w in READER_RELATIVE_WORDS:
+            assert w not in f.label, f"{f.id} (v1) มีคำว่า {w} อยู่ในป้ายชื่อ"
+
+
+def test_weekly_volume_labels_name_the_real_week():
+    # ยึดกับวันที่จริงจากแผ่น ตามกติกาเดียวกับที่ห้ามคำว่า "วันนี้"
+    labels = [f.label for f in SEL.facts if f.id.startswith("volw.")]
+    assert labels
+    for lab in labels:
+        assert "สัปดาห์ที่เริ่ม 2026-11-02" in lab, lab
+
+
+def test_weekly_volume_labels_fall_back_when_the_sheet_has_no_week_start():
+    s = sheet()
+    del s["groups"]["ret.week"]["week_start"]
+    labels = [f.label for f in bf.select_facts(s).facts if f.id.startswith("volw.")]
+    assert labels
+    for lab in labels:
+        assert "สัปดาห์ที่ปิดแล้ว" in lab, lab
+        for w in READER_RELATIVE_WORDS:
+            assert w not in lab
+
+
+def test_seasonal_labels_do_not_call_a_finished_week_current():
+    labels = [f.label for f in SEL.facts if f.id.startswith("seasonal.week_current")]
+    assert labels
+    for lab in labels:
+        assert "สัปดาห์ที่ปิดแล้ว" in lab
+        assert "สัปดาห์ปัจจุบัน" not in lab
+
+
+def test_gate3_refuses_calling_a_finished_week_current_but_allows_this_week():
+    """"สัปดาห์ปัจจุบัน" ผิดแม้ตอนเผยแพร่ เพราะสัปดาห์นั้นปิดไปแล้ว
+
+    ส่วน "สัปดาห์นี้" ไม่ห้าม: มติ 17 บังคับให้บรีฟออกในสัปดาห์ ISO เดียวกับ
+    วันข้อมูล คำนั้นจึงเป็นจริงตอนที่คนอ่านได้รับ · ถ้าห้ามด้วยจะกลายเป็น
+    ด่านที่ร้องผิด ซึ่งเป็นความผิดพลาดที่ข้อ 8.3 เตือนไว้
+    """
+    assert "สัปดาห์ปัจจุบัน" in bg.VAGUE_TIME_TH
+    assert "สัปดาห์นี้" not in bg.VAGUE_TIME_TH
+    f = bg.gate3_language(say("สัปดาห์ปัจจุบันของ SPY เคยปิดบวก 60.00%", []))
+    assert [x.code for x in f] == ["vague_time"]
+    assert bg.gate3_language(say("ปริมาณซื้อขายสัปดาห์นี้สูงกว่าฐาน", [])) == []
+
+
+def test_prompt_tells_the_model_to_speak_in_weeks_first():
+    heading, what = bp.SECTIONS[0]
+    assert heading == "ภาพรวม"
+    assert "สัปดาห์" in what
+    assert bp.PROMPT_VERSION == "v2.1"
