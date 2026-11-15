@@ -13,7 +13,8 @@ The gates, in the order they run:
      AND in direction
   2  every ticker mentioned is one of the instruments the sheet covers
   3  no recommendation language, and no words that assume what day it is read
-  4  every evaluative adjective is backed by a percentile the sentence cites
+  4  every evaluative adjective is backed by a number the sentence cites
+  5  every seasonal claim carries the baseline that makes it mean anything
 
 Failing any of them means the brief is not published (มติ ข้อ 3 ของรอบ B). The
 findings are what gets written to validation_log and sent to Telegram, so each
@@ -34,8 +35,22 @@ from brief_facts import Selection
 FORBIDDEN_TH = [
     "ควรซื้อ", "ควรขาย", "ควรถือ", "น่าซื้อ", "น่าขาย", "น่าสะสม", "น่าลงทุน",
     "ทยอยสะสม", "ราคาเป้าหมาย", "เป้าหมายราคา", "แนะนำ", "ถูกเกินไป", "แพงเกินไป",
-    # v1 ไม่ได้ส่งข้อมูล volume ไปให้โมเดล จึงพิสูจน์คำนี้ไม่ได้ ห้ามใช้ไปก่อน
-    "มาเร็ว",
+
+    # การไหลของเงิน: เรามีแต่ราคาและปริมาณหุ้นที่ซื้อขาย ไม่มีข้อมูลว่าเงิน
+    # ไหลไปไหน ประโยคแบบ "เงินไหลเข้ากลุ่มปลอดภัย" จึงเป็นการแต่งเรื่อง
+    # ที่ไม่มี fact ใดในแผ่นพิสูจน์ได้เลย (หลุดใน draft 14 พ.ย.)
+    "ไหลเข้า", "ไหลออก", "เงินทุนไหล", "เม็ดเงิน", "กระแสเงิน", "พักเงิน",
+    "หลบเข้า", "เข้าหลุมหลบภัย", "สินทรัพย์ปลอดภัย",
+
+    # ป้ายชื่อกลุ่มที่เราไม่ได้คำนวณ: เราจัดกลุ่มด้วย beta กับสหสัมพันธ์
+    # ไม่ได้จัดด้วยลักษณะธุรกิจ จะเรียก Defensive หรือ Cyclical ไม่ได้
+    "ตั้งรับ", "เชิงรับ", "เชิงรุก", "วัฏจักร", "กลุ่มปลอดภัย",
+
+    # ผู้เล่นที่เรามองไม่เห็น: แผ่นข้อมูลไม่รู้ว่าใครซื้อใครขาย
+    "นักลงทุนสถาบัน", "รายย่อย", "ต่างชาติ", "กองทุนใหญ่", "ขาใหญ่",
+
+    # คำขยายที่ฟังเหมือนมีหลักฐานแต่ไม่ผูกกับเกณฑ์ใด ใช้ตัวเลขพูดแทน
+    "อย่างมีนัยสำคัญ", "อย่างมาก", "ชัดเจน",
 ]
 FORBIDDEN_EN = [
     "buy", "sell", "accumulate", "undervalued", "overvalued",
@@ -51,8 +66,34 @@ EXTREME_WORDS = ["ผิดปกติ", "สูงผิดปกติ", "ต
 SUPERLATIVE_WORDS = ["กว้างสุด", "แคบสุด", "สูงสุดในรอบ", "ต่ำสุดในรอบ"]  # ต้อง >=99 หรือ <=1
 LEADER_WORDS = ["มาแรง"]                                          # ต้องอ้างอันดับต้น
 
+# ขาดลอย = ส่วนต่างอยู่ปลายแถบ แต่ไม่ต้องถึงขั้น "ผิดปกติ"
+WIDE_WORDS = ["ขาดลอย", "ทิ้งห่าง", "นำห่าง"]
+# คำเรื่องปริมาณซื้อขาย ใช้ได้เพราะรอบ B2a เริ่มส่ง vol.week เข้า prompt
+# (ก่อนหน้านี้ "มาเร็ว" อยู่ในรายการคำห้าม เพราะไม่มี fact ใดพิสูจน์ได้)
+VOLUME_WORDS = ["มาเร็ว", "เร่งขึ้น", "คึกคัก", "ปริมาณหนาแน่น"]
+# คำที่บอกว่าความกว้างของตลาดกำลังแย่ลง ต้องมีทั้งระดับและทิศทาง
+FRAGILE_WORDS = ["เปราะบาง", "อ่อนแอลง", "ไม่ทั่วถึง"]
+# คำที่บอกว่าของสองอย่างไปคนละทาง ต้องมีตัวเลขสองตัวที่เครื่องหมายต่างกันจริง
+DIVERGE_WORDS = ["สวนทาง", "ขัดแย้งกัน", "ไปคนละทาง"]
+
 EXTREME_PCTILE = 95.0
 SUPERLATIVE_PCTILE = 99.0
+WIDE_PCTILE = 90.0
+VOL_Z_MIN = 1.0          # ปริมาณซื้อขายสูงกว่าฐาน 1 ส่วนเบี่ยงเบน
+VOL_RVOL_MIN = 1.5       # หรือ 1.5 เท่าของฐาน 20 สัปดาห์
+BREADTH_WEAK_PCT = 50.0  # เกณฑ์ "ไม่ทั่วถึง": ต่ำกว่าครึ่ง และต่ำกว่า 21 วันก่อน
+
+# รหัส fact และรหัสกลุ่มดิบ: เป็นชื่อภายในของเรา ไม่ใช่ภาษาที่คนอ่านรู้จัก
+# 11 พ.ย. โมเดลเขียน "อันดับ 1 ของ all_top" ลงในบทสรุปที่ส่งถึงคนจริง
+RAW_CODES = [
+    "all_top", "all_bottom", "thematic_top", "thematic_bottom", "us_sector",
+    "asset_class", "broad_market", "week_current", "week_next", "month_next",
+    "low_beta", "high_beta", "market_beta", "negative_corr",
+    "seasonal_baseline", "baseline_week", "baseline_month",
+    "ret.day", "ret.week", "vol.week", "facts_version",
+]
+# ความยาวสูงสุดของทั้งบทสรุป: ยาวกว่านี้คือเขียนเกินตัวเลขที่มี
+BODY_MAX_CHARS = 5000
 
 # คำที่บอกทิศทางลง ใช้ตรวจว่าประโยคที่เขียนค่าสัมบูรณ์ของตัวเลขติดลบ
 # ได้บอกทิศทางไว้จริง -- ตัวเลขถูกแต่ทิศผิดคือความผิดพลาดที่อันตรายที่สุด
@@ -288,6 +329,16 @@ def gate3_language(response: dict) -> list[Finding]:
             if w in text:
                 out.append(Finding(3, "vague_time", where,
                                    f'ใช้คำว่า "{w}" ต้องระบุวันที่จริงแทน'))
+        for code in RAW_CODES:
+            if code in text:
+                out.append(Finding(3, "raw_code", where,
+                                   f'เขียนรหัสภายใน "{code}" ลงในประโยค '
+                                   "ต้องใช้คำไทยที่คนอ่านเข้าใจ"))
+    body = to_text(response)
+    if len(body) > BODY_MAX_CHARS:
+        out.append(Finding(3, "too_long", "ทั้งบทสรุป",
+                           f"ยาว {len(body):,} ตัวอักษร เกินเพดาน "
+                           f"{BODY_MAX_CHARS:,} ตัวอักษร"))
     return out
 
 
@@ -328,17 +379,103 @@ def gate4_adjectives(response: dict, sel: Selection) -> list[Finding]:
                 out.append(Finding(
                     4, "unbacked_adjective", where,
                     f'ใช้คำว่า "{w}" แต่ไม่ได้อ้าง fact อันดับต้น (rank.*_top.*)'))
+
+        # ขาดลอย: ปลายแถบ แต่เกณฑ์ต่ำกว่า "ผิดปกติ"
+        for w in WIDE_WORDS:
+            if w in text and not any(p >= WIDE_PCTILE or p <= 100 - WIDE_PCTILE
+                                     for p in pctiles):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องมีเปอร์เซ็นไทล์ ≥{WIDE_PCTILE:g} '
+                    f"หรือ ≤{100 - WIDE_PCTILE:g} รองรับ "
+                    f"(ที่อ้างมา: {pctiles or 'ไม่มี'})"))
+
+        # ปริมาณซื้อขาย: ต้องอ้าง vol.week ของกองนั้นและต้องถึงเกณฑ์
+        for w in VOLUME_WORDS:
+            if w not in text:
+                continue
+            zs = [f.value for f in cited
+                  if f.id.startswith("volw.") and f.id.endswith(".z")
+                  and f.value is not None]
+            rv = [f.value for f in cited
+                  if f.id.startswith("volw.") and f.id.endswith(".rvol")
+                  and f.value is not None]
+            if not (any(z >= VOL_Z_MIN for z in zs)
+                    or any(r >= VOL_RVOL_MIN for r in rv)):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องอ้างปริมาณซื้อขายรายสัปดาห์ที่ถึงเกณฑ์ '
+                    f"(z ≥{VOL_Z_MIN:g} หรือ {VOL_RVOL_MIN:g} เท่าของฐาน · "
+                    f"ที่อ้างมา z={zs or 'ไม่มี'} เท่า={rv or 'ไม่มี'})"))
+
+        # ความกว้างของตลาดแย่ลง: ต้องมีทั้งระดับที่ต่ำกว่าครึ่ง และทิศทางที่ลง
+        for w in FRAGILE_WORDS:
+            if w not in text:
+                continue
+            now = next((f.value for f in cited if f.id == "breadth.today.pct"), None)
+            was = next((f.value for f in cited if f.id == "breadth.prior_21d.pct"), None)
+            if now is None or was is None or not (now < BREADTH_WEAK_PCT and now < was):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องอ้างทั้งความกว้างล่าสุดและค่า 21 วันก่อน '
+                    f"และล่าสุดต้องต่ำกว่า {BREADTH_WEAK_PCT:g}% และต่ำกว่าเดิม "
+                    f"(ที่อ้างมา: ล่าสุด={now} เดิม={was})"))
+
+        # สวนทาง: ต้องมีตัวเลขสองตัวที่เครื่องหมายต่างกันจริง
+        for w in DIVERGE_WORDS:
+            if w not in text:
+                continue
+            vals = [f.value for f in cited
+                    if f.value is not None and f.unit in ("pct", "pct_points")]
+            if not (any(v > 0 for v in vals) and any(v < 0 for v in vals)):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องอ้างตัวเลขสองตัวที่ทิศทางต่างกัน '
+                    f"(ที่อ้างมา: {vals or 'ไม่มี'})"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Gate 5 -- a seasonal number without its baseline is not information
+# ---------------------------------------------------------------------------
+
+# "สัปดาห์ที่ 46 ปิดบวก 60% ของปีที่ผ่านมา" อ่านเหมือนบอกอะไร แต่ถ้าทุกสัปดาห์
+# ปิดบวก 58.9% ประโยคนั้นแปลว่า "ปกติ" ไม่ใช่ "น่าสนใจ" · เกณฑ์นี้บังคับให้
+# ตัวเลขฤดูกาลเดินมาคู่กับฐานเทียบของงวดเดียวกันเสมอ ไม่ใช่เรื่องสไตล์การเขียน
+SEASONAL_PERIOD = {"week_current": "week", "week_next": "week",
+                   "month_current": "month", "month_next": "month"}
+
+
+def gate5_seasonal(response: dict, sel: Selection) -> list[Finding]:
+    out: list[Finding] = []
+    for where, sentence in _sentences(response):
+        ids = [str(f) for f in (sentence.get("facts") or [])]
+        want = set()
+        for fid in ids:
+            parts = fid.split(".")
+            if len(parts) >= 2 and parts[0] == "seasonal":
+                period = SEASONAL_PERIOD.get(parts[1])
+                if period:
+                    want.add(period)
+        for period in sorted(want):
+            prefix = f"seasonal_baseline.{period}."
+            if not any(fid.startswith(prefix) for fid in ids):
+                out.append(Finding(
+                    5, "seasonal_no_baseline", where,
+                    f"อ้างสถิติฤดูกาลราย{'สัปดาห์' if period == 'week' else 'เดือน'} "
+                    f"แต่ไม่ได้อ้างค่าปกติ ({prefix}*) มาเทียบในประโยคเดียวกัน"))
     return out
 
 
 # ---------------------------------------------------------------------------
 
 def validate(response: dict, sel: Selection) -> list[Finding]:
-    """Gates 1-4 over a model response. Empty list means publishable."""
+    """Gates 1-5 over a model response. Empty list means publishable."""
     return (gate1_numbers(response, sel)
             + gate2_tickers(response, sel)
             + gate3_language(response)
-            + gate4_adjectives(response, sel))
+            + gate4_adjectives(response, sel)
+            + gate5_seasonal(response, sel))
 
 
 def to_text(response: dict) -> str:

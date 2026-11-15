@@ -127,7 +127,17 @@ jobs:
       # A held brief exits 0 on purpose: the gates refusing to publish is the
       # system working, and Telegram carries the reason. Only a real failure
       # turns this step red, so red keeps meaning "something needs fixing".
-      - name: Daily brief
+      #
+      # รอบ B2a (15 พ.ย. 2026): --weekly-only · บทสรุปเป็นรายสัปดาห์แล้ว แต่
+      # ขั้นตอนนี้ยังรันทุกวันโดยตั้งใจ และให้สคริปต์เป็นคนตัดสินว่าถึงรอบ
+      # เขียนหรือยัง จากข้อมูลสองข้อ: วันนี้เป็นเสาร์-อาทิตย์ (UTC) และวัน
+      # ข้อมูลล่าสุดอยู่ในสัปดาห์ ISO เดียวกับวันนี้
+      #
+      # ทำไมไม่ตั้ง cron เป็นเช้าเสาร์ให้ตรงไปตรงมา: เพราะเวลาที่ตั้งไม่ใช่
+      # เวลาที่งานรัน · 14 พ.ย. 2026 ตั้งไว้ 04:00 UTC เริ่มจริง 11:11 UTC
+      # ช้า 7 ชม. 11 นาที งานที่ตั้งเช้าเสาร์จึงอาจรันก่อนข้อมูลวันศุกร์มาถึง
+      # การรันทุกวันแล้วให้ข้อมูลเป็นคนบอกว่าพร้อม ไม่ต้องพึ่งความแม่นของคิว
+      - name: Weekly brief
         timeout-minutes: 30
         if: success()
         env:
@@ -139,4 +149,4 @@ jobs:
           GEMINI_THINKING_LEVEL: ${{ secrets.GEMINI_THINKING_LEVEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scripts/brief.py
+        run: python scripts/brief.py --weekly-only
