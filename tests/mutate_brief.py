@@ -21,7 +21,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SUITE = "tests/test_brief.py"
+# ทั้งโฟลเดอร์ ไม่ใช่แค่ test_brief.py: รอบ B2a เพิ่มกติกาที่อยู่ในไฟล์
+# workflow ด้วย (--weekly-only) และ mutation ของมันต้องถูกจับได้เหมือนกัน
+SUITE = "tests"
 
 # (id, file, what breaks, old, new, why it matters)
 MUTATIONS = [
@@ -49,7 +51,7 @@ MUTATIONS = [
      "9.9% would be accepted as 9.57% -- wrong numbers, quietly published"),
 
     ("M6", "scripts/brief_facts.py", "a timeframe nobody agreed to",
-     "RET_LOOKBACKS = [1, 21]", "RET_LOOKBACKS = [1, 5, 21]",
+     "RET_LOOKBACKS = [5, 21]", "RET_LOOKBACKS = [1, 5, 21]",
      "an unused number in the prompt is a number the model may decide to mention"),
 
     ("M7", "scripts/brief_gates.py", "gate 0 stops checking the date",
@@ -60,9 +62,9 @@ MUTATIONS = [
      '"ควรซื้อ", "ควรขาย"', '"ควรขาย"',
      "the brief would be allowed to tell people what to buy"),
 
-    ("M9", "scripts/brief_facts.py", "the unused groups sent anyway",
-     'REQUIRED_GROUPS = ["ret.day", "beta", "rank", "pair", "breadth", "events"]',
-     'REQUIRED_GROUPS = ["ret.day", "beta", "rank", "pair", "breadth"]',
+    ("M9", "scripts/brief_facts.py", "a required group dropped from the list",
+     'REQUIRED_GROUPS_V1 = ["ret.day", "beta", "rank", "pair", "breadth", "events"]',
+     'REQUIRED_GROUPS_V1 = ["ret.day", "beta", "rank", "pair", "breadth"]',
      "gate 0 would let a sheet with no event calendar through"),
 
     ("M10", "scripts/brief_gates.py", "a time word dropped from the list",
@@ -70,7 +72,7 @@ MUTATIONS = [
      "the brief could say \"today\" to someone reading it two days later"),
 
     ("M11", "scripts/brief_prompt.py", "prompt edited without a version bump",
-     "คุณเขียนสรุปภาวะตลาด ETF ประจำวัน",
+     "คุณเขียนสรุปภาวะตลาด ETF รายสัปดาห์",
      "คุณเขียนสรุปภาวะตลาด ETF รายวัน",
      "two briefs would claim the same prompt_version with different rules behind them"),
 
@@ -148,6 +150,104 @@ MUTATIONS = [
      "        if any(a <= m.start() < b for a, b in rank_spans):",
      "        if rank_spans:",
      "one 'อันดับ' in a sentence would let every other number through unchecked"),
+
+    # ------------------------------------------------- รอบ B2a (15 พ.ย. 2026)
+
+    ("M29", "scripts/brief_facts.py", "a weekly timeframe nobody agreed to",
+     "RETW_LOOKBACKS = [1, 4]", "RETW_LOOKBACKS = [1, 4, 13]",
+     "13 สัปดาห์อยู่ในแผ่นแต่ไม่ได้ตกลงกันว่าจะให้โมเดลพูดถึง"),
+
+    ("M30", "scripts/brief_gates.py", "gate 5 stops asking for a baseline",
+     "            if not any(fid.startswith(prefix) for fid in ids):",
+     "            if False and not any(fid.startswith(prefix) for fid in ids):",
+     '"สัปดาห์ที่ 46 ชนะ 60%" would be published with nothing to compare it to'),
+
+    ("M31", "scripts/brief_gates.py", "a monthly claim accepts a weekly baseline",
+     '"month_current": "month", "month_next": "month"}',
+     '"month_current": "week", "month_next": "week"}',
+     "the baseline of every week would be offered as the baseline of a month"),
+
+    ("M32", "scripts/brief_gates.py", "validate drops gate 5",
+     "            + gate4_adjectives(response, sel)\n            + gate5_seasonal(response, sel))",
+     "            + gate4_adjectives(response, sel))",
+     "gate 5 would exist, be tested, and never run on a real brief"),
+
+    ("M33", "scripts/brief_gates.py", '"ขาดลอย" threshold loosened',
+     "WIDE_PCTILE = 90.0", "WIDE_PCTILE = 50.0",
+     "a median spread would be described as running away from the field"),
+
+    ("M34", "scripts/brief_gates.py", "volume threshold loosened",
+     "VOL_Z_MIN = 1.0", "VOL_Z_MIN = -10.0",
+     "an ordinary week's volume would license the word the 14 พ.ย. draft got wrong"),
+
+    ("M35", "scripts/brief_gates.py", "fragile check loses the direction half",
+     "if now is None or was is None or not (now < BREADTH_WEAK_PCT and now < was):",
+     "if now is None or was is None or not (now < BREADTH_WEAK_PCT):",
+     "a market getting broader could still be called weakening"),
+
+    ("M36", "scripts/brief_gates.py", '"สวนทาง" accepts two numbers that agree',
+     "if not (any(v > 0 for v in vals) and any(v < 0 for v in vals)):",
+     "if not vals:",
+     "two instruments both rising would be described as moving apart"),
+
+    ("M37", "scripts/brief_gates.py", "internal codes allowed in the prose again",
+     "        for code in RAW_CODES:\n            if code in text:",
+     "        for code in RAW_CODES:\n            if False and code in text:",
+     'the 11 พ.ย. sentence "อันดับ 1 ของ all_top" would reach a reader again'),
+
+    ("M38", "scripts/brief_gates.py", "a code dropped from the forbidden list",
+     '    "all_top", "all_bottom", "thematic_top", "thematic_bottom", "us_sector",',
+     '    "all_bottom", "thematic_top", "thematic_bottom", "us_sector",',
+     "the one code that actually leaked would be the one not checked"),
+
+    ("M39", "scripts/brief_gates.py", "the length cap stops being enforced",
+     "    if len(body) > BODY_MAX_CHARS:",
+     "    if False and len(body) > BODY_MAX_CHARS:",
+     "a brief could run to any length and no one would notice until it was sent"),
+
+    ("M40", "scripts/brief_prompt.py", "a proportion printed as a change",
+     'return f"{value:.2f}%"', 'return f"{value:+.2f}%"',
+     '"+46.24%" tells the model breadth rose 46 points when it is a level'),
+
+    ("M41", "scripts/brief.py", "the weekly brief fires any day of the week",
+     "    if now_utc.weekday() not in (5, 6):",
+     "    if False and now_utc.weekday() not in (5, 6):",
+     "a weekly brief would go out mid-week with half a week of data"),
+
+    ("M42", "scripts/brief.py", "the weekly brief ignores whether the data arrived",
+     "    if week_td != week_now:",
+     "    if False and week_td != week_now:",
+     "last week's numbers would be published as this week's summary"),
+
+    ("M43", "scripts/brief.py", "every refusal treated as by design",
+     'BY_DESIGN_PREFIXES = ("ข้อมูลไม่ครบ", "ยังไม่ถึงเวลา")',
+     'BY_DESIGN_PREFIXES = ("",)',
+     "a database that stopped working would report a green job every morning"),
+
+    ("M44", "scripts/brief_facts.py", "version awareness collapsed",
+     '    return REQUIRED_GROUPS_V2 if version >= "v2" else REQUIRED_GROUPS_V1',
+     "    return REQUIRED_GROUPS_V1",
+     "a v2 sheet missing its weekly groups would pass gate 0"),
+
+    ("M45", "scripts/brief_facts.py", "weekly volume offered for everyone",
+     '    for pair in (rank.get("all_top") or [])[:5]:',
+     "    for pair in [[t, 0] for t in volw]:",
+     "every instrument's volume in the prompt is one more number to misuse"),
+
+    ("M46", "scripts/brief_facts.py", "the asset class list read from the constant",
+     '    ranked = (groups.get("rank", {}) or {}).get("asset_class_ranked")',
+     "    ranked = None",
+     "the page and the brief would drift apart again, silently"),
+
+    ("M47", ".github/workflows/daily-fetch.yml", "the weekly condition removed",
+     "run: python scripts/brief.py --weekly-only",
+     "run: python scripts/brief.py",
+     "the weekly brief would be written again every single day"),
+
+    ("M48", ".github/workflows/daily-fetch.yml", "a second schedule sneaks in",
+     '    - cron: "0 4 * * *"',
+     '    - cron: "0 4 * * *"\n    - cron: "0 6 * * 6"',
+     "two schedules means two runs a day on Saturday, and one of them too early"),
 ]
 
 
@@ -166,6 +266,9 @@ def main() -> int:
     try:
         for d in ("scripts", "tests"):
             shutil.copytree(ROOT / d, tmp / d)
+        # ไฟล์ workflow ถูกล็อกด้วย tests/test_workflows.py จึงต้องมาอยู่ใน
+        # สำเนาด้วย ไม่งั้น mutation ของมันจะรายงานว่า BROKEN
+        shutil.copytree(ROOT / ".github", tmp / ".github")
 
         if run_suite(tmp) != 0:
             print("baseline FAILS before any mutation -- fix the suite first")

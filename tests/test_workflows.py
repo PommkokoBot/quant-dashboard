@@ -79,7 +79,7 @@ def test_fact_sheet_is_built_after_every_source_it_reads(text):
 
 def test_brief_runs_after_the_sheet_it_summarises(text):
     names = step_names(text)
-    assert names.index("Build fact sheets") < names.index("Daily brief")
+    assert names.index("Build fact sheets") < names.index("Weekly brief")
 
 
 # --------------------------------------------------------------------------
@@ -91,11 +91,30 @@ def test_the_build_step_is_not_marked_continue_on_error(text):
     """A refused sheet already exits 0 inside the script. If the step were
     also continue-on-error, a genuine database failure would go unnoticed
     too -- and that is the one case here that should turn the job red."""
-    block = text[text.index("- name: Build fact sheets"):text.index("- name: Daily brief")]
+    block = text[text.index("- name: Build fact sheets"):text.index("- name: Weekly brief")]
     assert "continue-on-error" not in block
 
 
 def test_the_build_step_gets_the_service_role_key(text):
-    block = text[text.index("- name: Build fact sheets"):text.index("- name: Daily brief")]
+    block = text[text.index("- name: Build fact sheets"):text.index("- name: Weekly brief")]
     assert "SUPABASE_SERVICE_ROLE_KEY" in block
     assert "SUPABASE_URL" in block
+
+
+def test_the_brief_step_judges_the_week_from_the_data(text):
+    """--weekly-only ต้องอยู่ ไม่ใช่ย้ายไปตั้ง cron เช้าเสาร์
+
+    คิวของ GitHub หน่วงจริง 7 ชม. 11 นาที เมื่อ 14 พ.ย. 2026 · งานที่ตั้ง
+    เช้าเสาร์จึงอาจรันก่อนข้อมูลวันศุกร์มาถึง การตัดสินจากข้อมูลคือสิ่งที่
+    ทำให้ไม่ต้องเดาเวลาของคิวเลย
+    """
+    block = text[text.index("- name: Weekly brief"):]
+    assert "scripts/brief.py --weekly-only" in block
+    # และยังต้องรันทุกวันตามตารางเดียวของไฟล์นี้ ไม่มี cron ที่สองแอบเข้ามา
+    assert len(schedules(text)) == 1
+
+
+def test_the_brief_step_still_runs_after_the_sheet_in_the_same_job(text):
+    names = step_names(text)
+    assert names.index("Build fact sheets") < names.index("Weekly brief")
+    assert "scripts/brief.py" in text

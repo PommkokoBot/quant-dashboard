@@ -11,32 +11,40 @@ Nothing here talks to anything: a Selection goes in, two strings come out.
 from __future__ import annotations
 
 from brief_facts import Selection
-from brief_gates import (EXTREME_PCTILE, EXTREME_WORDS, FORBIDDEN_TH,
-                         LEADER_WORDS, SUPERLATIVE_PCTILE, SUPERLATIVE_WORDS,
-                         VAGUE_TIME_TH)
+from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
+                         EXTREME_PCTILE, EXTREME_WORDS, FORBIDDEN_TH,
+                         FRAGILE_WORDS, LEADER_WORDS, SUPERLATIVE_PCTILE,
+                         SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
+                         VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 # Changing the rules below changes what the model writes, so two briefs must
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "d38c14c60bcd"
+PROMPT_FINGERPRINT = "8ceadab1c110"
 
-# The five sections, in order, with what each one is for. Written as part of
-# the request rather than the system rules because this is the part most likely
-# to change while the rules stay put.
+# The sections, in order, with what each one is for. Written as part of the
+# request rather than the system rules because this is the part most likely to
+# change while the rules stay put. รอบ B2a เปลี่ยนหัวข้อ 1 จากรายวันเป็น
+# รายสัปดาห์ และเพิ่มหัวข้อฤดูกาลเป็นหัวข้อที่ 6
 SECTIONS = [
     ("ภาพรวม",
-     "การเคลื่อนไหวของวันและแนวโน้ม 21 วันของ asset class หลักและ broad market"),
+     "ผลตอบแทน 1 สัปดาห์และ 21 วันของ asset class หลักและ broad market "
+     "อะไรนำอะไรตามในสัปดาห์ที่ผ่านมา"),
     ("กลุ่มตามพฤติกรรม",
      "กลุ่ม Low Beta / Market Beta / High Beta / สวนทางตลาด กลุ่มไหนนำกลุ่มไหนตาม"),
     ("เด่นและแย่",
-     "กองที่ผลตอบแทน 21 วันสูงสุดและต่ำสุด และ US sector ที่หัวแถวกับท้ายแถว"),
+     "กองที่ผลตอบแทน 21 วันสูงสุดและต่ำสุด US sector ที่หัวแถวกับท้ายแถว "
+     "และปริมาณซื้อขายรายสัปดาห์ของกองหัวแถวถ้ามีตัวเลขรองรับ"),
     ("คู่เทียบ",
      "ส่วนต่างสามคู่พร้อมเปอร์เซ็นไทล์ ชี้ว่าคู่ไหนอยู่ในระดับที่ไม่ปกติ"),
     ("ความกว้างของตลาดและปฏิทิน",
      "สัดส่วนที่อยู่เหนือ SMA200 พร้อมตัวหารเสมอ และเหตุการณ์ที่กำหนดไว้ข้างหน้า"),
+    ("สถิติฤดูกาล",
+     "สถิติย้อนหลังของสัปดาห์ปัจจุบันและสัปดาห์ถัดไป เทียบกับค่าปกติของทุกสัปดาห์ "
+     "ถ้ามีสถิติรายเดือนมาด้วยให้พูดถึงด้วย"),
 ]
 
 def _words(items) -> str:
@@ -47,7 +55,7 @@ def _words(items) -> str:
 # them out here by hand would mean the model is told one set of rules and
 # judged by another, and the brief would be held every day over a wording
 # nobody ever passed on to it.
-SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ประจำวันจากตัวเลขที่ได้รับเท่านั้น
+SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF รายสัปดาห์จากตัวเลขที่ได้รับเท่านั้น
 
 กติกาที่ห้ามฝ่าฝืน
 
@@ -64,19 +72,36 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ป
    overweight underweight recommend target price
 5. ห้ามใช้คำว่า {vague}
    เพราะผู้อ่านอ่านคนละวันกับวันของข้อมูล ให้ระบุวันที่จริงแทน
-6. คำประเมินต่อไปนี้ใช้ได้ต่อเมื่อประโยคนั้นอ้างเปอร์เซ็นไทล์ที่ถึงเกณฑ์
+6. คำประเมินต่อไปนี้ใช้ได้ต่อเมื่อประโยคเดียวกันอ้าง fact ที่ถึงเกณฑ์
    - {extreme}: ต้องมีเปอร์เซ็นไทล์ {ex_hi:g} ขึ้นไป หรือ {ex_lo:g} ลงมา
    - {superlative}: ต้อง {sup_hi:g} ขึ้นไป หรือ {sup_lo:g} ลงมา
+   - {wide}: ต้องมีเปอร์เซ็นไทล์ {wide_hi:g} ขึ้นไป หรือ {wide_lo:g} ลงมา
    - {leader}: ต้องอ้าง fact ที่เป็นอันดับต้น (rank.*_top.*)
+   - {volume}: ต้องอ้างปริมาณซื้อขายรายสัปดาห์ของกองนั้น และต้องถึง
+     z {vol_z:g} ขึ้นไป หรือ {vol_r:g} เท่าของฐานขึ้นไป
+   - {fragile}: ต้องอ้างความกว้างของตลาดทั้งค่าล่าสุดและค่า 21 วันก่อน
+     และค่าล่าสุดต้องต่ำกว่า {weak:g}% และต่ำกว่าค่าเดิม
+   - {diverge}: ต้องอ้างตัวเลขสองตัวที่ทิศทางต่างกันจริงในประโยคเดียวกัน
    ถ้าไม่ถึงเกณฑ์ ให้พูดเป็นตัวเลขเปล่า ๆ ไม่ต้องใส่คำประเมิน
 7. ห้ามอธิบายสาเหตุ ห้ามคาดการณ์ ห้ามบอกว่าจะเกิดอะไรต่อ
 8. ห้ามให้คะแนนความมั่นใจของตัวเอง
+9. ห้ามเขียนรหัสภายในของข้อมูลลงในประโยค เช่น all_top us_sector week_next
+   ให้บรรยายเป็นคำไทยที่คนอ่านเข้าใจ เช่น "สูงสุดของทั้งลิสต์"
+   รหัสเหล่านั้นใส่ได้เฉพาะในช่อง facts
+10. ตัวเลขสถิติฤดูกาล (seasonal.*) ใช้ได้ต่อเมื่อประโยคเดียวกันอ้างค่าปกติ
+    ของงวดเดียวกันมาเทียบด้วย (seasonal_baseline.week.* หรือ
+    seasonal_baseline.month.*) เพราะ "ชนะ 60%" ไม่มีความหมายจนกว่าจะรู้ว่า
+    ค่าปกติคือเท่าไร
+11. สถิติฤดูกาลคือสิ่งที่เคยเกิดในอดีต ไม่ใช่สิ่งที่จะเกิด
+    ให้เขียนในรูป "ในอดีต ... เคย ..." ห้ามเขียนว่าสัปดาห์หน้าจะเป็นอย่างไร
 
 ภาษา เขียนภาษาไทย แต่คง ticker และศัพท์เทคนิคไว้เป็นภาษาอังกฤษ
 เช่น SPY, Breadth, Momentum, Low Beta, SMA200, drawdown
 คนอ่านอยู่ในวงการ ไม่ต้องแปลศัพท์พวกนี้
 
-ความยาว รวมทุกหัวข้อประมาณ 180 ถึง 250 คำ แต่ละหัวข้อ 1 ถึง 3 ประโยค
+ความยาว รวมทุกหัวข้อไม่เกิน {maxchars:,} ตัวอักษร แต่ละหัวข้อ 2 ถึง 5 ประโยค
+เขียนให้อ่านรู้เรื่องเป็นย่อหน้า ไม่ใช่ลำดับตัวเลขเรียงกัน แต่ทุกคำขยาย
+ต้องมีตัวเลขในประโยคเดียวกันรองรับตามกติกาข้อ 6
 
 รูปแบบคำตอบ ตอบเป็น JSON อย่างเดียว ห้ามมีข้อความอื่นนอก JSON
 {{"sections":[{{"heading":"ชื่อหัวข้อ","sentences":[{{"text":"ประโยค","facts":["fact id"]}}]}}]}}""".format(
@@ -87,6 +112,12 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ป
     leader=_words(LEADER_WORDS),
     ex_hi=EXTREME_PCTILE, ex_lo=100 - EXTREME_PCTILE,
     sup_hi=SUPERLATIVE_PCTILE, sup_lo=100 - SUPERLATIVE_PCTILE,
+    wide=_words(WIDE_WORDS),
+    wide_hi=WIDE_PCTILE, wide_lo=100 - WIDE_PCTILE,
+    volume=_words(VOLUME_WORDS), vol_z=VOL_Z_MIN, vol_r=VOL_RVOL_MIN,
+    fragile=_words(FRAGILE_WORDS), weak=BREADTH_WEAK_PCT,
+    diverge=_words(DIVERGE_WORDS),
+    maxchars=BODY_MAX_CHARS,
 )
 
 
@@ -97,8 +128,16 @@ def _fmt(value: float, unit: str) -> str:
         return f"{value:.2f} (เปอร์เซ็นไทล์)"
     if unit == "pct":
         return f"{value:+.2f}%"
+    if unit == "pct_level":
+        # สัดส่วน ไม่ใช่การเปลี่ยนแปลง · เครื่องหมาย + หน้าค่าแบบนี้
+        # ("+46.24%") ชวนให้อ่านว่าเพิ่มขึ้น 46% ซึ่งไม่ใช่สิ่งที่ค่านี้บอก
+        return f"{value:.2f}%"
     if unit == "pct_points":
         return f"{value:+.2f} จุด"
+    if unit == "sigma":
+        return f"{value:+.2f} ส่วนเบี่ยงเบน"
+    if unit == "times":
+        return f"{value:.2f} เท่า"
     return f"{value:g}"
 
 
@@ -114,7 +153,7 @@ def build_user(sel: Selection) -> str:
         value = f.text if f.value is None else _fmt(f.value, f.unit)
         lines.append(f"{f.id} | {f.label} | {value}")
 
-    lines += ["", "เขียน 5 หัวข้อตามลำดับนี้"]
+    lines += ["", f"เขียน {len(SECTIONS)} หัวข้อตามลำดับนี้"]
     for i, (heading, what) in enumerate(SECTIONS, start=1):
         lines.append(f"{i}. {heading} — {what}")
 

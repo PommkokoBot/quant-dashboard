@@ -27,6 +27,8 @@ Usage:
   python scripts/brief.py --no-write    call the model and the gates, print, stop
   python scripts/brief.py               the whole thing
   python scripts/brief.py --force       rebuild even if the day already has one
+  python scripts/brief.py --weekly-only  write only when the week is over and
+                                         the week's own data is on the sheet
 """
 from __future__ import annotations
 
@@ -350,17 +352,66 @@ def latest_trade_date(sb) -> str:
     return str((sb.rpc("data_as_of", {}).execute().data or {}).get("as_of"))
 
 
-def ensure_sheet(sb, trade_date: str) -> dict | None:
+# ด่านเวลาของบทสรุปรายสัปดาห์ (มติ ข้อ 11 ฉบับแก้ 15 พ.ย. 2026)
+#
+# ครั้งแรกที่ออกแบบเรื่องนี้ ผมเสนอให้ตั้ง cron เป็นเช้าวันเสาร์ ซึ่งผิด:
+# คิวของ GitHub Actions หน่วงจริงวัดได้ 7 ชม. 11 นาที เมื่อ 14 พ.ย. 2026
+# (ตั้งไว้ 04:00 UTC เริ่มจริง 11:11 UTC) ดังนั้นเวลาที่ตั้งไว้ไม่ใช่เวลาที่
+# งานรัน และงานที่ตั้งเช้าเสาร์อาจรันก่อนที่ข้อมูลวันศุกร์จะมาถึงก็ได้
+#
+# ทางที่เหลือคือเลิกถามปฏิทินของ runner ว่า "ถึงเวลาหรือยัง" แล้วถามข้อมูล
+# แทนว่า "สัปดาห์นี้จบและข้อมูลของสัปดาห์นี้มาครบหรือยัง" งานจึงรันทุกวัน
+# แล้วเขียนเฉพาะวันที่เงื่อนไขครบ ไม่ต้องพึ่งความแม่นของคิวเลย
+def should_write_weekly(trade_date: str, now_utc: datetime) -> tuple[bool, str]:
+    """เงื่อนไขสองข้อที่ต้องจริงพร้อมกัน ไม่มีการอ่านฐานข้อมูลหรือนาฬิกาในนี้
+
+    1. วันนี้เป็นเสาร์หรืออาทิตย์ — สัปดาห์ของตลาดจบแล้ว
+    2. วันข้อมูลล่าสุดอยู่ในสัปดาห์ ISO เดียวกับวันนี้ — ข้อมูลของสัปดาห์
+       ที่กำลังจะสรุปมาถึงแล้วจริง
+
+    ข้อ 1 อย่างเดียวไม่พอ: เสาร์ที่ข้อมูลวันศุกร์ยังไม่มา จะได้บทสรุปของ
+    สัปดาห์ก่อนซ้ำอีกรอบ · ข้อ 2 อย่างเดียวไม่พอ: วันพุธก็อยู่ในสัปดาห์
+    เดียวกับข้อมูลวันอังคาร
+    """
+    if now_utc.weekday() not in (5, 6):
+        return False, "ยังไม่ถึงเสาร์-อาทิตย์ (UTC) — บทสรุปเป็นรายสัปดาห์"
+    td = date.fromisoformat(trade_date)
+    week_td = td.isocalendar()[:2]
+    week_now = now_utc.date().isocalendar()[:2]
+    if week_td != week_now:
+        return False, (f"ข้อมูลล่าสุด {trade_date} อยู่สัปดาห์ที่ {week_td[1]}/"
+                       f"{week_td[0]} แต่วันนี้สัปดาห์ที่ {week_now[1]}/{week_now[0]}"
+                       " — ข้อมูลของสัปดาห์นี้ยังไม่มา")
+    return True, ""
+
+
+# เหตุผลที่ build_daily_facts ปฏิเสธ "ตามการออกแบบ" ไม่ใช่เพราะพัง
+# ด่านความครบของรอบ B1 ทำงานถูกต้องเมื่อมันปฏิเสธ งานจึงต้องไม่แดง
+# มิฉะนั้นไฟแดงที่ถูกต้องกับไฟแดงที่เป็นบั๊กจะหน้าตาเหมือนกันทุกวัน
+# (scripts/build_facts.py ถือกติกาเดียวกันนี้ตั้งแต่รอบ B1)
+BY_DESIGN_PREFIXES = ("ข้อมูลไม่ครบ", "ยังไม่ถึงเวลา")
+
+
+def ensure_sheet(sb, trade_date: str) -> tuple[dict | None, str]:
     """Build the sheet if pg_cron has not got to it yet, then read it back.
 
     Calling the same function pg_cron calls -- not a second implementation of
     it -- is what keeps this safe to run at any hour (rule 7.2).
+
+    คืนทั้งแผ่นและเหตุผลที่ฐานข้อมูลให้มา เพราะผู้เรียกต้องแยกให้ออกว่า
+    "ไม่มีแผ่นเพราะด่านปฏิเสธ" (ปกติ) กับ "ไม่มีแผ่นเพราะพัง" (ต้องแดง)
     """
-    sb.rpc("build_daily_facts",
-           {"p_trade_date": trade_date, "p_force": False}).execute()
+    res = sb.rpc("build_daily_facts",
+                 {"p_trade_date": trade_date, "p_force": False}).execute()
+    rows_rpc = res.data if isinstance(res.data, list) else []
+    reason = str((rows_rpc[0] or {}).get("reason") or "") if rows_rpc else ""
     rows = (sb.table("daily_facts").select("facts")
             .eq("trade_date", trade_date).limit(1).execute().data)
-    return rows[0]["facts"] if rows else None
+    return (rows[0]["facts"] if rows else None), reason
+
+
+def refusal_is_by_design(reason: str) -> bool:
+    return any(reason.startswith(p) for p in BY_DESIGN_PREFIXES)
 
 
 def existing_brief(sb, trade_date: str) -> dict | None:
@@ -400,6 +451,7 @@ def main() -> int:
     dry_run = "--dry-run" in args
     no_write = "--no-write" in args
     force = "--force" in args
+    weekly_only = "--weekly-only" in args
 
     # Needs neither the database nor a fact sheet: it answers "can this runner
     # talk to Gemini at all, and under what model name".
@@ -417,6 +469,12 @@ def main() -> int:
         return 1
     print(f"วันที่ของข้อมูล: {trade_date}")
 
+    if weekly_only and not force:
+        ok, why = should_write_weekly(trade_date, datetime.now(timezone.utc))
+        if not ok:
+            print(f"ยังไม่ถึงรอบเขียน: {why}")
+            return 0
+
     prior = existing_brief(sb, trade_date)
     if prior and prior["status"] == "published" and not force:
         # Weekends and holidays land here: data_as_of() still points at the
@@ -424,9 +482,14 @@ def main() -> int:
         print(f"มีบทสรุปที่เผยแพร่แล้วของวันที่ {trade_date} — ไม่ทำซ้ำ")
         return 0
 
-    sheet = ensure_sheet(sb, trade_date)
+    sheet, reason = ensure_sheet(sb, trade_date)
     if sheet is None:
-        print(f"ไม่มีแผ่น fact ของวันที่ {trade_date} และสร้างไม่สำเร็จ")
+        if refusal_is_by_design(reason):
+            # ด่านของฐานข้อมูลปฏิเสธอย่างถูกต้อง ไม่ใช่ความผิดพลาด
+            print(f"ยังไม่มีแผ่น fact ของวันที่ {trade_date} · {reason}")
+            return 0
+        print(f"ไม่มีแผ่น fact ของวันที่ {trade_date} และสร้างไม่สำเร็จ"
+              + (f" · {reason}" if reason else ""))
         return 1
 
     g0 = bg.gate0_sheet(sheet, trade_date, bf.missing_groups(sheet))
@@ -435,7 +498,9 @@ def main() -> int:
             print(f.line())
         if not (dry_run or no_write):
             notify.send(held_message(trade_date, g0))
-        return 1
+        # แผ่นไม่พร้อมคือเหตุผลที่จะ "ไม่เขียน" ไม่ใช่เหตุผลที่จะให้งานแดง
+        # แจ้งทาง Telegram แล้ว คนเห็นแน่นอนกว่าไอคอนแดงใน Actions
+        return 0
 
     sel = bf.select_facts(sheet)
     user = bp.build_user(sel)

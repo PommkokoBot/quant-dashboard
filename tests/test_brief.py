@@ -29,9 +29,15 @@ MARKET_BETA = ["ACWI", "CIBR", "CRBN", "DIA", "EEM", "EFA", "ESPO", "EWJ", "EWT"
 NEG_CORR = ["BNO", "DBC", "GLD", "GSG", "USO", "XLE"]
 
 
-def sheet(trade_date: str = "2026-11-09") -> dict:
-    return {
-        "meta": {"trade_date": trade_date, "universe_n": 93, "facts_version": "v1",
+def sheet(trade_date: str = "2026-11-09", version: str = "v2") -> dict:
+    """แผ่น v2 · ส่ง version="v1" เพื่อทดสอบแผ่นเก่าที่ถูกแช่แข็งไว้แล้ว
+
+    กลุ่มรายสัปดาห์กับฤดูกาลเพิ่มเข้ามาในรอบ B2a แผ่นที่สร้างก่อนหน้านั้น
+    ไม่มีและจะไม่มีวันมี เพราะ daily_facts แช่แข็งเมื่อสร้างแล้ว
+    """
+    s = {
+        "meta": {"trade_date": trade_date, "universe_n": 93,
+                 "facts_version": version,
                  "source": "live", "data_max_date": trade_date},
         "groups": {
             "ret.day": {
@@ -104,6 +110,48 @@ def sheet(trade_date: str = "2026-11-09") -> dict:
             "vol.day": {"keys": ["z", "rvol"], "values": {}},
         },
     }
+    if version == "v1":
+        return s
+
+    # ---- กลุ่มที่เพิ่มในรอบ B2a ------------------------------------------
+    s["groups"]["ret.week"] = {
+        "unit": "pct", "keys": [1, 4, 13],
+        "source": "trailing_returns(active,'week',[1,4,13])",
+        "values": {
+            "SPY": [1.85, -2.10, 3.40], "QQQ": [2.40, -6.80, -1.20],
+            "IWM": [1.10, 0.90, 4.50], "EFA": [0.70, 1.80, 6.20],
+            "EEM": [0.95, 2.40, 8.10], "IEF": [0.05, 0.30, 0.90],
+            "VNQ": [0.45, 1.20, 2.80], "DBC": [-0.80, -2.60, -4.10],
+        },
+    }
+    s["groups"]["vol.week"] = {
+        "keys": ["z", "rvol"], "baseline_weeks": 20,
+        "values": {
+            "PAWZ": [1.42, 1.65], "AGNG": [0.35, 1.08], "FIW": [2.10, 2.43],
+            "PHO": [-0.20, 0.95], "INDA": [0.80, 1.22],
+            # กองที่ไม่ได้อยู่ห้าอันดับแรก ต้องไม่ถูกส่งเข้า prompt
+            "XLK": [3.00, 3.10],
+        },
+    }
+    # ลำดับในนี้ตั้งใจไม่เหมือน ASSET_CLASS_FALLBACK เพื่อพิสูจน์ว่าโค้ด
+    # อ่านรายชื่อจากแผ่นจริง ไม่ได้อ่านจากค่าคงที่ในไฟล์
+    s["groups"]["rank"]["asset_class_ranked"] = [
+        ["EEM", 3.1], ["EFA", 2.0], ["VNQ", 1.7], ["IEF", 0.4],
+        ["DBC", -3.0], ["SPY", -3.32404339229001]]
+    s["groups"]["rank"]["broad_market_ranked"] = [
+        ["EEM", 3.1], ["EFA", 2.0], ["VNQ", 1.7], ["IWM", 1.28], ["IEF", 0.4]]
+    s["groups"]["seasonal"] = {
+        "ticker": "SPY", "min_n": 8,
+        "week_current": {"available": True, "period": "สัปดาห์ที่ 46", "n": 10,
+                         "win_pct": 60.0, "mean_pct": 0.42},
+        "week_next": {"available": True, "period": "สัปดาห์ที่ 47", "n": 10,
+                      "win_pct": 70.0, "mean_pct": 0.85},
+        "month_next": {"available": True, "period": "ธันวาคม", "n": 20,
+                       "win_pct": 65.0, "mean_pct": 1.10},
+        "baseline_week": {"n": 150, "win_pct": 58.9, "mean_pct": 0.21},
+        "baseline_month": {"n": 35, "win_pct": 62.3, "mean_pct": 0.78},
+    }
+    return s
 
 
 def say(text, facts, heading="ภาพรวม"):
@@ -122,9 +170,11 @@ def test_universe_is_the_whole_active_list():
 
 
 def test_only_the_two_agreed_timeframes_are_offered():
+    # รอบ B2a เปลี่ยนจาก 1 วัน เป็น 5 วัน: บทสรุปเป็นรายสัปดาห์ การเคลื่อนไหว
+    # ของวันเดียวคือหนึ่งในห้าของสิ่งที่คนอ่านกำลังถูกเล่าถึง
     ids = {f.id for f in SEL.facts if f.id.startswith("ret.")}
-    assert "ret.SPY.1d" in ids and "ret.SPY.21d" in ids
-    assert not any(i.endswith(".5d") for i in ids), "5 วันไม่อยู่ในรอบแรกโดยตั้งใจ"
+    assert "ret.SPY.5d" in ids and "ret.SPY.21d" in ids
+    assert not any(i.endswith(".1d") for i in ids), "1 วันออกไปแล้วในรอบ B2a"
 
 
 def test_values_carry_through_unrounded():
@@ -157,9 +207,12 @@ def test_gate0_passes_on_a_complete_sheet():
 def test_gate0_catches_any_one_of_the_required_groups_going_missing():
     # The list is pinned by name, not just iterated: a test that loops over
     # REQUIRED_GROUPS cannot notice a group being deleted from REQUIRED_GROUPS.
-    assert sorted(bf.REQUIRED_GROUPS) == sorted(
+    assert sorted(bf.REQUIRED_GROUPS_V1) == sorted(
         ["ret.day", "beta", "rank", "pair", "breadth", "events"])
-    for name in bf.REQUIRED_GROUPS:
+    assert sorted(bf.REQUIRED_GROUPS_V2) == sorted(
+        ["ret.day", "beta", "rank", "pair", "breadth", "events",
+         "ret.week", "vol.week", "seasonal"])
+    for name in bf.REQUIRED_GROUPS_V2:
         s = sheet()
         del s["groups"][name]
         f = bg.gate0_sheet(s, "2026-11-09", bf.missing_groups(s))
@@ -279,7 +332,7 @@ def test_thai_advice_words_fail():
 
 def test_english_advice_words_fail_on_whole_words_only():
     assert [x.code for x in bg.gate3_language(say("a clear buy signal", []))] == ["advice"]
-    assert bg.gate3_language(say("ผู้ซื้อ buyer รายย่อย", [])) == []
+    assert bg.gate3_language(say("ผู้ซื้อ buyer หลายราย", [])) == []
 
 
 def test_words_that_assume_the_reading_day_fail():
@@ -287,8 +340,13 @@ def test_words_that_assume_the_reading_day_fail():
     assert [x.code for x in f] == ["vague_time"]
 
 
-def test_v1_forbids_the_claim_it_cannot_check():
-    assert [x.code for x in bg.gate3_language(say("PAWZ มาเร็ว", []))] == ["advice"]
+def test_volume_words_moved_from_banned_to_conditional_in_b2a():
+    """"มาเร็ว" ถูกห้ามใน v1 เพราะไม่มี fact ใดพิสูจน์ได้ · v2 ส่ง vol.week
+    เข้า prompt แล้ว คำนี้จึงย้ายจาก "ห้าม" มาเป็น "ต้องมีตัวเลขถึงเกณฑ์"
+    """
+    assert bg.gate3_language(say("PAWZ มาเร็ว", [])) == []
+    assert [x.code for x in bg.gate4_adjectives(say("PAWZ มาเร็ว", []), SEL)] \
+        == ["unbacked_adjective"]
 
 
 # ------------------------------------------------------------------- gate 4
@@ -331,8 +389,8 @@ def test_leader_word_needs_a_top_rank_fact():
 def test_validate_runs_every_gate_and_a_clean_brief_passes():
     r = {"sections": [
         {"heading": "ภาพรวม", "sentences": [
-            {"text": "SPY บวก 2.37% ในวันเดียว แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
-             "facts": ["ret.SPY.1d", "ret.SPY.21d"]}]},
+            {"text": "SPY บวก 0.08% ในรอบ 5 วัน แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
+             "facts": ["ret.SPY.5d", "ret.SPY.21d"]}]},
         {"heading": "คู่เทียบ", "sentences": [
             {"text": "QQQ ตามหลัง SPY 6.25 จุด ซึ่งผิดปกติ ที่เปอร์เซ็นไทล์ 0.9 จาก 873 วัน",
              "facts": ["pair.qqq_spy.spread", "pair.qqq_spy.pctile_3y",
@@ -378,14 +436,14 @@ def test_user_prompt_carries_every_fact_and_the_five_headings():
         assert f.id in text, f"{f.id} ไม่ได้ถูกส่งให้โมเดล"
     for heading, _what in bp.SECTIONS:
         assert heading in text
-    assert len(bp.SECTIONS) == 5
+    assert len(bp.SECTIONS) == 6
     assert SEL.trade_date in text
 
 
 def test_user_prompt_shows_signs_so_the_model_cannot_miss_a_fall():
     text = bp.build_user(SEL)
     assert "-9.57%" in text          # ret.QQQ.21d
-    assert "+2.37%" in text          # ret.SPY.1d
+    assert "+0.08%" in text          # ret.SPY.5d
 
 
 def test_prompt_rules_and_gates_agree_on_every_word():
@@ -754,3 +812,280 @@ def test_the_value_next_to_a_rank_is_still_checked():
     s = say("PAWZ เป็นอันดับ 1 ด้วยผลตอบแทน 21 วันที่ 99.99%", ["rank.all_top.1"])
     assert any(f.code == "unbacked_number" for f in bg.gate1_numbers(s, SEL)), \
         "ยกเว้นเฉพาะตัวเลขอันดับ ตัวเลขอื่นในประโยคเดียวกันต้องยังถูกตรวจ"
+
+
+# ===========================================================================
+# รอบ B2a · รายสัปดาห์ ฤดูกาล และกติกาภาษาชุดใหม่
+# ===========================================================================
+
+SEL_V1 = bf.select_facts(sheet(version="v1"))
+
+
+def test_weekly_returns_reach_the_model():
+    ids = {f.id for f in SEL.facts}
+    assert "retw.SPY.1w" in ids and "retw.SPY.4w" in ids
+    assert "retw.SPY.13w" not in ids, "13 สัปดาห์อยู่ในแผ่นแต่ไม่ส่งเข้า prompt"
+    assert SEL.by_id()["retw.QQQ.4w"].value == -6.80
+
+
+def test_weekly_volume_is_offered_only_for_the_top_five():
+    ids = {f.id for f in SEL.facts if f.id.startswith("volw.")}
+    assert "volw.FIW.z" in ids and "volw.FIW.rvol" in ids
+    # XLK มีตัวเลขอยู่ในแผ่น แต่ไม่ได้อยู่ห้าอันดับแรก · ตัวเลขที่ส่งไปแต่
+    # ไม่ได้ใช้ คือตัวเลขที่โมเดลอาจหยิบมาพูด
+    assert not any(i.startswith("volw.XLK") for i in ids)
+
+
+def test_asset_class_list_comes_from_the_sheet_not_the_constant():
+    # แผ่นเรียง EEM มาก่อน SPY ซึ่งต่างจากลำดับในค่าคงที่
+    order = [f.ticker for f in SEL.facts if f.id.endswith(".5d")]
+    assert order[0] == "EEM", order
+    assert bf.ASSET_CLASS_FALLBACK[0] == "SPY"
+    # แผ่น v1 ไม่มีอันดับ asset class จึงต้องตกมาที่ค่าคงที่ได้จริง
+    order_v1 = [f.ticker for f in SEL_V1.facts if f.id.endswith(".1d")] or \
+        [f.ticker for f in SEL_V1.facts if f.id.endswith(".5d")]
+    assert order_v1[0] == "SPY", order_v1
+
+
+def test_seasonal_facts_always_travel_with_their_baseline():
+    ids = {f.id for f in SEL.facts}
+    for key in ("week_current", "week_next", "month_next"):
+        assert f"seasonal.{key}.win_pct" in ids
+        assert f"seasonal.{key}.n" in ids
+    assert "seasonal_baseline.week.win_pct" in ids
+    assert "seasonal_baseline.month.win_pct" in ids
+
+
+def test_seasonal_windows_that_are_not_available_are_not_offered():
+    s = sheet()
+    s["groups"]["seasonal"]["month_next"] = {"available": False, "reason": "ไม่ใช่สัปดาห์สุดท้าย"}
+    ids = {f.id for f in bf.select_facts(s).facts}
+    assert not any(i.startswith("seasonal.month_next") for i in ids)
+    assert "seasonal.week_current.win_pct" in ids
+
+
+def test_required_groups_follow_the_sheets_own_version():
+    # แผ่น v1 ถูกแช่แข็งไว้ก่อนกลุ่มใหม่จะมีอยู่ · ถ้าเรียกร้องกลุ่มใหม่
+    # จากแผ่นเก่า บทสรุปจะถูกกักทุกวันโดยไม่มีวันผ่าน
+    assert bf.missing_groups(sheet(version="v1")) == []
+    assert bf.missing_groups(sheet()) == []
+    s = sheet()
+    del s["groups"]["seasonal"]
+    assert bf.missing_groups(s) == ["seasonal"]
+    s1 = sheet(version="v1")
+    assert "seasonal" not in bf.required_groups(s1)
+
+
+def test_no_fact_label_leaks_an_internal_code():
+    # 11 พ.ย. โมเดลเขียน "อันดับ 1 ของ all_top" ลงในบทสรุป · ต้นตอคือป้ายชื่อ
+    # ที่เราเขียนเอง ไม่ใช่โมเดลดื้อ จึงต้องล็อกที่ป้าย
+    for f in SEL.facts:
+        for code in bg.RAW_CODES:
+            assert code not in f.label, f"{f.id} มีรหัส {code} อยู่ในป้ายชื่อ"
+
+
+def test_universe_ranks_carry_their_position_in_the_id():
+    index = SEL.by_id()
+    assert index["rank.asset_class.1"].ticker == "EEM"
+    assert index["rank.asset_class.6"].ticker == "SPY"
+    assert index["rank.broad_market.4"].ticker == "IWM"
+    # ด่าน 1 ต้องตรวจคำว่า "อันดับ N" จาก id ได้ เหมือน rank.*_top.*
+    assert bg.gate1_numbers(
+        say("EEM อยู่อันดับ 1 ในกลุ่มประเภทสินทรัพย์ ที่บวก 3.10%",
+            ["rank.asset_class.1"]), SEL) == []
+    # อ้างอันดับ 3 แต่ fact ที่อ้างคืออันดับ 1 — ด่าน 1 จับได้จาก id
+    assert [x.code for x in bg.gate1_numbers(
+        say("EEM อยู่อันดับ 3 ในกลุ่มประเภทสินทรัพย์ ที่บวก 3.10%",
+            ["rank.asset_class.1"]), SEL)] == ["unbacked_rank"]
+
+
+def test_proportions_are_not_printed_with_a_plus_sign():
+    # "+46.24%" ชวนให้อ่านว่าเพิ่มขึ้น 46% ซึ่งไม่ใช่สิ่งที่ค่านี้บอก
+    assert bp._fmt(50.5376344086022, "pct_level") == "50.54%"
+    assert bp._fmt(2.36, "pct") == "+2.36%"
+    assert bp._fmt(1.42, "sigma") == "+1.42 ส่วนเบี่ยงเบน"
+    assert bp._fmt(1.65, "times") == "1.65 เท่า"
+    text = bp.build_user(SEL)
+    assert "50.54%" in text and "+50.54%" not in text
+
+
+def test_breadth_label_stops_inviting_a_word_gate3_bans():
+    labels = [f.label for f in SEL.facts if f.id.startswith("breadth.today")]
+    assert labels
+    for lab in labels:
+        for w in bg.VAGUE_TIME_TH:
+            assert w not in lab, f"ป้าย {lab} ชวนให้โมเดลเขียนคำที่ด่าน 3 ห้าม"
+
+
+# ------------------------------------------------------------- ด่าน 3 ชุดใหม่
+
+def test_gate3_refuses_money_flow_language():
+    for w in ("เงินทุนไหลเข้า IEF", "เม็ดเงินย้ายออก", "เข้าหลุมหลบภัย",
+              "เป็นสินทรัพย์ปลอดภัย"):
+        f = bg.gate3_language(say(w, []))
+        # ประโยคหนึ่งอาจชนคำห้ามมากกว่าหนึ่งคำ ("เงินทุนไหล" + "ไหลเข้า")
+        assert f and all(x.code == "advice" for x in f), w
+
+
+def test_gate3_refuses_bucket_labels_we_never_computed():
+    for w in ("กลุ่มตั้งรับนำตลาด", "หุ้นวัฏจักรตามหลัง", "เชิงรุกแพ้เชิงรับ"):
+        assert any(x.code == "advice" for x in bg.gate3_language(say(w, []))), w
+
+
+def test_gate3_refuses_actors_the_sheet_cannot_see():
+    for w in ("นักลงทุนสถาบันขาย", "รายย่อยเข้าซื้อ", "ต่างชาติขายสุทธิ"):
+        assert any(x.code == "advice" for x in bg.gate3_language(say(w, []))), w
+
+
+def test_gate3_refuses_intensifiers_with_no_threshold():
+    for w in ("ลดลงอย่างมีนัยสำคัญ", "สูงขึ้นอย่างมาก", "แนวโน้มชัดเจน"):
+        assert any(x.code == "advice" for x in bg.gate3_language(say(w, []))), w
+
+
+def test_gate3_refuses_raw_fact_codes_in_the_prose():
+    f = bg.gate3_language(say("PAWZ อยู่อันดับ 1 ของ all_top", ["rank.all_top.1"]))
+    assert [x.code for x in f] == ["raw_code"]
+    assert "all_top" in f[0].detail
+    assert bg.gate3_language(
+        say("PAWZ อยู่อันดับ 1 สูงสุดของทั้งลิสต์", ["rank.all_top.1"])) == []
+
+
+def test_gate3_caps_the_length_of_the_whole_brief():
+    long_text = "ก" * (bg.BODY_MAX_CHARS + 1)
+    f = bg.gate3_language(say(long_text, []))
+    assert [x.code for x in f] == ["too_long"]
+    assert bg.gate3_language(say("ก" * 100, [])) == []
+
+
+# ------------------------------------------------------------- ด่าน 4 ชุดใหม่
+
+def test_wide_words_need_a_percentile_but_a_lower_one_than_extreme():
+    ok = say("ส่วนต่าง Low Beta − High Beta ขาดลอยที่เปอร์เซ็นไทล์ 98.74",
+             ["pair.lowbeta_highbeta.pctile_3y"])
+    assert bg.gate4_adjectives(ok, SEL) == []
+    bad = say("QQQ − SPY ทิ้งห่างที่เปอร์เซ็นไทล์ 0.92 จุด",
+              ["pair.iwm_spy.spread"])
+    assert [x.code for x in bg.gate4_adjectives(bad, SEL)] == ["unbacked_adjective"]
+
+
+def test_volume_words_need_a_weekly_volume_fact_that_reaches_the_bar():
+    assert bg.gate4_adjectives(
+        say("FIW ปริมาณซื้อขายเร่งขึ้น 2.43 เท่าของฐาน", ["volw.FIW.rvol"]), SEL) == []
+    assert bg.gate4_adjectives(
+        say("PAWZ ปริมาณซื้อขายคึกคัก ที่ 1.42 ส่วนเบี่ยงเบน", ["volw.PAWZ.z"]), SEL) == []
+    # AGNG อยู่ใต้เกณฑ์ทั้งสองทาง
+    assert [x.code for x in bg.gate4_adjectives(
+        say("AGNG ปริมาณซื้อขายเร่งขึ้น", ["volw.AGNG.z", "volw.AGNG.rvol"]), SEL)] \
+        == ["unbacked_adjective"]
+
+
+def test_fragile_words_need_both_the_level_and_the_direction():
+    s = sheet()
+    s["groups"]["breadth"]["today"]["pct"] = 46.2366
+    s["groups"]["breadth"]["today"]["above"] = 43
+    sel = bf.select_facts(s)
+    ok = say("ความกว้างของตลาดไม่ทั่วถึง อยู่ที่ 46.24% จาก 54.84% เมื่อ 21 วันก่อน",
+             ["breadth.today.pct", "breadth.prior_21d.pct"])
+    assert bg.gate4_adjectives(ok, sel) == []
+    # อ้างค่าเดียว: ไม่มีทิศทาง
+    one = say("ความกว้างของตลาดเปราะบางที่ 46.24%", ["breadth.today.pct"])
+    assert [x.code for x in bg.gate4_adjectives(one, sel)] == ["unbacked_adjective"]
+    # เหนือครึ่ง: ระดับไม่ถึงเกณฑ์ แม้จะลดลงจริง
+    above = say("ความกว้างของตลาดอ่อนแอลง จาก 54.84% มาที่ 50.54%",
+                ["breadth.today.pct", "breadth.prior_21d.pct"])
+    assert [x.code for x in bg.gate4_adjectives(above, SEL)] == ["unbacked_adjective"]
+    # ต่ำกว่าครึ่งแต่กำลังดีขึ้น: ระดับผ่าน ทิศทางไม่ผ่าน · ถ้าไม่มีกรณีนี้
+    # การลบเงื่อนไขทิศทางออกจะไม่ทำให้ชุดเทสต์แดง (M35)
+    s2 = sheet()
+    s2["groups"]["breadth"]["today"]["pct"] = 46.2366
+    s2["groups"]["breadth"]["prior_21d"]["pct"] = 40.0
+    sel2 = bf.select_facts(s2)
+    rising = say("ความกว้างของตลาดอ่อนแอลง อยู่ที่ 46.24% จาก 40.00% เมื่อ 21 วันก่อน",
+                 ["breadth.today.pct", "breadth.prior_21d.pct"])
+    assert [x.code for x in bg.gate4_adjectives(rising, sel2)] == ["unbacked_adjective"]
+
+
+def test_diverge_words_need_two_numbers_that_really_point_apart():
+    ok = say("IEF บวก 0.40% สวนทาง DBC ที่ติดลบ 3.00%",
+             ["ret.IEF.21d", "ret.DBC.21d"])
+    assert bg.gate4_adjectives(ok, SEL) == []
+    bad = say("EFA บวก 2.00% สวนทาง EEM ที่บวก 3.10%",
+              ["ret.EFA.21d", "ret.EEM.21d"])
+    assert [x.code for x in bg.gate4_adjectives(bad, SEL)] == ["unbacked_adjective"]
+
+
+# ------------------------------------------------------------------- ด่าน 5
+
+def test_gate5_holds_a_seasonal_claim_that_has_no_baseline():
+    bad = say("สัปดาห์ที่ 46 ในอดีตปิดบวก 60.00% ของ 10 ครั้ง",
+              ["seasonal.week_current.win_pct", "seasonal.week_current.n"])
+    f = bg.gate5_seasonal(bad, SEL)
+    assert [x.code for x in f] == ["seasonal_no_baseline"]
+    assert f[0].gate == 5
+
+
+def test_gate5_passes_when_the_baseline_sits_in_the_same_sentence():
+    ok = say("สัปดาห์ที่ 46 ในอดีตปิดบวก 60.00% ของ 10 ครั้ง เทียบค่าปกติทุกสัปดาห์ที่ 58.90%",
+             ["seasonal.week_current.win_pct", "seasonal.week_current.n",
+              "seasonal_baseline.week.win_pct"])
+    assert bg.gate5_seasonal(ok, SEL) == []
+
+
+def test_gate5_asks_for_the_monthly_baseline_for_a_monthly_claim():
+    # ฐานรายสัปดาห์ไม่ใช่ฐานของงวดรายเดือน
+    wrong = say("ธันวาคมในอดีตปิดบวก 65.00% เทียบค่าปกติทุกสัปดาห์ที่ 58.90%",
+                ["seasonal.month_next.win_pct", "seasonal_baseline.week.win_pct"])
+    assert [x.code for x in bg.gate5_seasonal(wrong, SEL)] == ["seasonal_no_baseline"]
+    right = say("ธันวาคมในอดีตปิดบวก 65.00% เทียบค่าปกติทุกเดือนที่ 62.30%",
+                ["seasonal.month_next.win_pct", "seasonal_baseline.month.win_pct"])
+    assert bg.gate5_seasonal(right, SEL) == []
+
+
+def test_validate_runs_gate5_too():
+    bad = say("สัปดาห์ที่ 46 ในอดีตปิดบวก 60.00%", ["seasonal.week_current.win_pct"],
+              heading="สถิติฤดูกาล")
+    assert any(x.gate == 5 for x in bg.validate(bad, SEL))
+
+
+# ------------------------------------------------- เงื่อนไขรอบเขียนรายสัปดาห์
+
+def test_weekly_condition_needs_the_weekend_and_this_weeks_data():
+    from datetime import datetime, timezone
+
+    def at(y, m, d, h=4):
+        return datetime(y, m, d, h, 0, tzinfo=timezone.utc)
+
+    # ศุกร์ 13 พ.ย. 2026 เป็นสัปดาห์ ISO ที่ 46 · เสาร์ 14 พ.ย. ก็สัปดาห์ 46
+    ok, why = brief_main.should_write_weekly("2026-11-13", at(2026, 11, 14))
+    assert ok and why == ""
+    ok, why = brief_main.should_write_weekly("2026-11-13", at(2026, 11, 15))
+    assert ok, "อาทิตย์ก็ยังอยู่ในสัปดาห์เดียวกันตามปฏิทิน ISO"
+    # กลางสัปดาห์: ข้อมูลอยู่สัปดาห์เดียวกันแต่สัปดาห์ยังไม่จบ
+    ok, why = brief_main.should_write_weekly("2026-11-11", at(2026, 11, 11))
+    assert not ok and "เสาร์" in why
+    # เสาร์ที่ข้อมูลของสัปดาห์นี้ยังไม่มา (ศุกร์ราคาไม่ครบ ด่านความครบกัน)
+    ok, why = brief_main.should_write_weekly("2026-11-06", at(2026, 11, 14))
+    assert not ok and "สัปดาห์นี้ยังไม่มา" in why
+
+
+def test_a_refusal_by_design_is_not_a_failed_job():
+    # ด่านความครบของรอบ B1 ทำงานถูกต้องเมื่อมันปฏิเสธ · ถ้างานแดง
+    # ไฟแดงที่ถูกต้องกับไฟแดงที่เป็นบั๊กจะหน้าตาเหมือนกันทุกวัน
+    assert brief_main.refusal_is_by_design("ข้อมูลไม่ครบ · ราคา 15/93 — ยังไม่สร้างแผ่น")
+    assert brief_main.refusal_is_by_design("ยังไม่ถึงเวลา — สร้างได้ตั้งแต่ ...")
+    assert not brief_main.refusal_is_by_design("ไม่มีข้อมูลราคาเลย")
+    assert not brief_main.refusal_is_by_design("")
+
+
+def test_daily_and_weekly_return_labels_cannot_be_mistaken_for_each_other():
+    """5 วันทำการ กับ 1 สัปดาห์ ISO เป็นคนละค่า และต่างกันมากพอจะหลอกคนอ่าน
+
+    9 พ.ย. 2026 ของจริง: SPY 5 วัน = +0.08% แต่สัปดาห์ = +1.85% · ถ้าป้ายชื่อ
+    สองอันนี้อ่านเหมือนกัน โมเดลจะหยิบเลขหนึ่งมาเรียกชื่อของอีกเลขหนึ่ง
+    """
+    index = SEL.by_id()
+    d = index["ret.SPY.5d"].label
+    w = index["retw.SPY.1w"].label
+    assert "วันทำการ" in d and "สัปดาห์" not in d
+    assert "สัปดาห์" in w and "วันทำการ" not in w
+    assert index["ret.SPY.5d"].value != index["retw.SPY.1w"].value
