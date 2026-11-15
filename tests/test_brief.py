@@ -1415,3 +1415,93 @@ def test_golden_sheet_reproduces_the_second_no_write_run_and_now_passes():
         ]},
     ]}
     assert bg.validate(r, sel) == []
+
+
+# ===========================================================================
+# รอบ B2a.3 · หมายเลขงวดถูกบ่งชี้ด้วยหน้าต่างที่ประโยคอ้าง
+# ===========================================================================
+
+def test_week_number_passes_when_the_sentence_cites_the_window_without_the_period():
+    """ประโยคจริงจากรอบ no-write ที่สาม (15 พ.ย. 2026)
+
+    B2a.2 ส่ง seasonal.*.period เป็น fact แล้ว แต่โมเดลอ้างเฉพาะ win_pct /
+    mean_pct / n กับฐานเทียบ · เลข 46 จึงยังถูกกัก · การอ้าง fact ของ
+    week_current ผูกประโยคกับหน้าต่างนั้นไปแล้ว หมายเลขงวดจึงถูกบ่งชี้
+    """
+    sentence = say(
+        "ในอดีต SPY สัปดาห์ที่ 46 เคยปิดบวก 60.00% มีผลตอบแทนเฉลี่ย +0.42% "
+        "จาก 10 ครั้ง เมื่อเทียบกับค่าปกติทุกสัปดาห์ที่ปิดบวก 58.90% "
+        "และมีผลตอบแทนเฉลี่ย +0.21% จาก 150 งวด",
+        ["seasonal.week_current.win_pct", "seasonal.week_current.mean_pct",
+         "seasonal.week_current.n", "seasonal_baseline.week.win_pct",
+         "seasonal_baseline.week.mean_pct", "seasonal_baseline.week.n"])
+    assert bg.gate1_numbers(sentence, SEL) == []
+
+
+def test_a_wrong_week_number_is_still_held():
+    bad = say("ในอดีต SPY สัปดาห์ที่ 45 เคยปิดบวก 60.00% จาก 10 ครั้ง "
+              "เทียบค่าปกติทุกสัปดาห์ 58.90%",
+              ["seasonal.week_current.win_pct", "seasonal.week_current.n",
+               "seasonal_baseline.week.win_pct"])
+    assert [x.code for x in bg.gate1_numbers(bad, SEL)] == ["unbacked_number"]
+
+
+def test_one_window_does_not_imply_another_windows_number():
+    """อ้างแต่สัปดาห์ที่ปิดแล้ว (46) แล้วเขียนเลขของสัปดาห์ถัดไป (47) ต้องถูกกัก
+
+    ถ้าไม่มีเทสต์นี้ การเผลอบ่งชี้ period ของทุกหน้าต่างพร้อมกันจะไม่ทำให้
+    ชุดเทสต์แดง และบรีฟจะเขียนเลขสัปดาห์สลับกันได้โดยไม่มีใครจับ
+    """
+    bad = say("ในอดีต SPY สัปดาห์ที่ 47 เคยปิดบวก 60.00% จาก 10 ครั้ง "
+              "เทียบค่าปกติทุกสัปดาห์ 58.90%",
+              ["seasonal.week_current.win_pct", "seasonal.week_current.n",
+               "seasonal_baseline.week.win_pct"])
+    assert [x.code for x in bg.gate1_numbers(bad, SEL)] == ["unbacked_number"]
+    # แต่ประโยคที่อ้างทั้งสองหน้าต่างพูดถึงได้ทั้งสองเลข
+    ok = say("ในอดีต SPY สัปดาห์ที่ 46 เคยปิดบวก 60.00% ส่วนสัปดาห์ที่ 47 เคยปิดบวก 70.00% "
+             "เทียบค่าปกติทุกสัปดาห์ 58.90%",
+             ["seasonal.week_current.win_pct", "seasonal.week_next.win_pct",
+              "seasonal_baseline.week.win_pct"])
+    assert bg.gate1_numbers(ok, SEL) == []
+
+
+def test_the_implied_period_does_not_admit_other_values_of_that_window():
+    # บ่งชี้เฉพาะ period · ค่าอื่นของหน้าต่างเดียวกันที่ไม่ได้อ้าง ยังไม่ผ่าน
+    bad = say("ในอดีต SPY สัปดาห์ที่ 46 เคยมีผลตอบแทนเฉลี่ย +0.42%",
+              ["seasonal.week_current.win_pct"])
+    assert [x.code for x in bg.gate1_numbers(bad, SEL)] == ["unbacked_number"]
+
+
+def test_monthly_period_works_the_same_way():
+    ok = say("ในอดีต SPY เดือนที่ 12 เคยปิดบวก 65.00% จาก 20 ครั้ง "
+             "เทียบค่าปกติทุกเดือน 62.30%",
+             ["seasonal.month_next.win_pct", "seasonal.month_next.n",
+              "seasonal_baseline.month.win_pct"])
+    assert bg.gate1_numbers(ok, SEL) == []
+
+
+def test_non_seasonal_facts_imply_no_period():
+    # กลไกนี้ผูกกับตระกูล seasonal เท่านั้น ห้ามรั่วไปตระกูลอื่น
+    assert bg._implied_periods(["ret.SPY.21d", "rank.all_top.1"], SEL.by_id()) == []
+    assert bg._implied_periods(["seasonal_baseline.week.win_pct"], SEL.by_id()) == []
+    got = bg._implied_periods(["seasonal.week_current.n"], SEL.by_id())
+    assert [f.id for f in got] == ["seasonal.week_current.period"]
+
+
+def test_the_real_held_brief_now_passes_every_gate_on_the_real_sheet():
+    """ทั้งสองประโยคที่ถูกกักจริงเมื่อ 15 พ.ย. 2026 รอบที่สาม ด้วยแผ่นจริง"""
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "สถิติฤดูกาล", "sentences": [
+        {"text": "ในอดีต SPY สัปดาห์ที่ 46 เคยปิดบวก 60.00% มีผลตอบแทนเฉลี่ย +0.27% "
+                 "จาก 10 ครั้ง เมื่อเทียบกับค่าปกติทุกสัปดาห์ที่ปิดบวก 58.90% "
+                 "และมีผลตอบแทนเฉลี่ย +0.29% จาก 521 งวด",
+         "facts": ["seasonal.week_current.win_pct", "seasonal.week_current.mean_pct",
+                   "seasonal.week_current.n", "seasonal_baseline.week.win_pct",
+                   "seasonal_baseline.week.mean_pct", "seasonal_baseline.week.n"]},
+        {"text": "สำหรับสัปดาห์ที่ 47 ในอดีต SPY เคยปิดบวก 50.00% มีผลตอบแทนเฉลี่ย -0.23% "
+                 "จาก 10 ครั้ง เทียบกับค่าปกติทุกสัปดาห์ที่ปิดบวก 58.90% และเฉลี่ย +0.29%",
+         "facts": ["seasonal.week_next.win_pct", "seasonal.week_next.mean_pct",
+                   "seasonal.week_next.n", "seasonal_baseline.week.win_pct",
+                   "seasonal_baseline.week.mean_pct"]},
+    ]}]}
+    assert bg.validate(r, sel) == []
