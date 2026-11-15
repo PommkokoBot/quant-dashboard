@@ -74,6 +74,7 @@
         <button id="tabBtnMomentum" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="momentum">Momentum &amp; Rotation</button>
         <button id="tabBtnHealth" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="health">Data Health</button>
         <button id="tabBtnEvents" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="events">Events</button>
+        <button id="tabBtnBrief" class="qd-tab-btn text-sm font-medium rounded-lg px-3 py-1.5" data-tab="brief">Brief</button>
       </nav>
     </div>
     <button id="logoutBtn" class="text-sm text-slate-600 hover:text-red-600 border border-slate-300 rounded-lg px-3 py-1.5">
@@ -843,6 +844,42 @@
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
           <table id="eventsTable" class="text-xs w-full"></table>
         </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================== BRIEF TAB (รอบ C′) ===================== -->
+  <!-- อ่าน daily_brief ที่ cron เขียนไว้ · หน้านี้ไม่คำนวณอะไรเอง และไม่แสดง
+       ตัวเลขจากแผ่น fact โดยตรง (มติรอบ C′ ข้อ 2) ตัวเลขทุกตัวที่เห็นคือ
+       ตัวเลขที่อยู่ในบทสรุปและผ่านด่านตรวจมาแล้ว -->
+  <div id="tabBrief" class="hidden space-y-6">
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-semibold text-slate-800">บทสรุปข้อมูล</h2>
+          <p id="briefAsOf" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <button id="briefRefreshBtn" class="text-xs border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">โหลดใหม่</button>
+      </div>
+      <p id="briefError" class="hidden text-xs text-red-600 mb-2"></p>
+      <div id="briefLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div></div>
+      <p id="briefHeldNotice" class="hidden text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3"></p>
+      <div id="briefMeta" class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 mb-3"></div>
+      <div id="briefBody" class="space-y-4 max-w-3xl"></div>
+      <div id="briefFindings" class="hidden mt-4"></div>
+      <p class="text-[11px] text-slate-500 mt-4 border-t border-slate-200 pt-3 max-w-3xl">
+        บทสรุปนี้เขียนจาก "แผ่นข้อมูล" ที่ตรึงค่าไว้แล้วของวันนั้น แล้วผ่านด่านตรวจอัตโนมัติ 6 ด่าน
+        (ความครบของแผ่น · ตัวเลขทุกตัวต้องตรงกับแผ่น · ชื่อกองต้องมีอยู่จริง · คำที่ห้ามใช้ ·
+        คำขยายที่ต้องมีตัวเลขรองรับ · สถิติฤดูกาลต้องมาพร้อมฐานเทียบ) ·
+        ฉบับที่ <b>ไม่ผ่าน</b> จะไม่ถูกเผยแพร่ และไม่ลบฉบับก่อนหน้า — ดูเหตุผลที่ตกได้ในประวัติด้านล่าง
+      </p>
+    </section>
+
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-800 mb-1">ประวัติบทสรุป</h2>
+      <p class="text-[11px] text-slate-500 mb-2">คลิกแถวเพื่ออ่านฉบับนั้น · ฉบับที่ตกด่านจะแสดงเหตุผลครบทุกข้อ</p>
+      <div class="overflow-x-auto border border-slate-200 rounded-lg">
+        <table id="briefHistoryTable" class="text-xs w-full"></table>
       </div>
     </section>
   </div>

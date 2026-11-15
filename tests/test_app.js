@@ -187,7 +187,17 @@ const MOCK_HEALTH = {
 };
 const marketEventsCallLog = [];
 const dataHealthCallLog = [];
-const mockFailures = { events: false, health: false };
+const universeCallLog = [];
+const mockFailures = { events: false, health: false, universes: false };
+
+// รอบ C′ (2026-11-15): รายชื่อ universe ย้ายจากอาเรย์ใน app.js ไปอยู่ใน
+// ฐานข้อมูล (universe_tickers) · ชุดนี้เลียนรูปแบบที่ของจริงคืนมา คือกองที่
+// ใส่ไว้ใน universe_member มาก่อน (sort_order) แล้วค่อยกองที่มาจาก category
+// เรียงตามชื่อ -- Asset Class จึงยังได้ลำดับ Faber เดิมเป๊ะ
+const MOCK_UNIVERSES = {
+  asset_class: ["SPY", "EFA", "EEM", "IEF", "VNQ", "DBC"],
+  broad_market: ["IEF", "VNQ", "EEM", "EFA", "QQQ", "SPY"]
+};
 
 async function resolveRpcCall(name, params, range) {
   if (name === "market_events_between") {
@@ -196,6 +206,15 @@ async function resolveRpcCall(name, params, range) {
     let rows = MOCK_EVENTS.slice();
     if (range) rows = rows.slice(range.from, range.to + 1);
     return { data: rows, error: null };
+  }
+  if (name === "universe_tickers") {
+    universeCallLog.push(params);
+    if (mockFailures.universes) return { data: null, error: { message: "permission denied" } };
+    const tickers = MOCK_UNIVERSES[params.p_universe];
+    return {
+      data: tickers ? tickers.map((t, i) => ({ instrument_id: 1000 + i, ticker: t, sort_order: i + 1 })) : [],
+      error: null
+    };
   }
   if (name === "data_health_overview") {
     dataHealthCallLog.push(params);
@@ -598,6 +617,32 @@ async function main() {
     { id: 16, ticker: "XLK", name: "Technology Select Sector SPDR", category: "us_sector" },
     { id: 17, ticker: "XLE", name: "Energy Select Sector SPDR", category: "us_sector" }
   );
+  // รอบ C′: สองโหมดแรกต้องมาจากฐานข้อมูล ไม่ใช่อาเรย์ในไฟล์
+  // 1) โหลดแล้วจริง (bootDashboard เรียกให้ตอน login) และเรียกครบ 2 universe
+  assert.ok(QD.state.universes.loaded, "bootDashboard ต้องโหลดรายชื่อ universe จากฐานข้อมูลตอน login");
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(universeCallLog.map((p) => p.p_universe).sort())),
+    ["asset_class", "broad_market"],
+    "เรียก universe_tickers ครบทั้งสอง universe ครั้งละหนึ่งครั้ง"
+  );
+  // 2) ถ้ายังโหลดไม่ได้ ต้องโยน error ไม่ใช่คืนลิสต์เปล่าหรือลิสต์สำรองในไฟล์
+  //    (ลิสต์สำรองที่เงียบ = ฝั่งเว็บกับฝั่งบทสรุปแยกจากกันได้โดยไม่มีใครรู้)
+  const savedUniverses = JSON.parse(JSON.stringify(QD.state.universes.byMode));
+  QD.state.universes.loaded = false;
+  assert.throws(() => QD.getUniverseInstruments("asset_class"), /universe_tickers/,
+    "universe ที่โหลดไม่ได้ต้องดังไว้ ไม่ใช่คืนรายชื่อเงียบ ๆ");
+  assert.throws(() => QD.getUniverseInstruments("broad_market"), /universe_tickers/,
+    "Broad Market ก็ต้องดังเหมือนกัน");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(QD.getUniverseInstruments("thematic").map((i) => i.ticker))), ["ARKK"],
+    "โหมดที่ยังใช้ category ต้องไม่พังเพราะ universe โหลดไม่ได้");
+  QD.state.universes.loaded = true;
+  // 3) รายชื่อที่ได้คือรายชื่อจากฐานข้อมูลจริง ๆ ไม่ใช่ค่าที่ฝังไว้
+  QD.state.universes.byMode.asset_class = ["QQQ", "SPY"];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(QD.getUniverseInstruments("asset_class").map((i) => i.ticker))),
+    ["QQQ", "SPY"], "Asset Class เดินตามรายชื่อจากฐานข้อมูล ตามลำดับที่ฐานข้อมูลให้มา");
+  QD.state.universes.byMode = savedUniverses;
+  console.log("[ok] universe จากฐานข้อมูล: โหลดตอน boot · โหลดไม่ได้ต้องโยน error · ลำดับตามฐานข้อมูล");
+
   const assetClassUniverse = QD.getUniverseInstruments("asset_class");
   assert.deepStrictEqual(JSON.parse(JSON.stringify(assetClassUniverse.map((i) => i.ticker))), ["SPY", "EFA", "EEM", "IEF", "VNQ", "DBC"], "Faber-style Asset Class universe (10.2 mode 1)");
   const broadUniverse = QD.getUniverseInstruments("broad_market");
@@ -1501,8 +1546,9 @@ async function main() {
   assert.strictEqual(window.document.getElementById("tabBtnVolume"), null);
   assert.strictEqual(window.document.getElementById("volMetricPicker"), null, "the redundant metric picker is gone");
   // 2026-09-21: Data Health is the 3rd tab · 2026-09-22 (round 2): Events is the 4th
-  assert.strictEqual(window.document.querySelectorAll("nav .qd-tab-btn").length, 4, "Seasonality + Momentum & Rotation + Data Health + Events");
-  console.log("[ok] Volume tab folded into Momentum & Rotation -- no duplicated controls left behind (4 tabs incl. Data Health + Events)");
+  // 2026-11-15 (รอบ C′): Brief is the 5th
+  assert.strictEqual(window.document.querySelectorAll("nav .qd-tab-btn").length, 5, "Seasonality + Momentum & Rotation + Data Health + Events + Brief");
+  console.log("[ok] Volume tab folded into Momentum & Rotation -- no duplicated controls left behind (5 tabs incl. Data Health + Events + Brief)");
 
   // =====================================================================
   const plain = (x) => JSON.parse(JSON.stringify(x));
