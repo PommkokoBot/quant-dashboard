@@ -6,8 +6,8 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Version is shown in the header and written into every Excel export, so a
   // report can always be traced back to the build that produced it.
-  const APP_VERSION = "1.0.1";
-  const APP_BUILD_DATE = "2026-11-10";
+  const APP_VERSION = "1.0.2";
+  const APP_BUILD_DATE = "2026-11-15";
 
   const SUPABASE_URL = "https://nsbreucmgfmphmfewnbw.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_7KHllF7ZjELjitvKTo0-ag_3GWgKtZp";
@@ -89,6 +89,13 @@ window.QD = (function () {
     events: { loaded: false, loading: null, rows: [], types: [], enabled: [], enabledInitialized: false, error: "" },
     // 2026-09-21: Data Health tab (loaded on first visit to the tab)
     health: { loaded: false, loading: false, data: null, onlyProblems: false },
+    // รอบ C′ (2026-11-15): แท็บ Brief — อ่าน daily_brief ที่ cron เขียนไว้
+    // selectedId = ฉบับที่ผู้ใช้คลิกจากประวัติ · null = ให้ renderBrief เลือก
+    // ฉบับที่เผยแพร่ล่าสุดเอง (ฉบับที่ตกด่านต้องไม่ขึ้นมาแทนของเดิม)
+    brief: { loaded: false, loading: false, rows: [], selectedId: null, error: "" },
+    // รอบ C′: รายชื่อ universe มาจากฐานข้อมูล (universe_tickers) ไม่ใช่
+    // รายชื่อที่พิมพ์ไว้ในไฟล์นี้อีกแล้ว — ดู getUniverseInstruments
+    universes: { loaded: false, byMode: {} },
     instruments: [],
     assetId: null,
     periodType: "month",
@@ -793,9 +800,18 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Config
   // ---------------------------------------------------------------------
-  // Faber-style Asset Class universe (mode 1 of 10.2) -- a short hardcoded
-  // list, not a DB category, per the decision log (no schema change needed).
-  const ASSET_CLASS_TICKERS = ["SPY", "EFA", "EEM", "IEF", "VNQ", "DBC"];
+  // Asset Class (mode 1 of 10.2) and Broad Market (mode 2) used to be written
+  // out here: a six-ticker array and a hand-kept "category OR these two"
+  // filter. Round B2a put the same two lists in the database as
+  // universe_def/universe_member, because the weekly brief has to rank the
+  // same funds this page ranks -- and a list that exists twice drifts.
+  //
+  // So these two modes now come from universe_tickers() and nothing else.
+  // There is deliberately no fallback array to drop back to: a fallback that
+  // silently answers with yesterday's membership is how the two halves would
+  // come apart again without anyone noticing. If the RPC is unavailable the
+  // tab says so (getUniverseInstruments throws, the caller shows the error).
+  const UNIVERSE_DB_MODES = ["asset_class", "broad_market"];
 
   // Week/Month lookback + SMA option sets (10.5) -- selectable, tied together
   // by the Timeframe picker.
@@ -931,13 +947,30 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Universe resolution (10.2)
   // ---------------------------------------------------------------------
+  // รายชื่อ universe ของฐานข้อมูล · เรียกครั้งเดียวตอน bootDashboard
+  // ล้มเหลวให้ดังไว้ (throw) ไม่ใช่คืนลิสต์เปล่า เพราะ universe ว่างกับ
+  // universe ที่โหลดไม่ได้ ต้องไม่หน้าตาเหมือนกันบนจอ
+  async function loadUniverses() {
+    const byMode = {};
+    for (const mode of UNIVERSE_DB_MODES) {
+      const { data, error } = await sb.rpc("universe_tickers", { p_universe: mode });
+      if (error) throw error;
+      const tickers = (data || []).map((r) => r.ticker);
+      if (!tickers.length) throw new Error(`universe_tickers('${mode}') ไม่คืนรายชื่อกองเลย`);
+      byMode[mode] = tickers;
+    }
+    state.universes.byMode = byMode;
+    state.universes.loaded = true;
+  }
+
   function getUniverseInstruments(mode) {
     const insts = state.instruments;
-    if (mode === "asset_class") {
-      return ASSET_CLASS_TICKERS.map((t) => insts.find((i) => i.ticker === t)).filter(Boolean);
-    }
-    if (mode === "broad_market") {
-      return insts.filter((i) => i.category === "broad_market" || i.ticker === "IEF" || i.ticker === "VNQ");
+    if (UNIVERSE_DB_MODES.indexOf(mode) !== -1) {
+      if (!state.universes.loaded) {
+        throw new Error("ยังโหลดรายชื่อ universe จากฐานข้อมูลไม่สำเร็จ (universe_tickers) จึงยังจัดอันดับไม่ได้");
+      }
+      const tickers = state.universes.byMode[mode] || [];
+      return tickers.map((t) => insts.find((i) => i.ticker === t)).filter(Boolean);
     }
     if (mode === "thematic") {
       return insts.filter((i) => i.category === "thematic");
@@ -3542,19 +3575,22 @@ window.QD = (function () {
 
   function switchTab(tab) {
     state.activeTab = tab;
-    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth"), eventsEl = byId("tabEvents");
-    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth"), eventsBtn = byId("tabBtnEvents");
+    const seasEl = byId("tabSeasonality"), momEl = byId("tabMomentum"), healthEl = byId("tabHealth"), eventsEl = byId("tabEvents"), briefEl = byId("tabBrief");
+    const seasBtn = byId("tabBtnSeasonality"), momBtn = byId("tabBtnMomentum"), healthBtn = byId("tabBtnHealth"), eventsBtn = byId("tabBtnEvents"), briefBtn = byId("tabBtnBrief");
     if (seasEl) seasEl.classList.toggle("hidden", tab !== "seasonality");
     if (momEl) momEl.classList.toggle("hidden", tab !== "momentum");
     if (healthEl) healthEl.classList.toggle("hidden", tab !== "health");
     if (eventsEl) eventsEl.classList.toggle("hidden", tab !== "events");
+    if (briefEl) briefEl.classList.toggle("hidden", tab !== "brief");
     if (seasBtn) seasBtn.classList.toggle("qd-tab-active", tab === "seasonality");
     if (momBtn) momBtn.classList.toggle("qd-tab-active", tab === "momentum");
     if (healthBtn) healthBtn.classList.toggle("qd-tab-active", tab === "health");
     if (eventsBtn) eventsBtn.classList.toggle("qd-tab-active", tab === "events");
+    if (briefBtn) briefBtn.classList.toggle("qd-tab-active", tab === "brief");
     if (tab === "momentum" && !state.momentum.dataLoaded) loadMomentumUniverseData();
     if (tab === "health" && !state.health.loaded && !state.health.loading && state.session) loadDataHealth();
     if (tab === "events" && !state.eventsTab.loaded) loadEventsTab();
+    if (tab === "brief" && !state.brief.loaded && !state.brief.loading) loadBriefTab();
   }
 
   function bindMomentumUIHandlers() {
@@ -5972,6 +6008,217 @@ window.QD = (function () {
     if (only) only.addEventListener("change", (e) => { state.health.onlyProblems = e.target.checked; renderDataHealth(); });
   }
 
+  // =====================================================================
+  // Brief tab (รอบ C′ · 2026-11-15)
+  // =====================================================================
+  // หน้านี้อ่านอย่างเดียว · daily_brief ถูกเขียนโดย scripts/brief.py ใน
+  // GitHub Actions เท่านั้น หน้าเว็บไม่เขียนตารางนี้และไม่เรียกโมเดลเอง
+  //
+  // กติกาจากฝั่งหลังบ้านที่ต้องเห็นตรงกันบนจอ (Phase 1 ข้อ 1.8):
+  //   status = 'held' คือฉบับที่ตกด่านตรวจ และ "ห้ามขึ้นมาแทนฉบับที่เผยแพร่"
+  // จึงไม่ใช่แค่โชว์แถวล่าสุด: ค่าตั้งต้นคือฉบับที่ผ่านด่านล่าสุด แล้วบอก
+  // แยกบรรทัดว่ามีฉบับใหม่กว่าที่ตกอยู่กี่ฉบับ ตกกี่จุด — ไม่ซ่อนเงียบ ๆ
+  // เพราะคนอ่านต้องรู้ว่าตัวเลขที่เห็นเป็นของงวดไหน
+  const BRIEF_HISTORY_LIMIT = 20;
+
+  const BRIEF_STATUS_STYLE = {
+    published: { label: "ผ่านด่าน · เผยแพร่แล้ว", cls: "inline-block text-[11px] border rounded px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border-emerald-200" },
+    held:      { label: "ไม่ผ่านด่าน · ไม่เผยแพร่", cls: "inline-block text-[11px] border rounded px-1.5 py-0.5 bg-amber-50 text-amber-800 border-amber-200" },
+    draft:     { label: "ฉบับร่าง", cls: "inline-block text-[11px] border rounded px-1.5 py-0.5 bg-slate-100 text-slate-600 border-slate-200" }
+  };
+
+  function briefStatusStyle(status) {
+    return BRIEF_STATUS_STYLE[status] ||
+      { label: String(status || "ไม่ทราบสถานะ"), cls: "inline-block text-[11px] border rounded px-1.5 py-0.5 bg-slate-100 text-slate-600 border-slate-200" };
+  }
+
+  // ---- กติกาการเลือกฉบับ: ฟังก์ชันล้วน ทดสอบได้โดยไม่ต้องมี DOM ----
+  function latestPublishedBrief(rows) {
+    return (rows || []).find((r) => r.status === "published") || null;
+  }
+
+  function briefToShow(rows, selectedId) {
+    const list = rows || [];
+    if (selectedId != null) {
+      const picked = list.find((r) => String(r.id) === String(selectedId));
+      if (picked) return picked;   // ผู้ใช้คลิกจากประวัติ: เคารพการเลือก แม้เป็นฉบับที่ตก
+    }
+    return latestPublishedBrief(list);
+  }
+
+  // ฉบับที่ใหม่กว่าฉบับที่กำลังแสดงและยังไม่ได้เผยแพร่
+  // rows เรียงจากใหม่ไปเก่ามาแล้ว แต่เทียบด้วย trade_date ไม่ใช่ลำดับในอาเรย์
+  // เพราะลำดับเป็นเรื่องของ query ส่วนกติกาเป็นเรื่องของวันที่ข้อมูล
+  function newerHeldBriefs(rows, shown) {
+    const cut = shown ? String(shown.trade_date) : "";
+    return (rows || []).filter((r) => r.status !== "published" && String(r.trade_date) > cut);
+  }
+
+  function briefFindingCount(row) {
+    const log = row && row.validation_log;
+    return Array.isArray(log) ? log.length : 0;
+  }
+
+  // body_json คือโครงจริงที่โมเดลตอบและด่านตรวจอ่าน · body_th เป็นฉบับแบน
+  // สำหรับ Telegram ใช้เป็นทางถอยให้แถวเก่าที่ยังไม่มี body_json
+  function briefSections(row) {
+    if (!row) return [];
+    const json = row.body_json;
+    const secs = json && Array.isArray(json.sections) ? json.sections : null;
+    if (secs) {
+      return secs.map((s) => ({
+        heading: String((s && s.heading) || "").trim(),
+        text: ((s && s.sentences) || []).map((x) => String((x && x.text) || "").trim()).filter(Boolean).join(" ")
+      })).filter((s) => s.heading || s.text);
+    }
+    return String(row.body_th || "").split(/\n\s*\n/).map((block) => {
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) return null;
+      return lines.length > 1 ? { heading: lines[0], text: lines.slice(1).join(" ") } : { heading: "", text: lines[0] };
+    }).filter(Boolean);
+  }
+
+  async function fetchBriefs() {
+    const { data, error } = await sb
+      .from("daily_brief")
+      .select("id,trade_date,publish_date,body_th,body_json,model,prompt_version,status,validation_log")
+      .order("trade_date", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(BRIEF_HISTORY_LIMIT);
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function loadBriefTab() {
+    if (state.brief.loading) return;
+    state.brief.loading = true;
+    state.brief.error = "";
+    hide(byId("briefError"));
+    setLoading("briefLoading", true);
+    try {
+      state.brief.rows = await fetchBriefs();
+      state.brief.loaded = true;
+      state.brief.selectedId = null;
+    } catch (e) {
+      state.brief.error = e.message || String(e);
+      showError(byId("briefError"), `โหลดบทสรุปไม่สำเร็จ: ${state.brief.error}`);
+    } finally {
+      state.brief.loading = false;
+      setLoading("briefLoading", false);
+      renderBriefTab();
+    }
+  }
+
+  function selectBrief(id) {
+    state.brief.selectedId = id;
+    renderBriefTab();
+  }
+
+  function renderBriefTab() {
+    const rows = state.brief.rows || [];
+    const shown = briefToShow(rows, state.brief.selectedId);
+    const newer = newerHeldBriefs(rows, shown);
+    const bodyEl = byId("briefBody"), metaEl = byId("briefMeta");
+    const noticeEl = byId("briefHeldNotice"), findEl = byId("briefFindings");
+
+    setText("briefAsOf", rows.length
+      ? `ฉบับล่าสุดในฐานข้อมูล: ข้อมูลวันที่ ${formatThaiDate(rows[0].trade_date)} · เก็บย้อนหลังในหน้านี้ ${rows.length} ฉบับ`
+      : (state.brief.loaded ? "ยังไม่มีบทสรุปในฐานข้อมูล" : ""));
+
+    if (metaEl) {
+      metaEl.innerHTML = shown
+        ? [
+            `<span class="${briefStatusStyle(shown.status).cls}">${escapeHtml(briefStatusStyle(shown.status).label)}</span>`,
+            `<span>ข้อมูลวันที่ <b class="text-slate-700">${escapeHtml(formatThaiDate(shown.trade_date))}</b></span>`,
+            `<span>· เขียนเมื่อ ${shown.publish_date ? escapeHtml(formatThaiDate(shown.publish_date)) : "–"}</span>`,
+            `<span>· โมเดล ${escapeHtml(shown.model || "–")}</span>`,
+            `<span>· prompt ${escapeHtml(shown.prompt_version || "–")}</span>`
+          ].join("")
+        : "";
+    }
+
+    if (bodyEl) {
+      const secs = briefSections(shown);
+      bodyEl.innerHTML = secs.length
+        ? secs.map((s) =>
+            `<div>${s.heading ? `<h3 class="text-xs font-semibold text-slate-700 mb-1">${escapeHtml(s.heading)}</h3>` : ""}` +
+            `<p class="text-sm leading-7 text-slate-700">${escapeHtml(s.text)}</p></div>`).join("")
+        : (state.brief.loaded && !state.brief.error
+            ? `<p class="text-sm text-slate-500">ยังไม่มีฉบับที่ผ่านด่านตรวจให้แสดง</p>` : "");
+    }
+
+    // บรรทัดแจ้งว่ามีฉบับใหม่กว่าที่ตกด่าน — ต่อเมื่อกำลังดูฉบับที่เผยแพร่
+    if (noticeEl) {
+      if (newer.length && (!state.brief.selectedId || (shown && shown.status === "published"))) {
+        const list = newer.map((r) => `${formatThaiDate(r.trade_date)} (ตก ${briefFindingCount(r)} จุด)`).join(" · ");
+        noticeEl.textContent = `มีฉบับใหม่กว่านี้ ${newer.length} ฉบับที่ไม่ผ่านด่านตรวจ จึงยังไม่เผยแพร่: ${list} — ข้างล่างเป็นฉบับที่ผ่านด่านล่าสุด`;
+        show(noticeEl);
+      } else {
+        hide(noticeEl);
+      }
+    }
+
+    // เหตุผลที่ตก: แสดงเมื่อฉบับที่กำลังดูเป็นฉบับที่ตกด่าน (คลิกจากประวัติ)
+    if (findEl) {
+      const log = shown && Array.isArray(shown.validation_log) ? shown.validation_log : [];
+      if (shown && shown.status !== "published" && log.length) {
+        findEl.innerHTML =
+          `<h3 class="text-xs font-semibold text-slate-700 mb-1">เหตุผลที่ไม่ผ่านด่านตรวจ (${log.length} จุด)</h3>` +
+          `<ul class="text-[11px] text-slate-600 space-y-1 list-disc pl-5">` +
+          log.map((f) => `<li><b>ด่าน ${escapeHtml(String(f && f.gate != null ? f.gate : "?"))}</b> · ` +
+            `${escapeHtml(String((f && f.where) || ""))}: ${escapeHtml(String((f && f.detail) || ""))} ` +
+            `<span class="text-slate-400">[${escapeHtml(String((f && f.code) || ""))}]</span></li>`).join("") +
+          `</ul>`;
+        show(findEl);
+      } else {
+        findEl.innerHTML = "";
+        hide(findEl);
+      }
+    }
+
+    renderBriefHistory();
+  }
+
+  function renderBriefHistory() {
+    const el = byId("briefHistoryTable");
+    if (!el) return;
+    const rows = state.brief.rows || [];
+    const shown = briefToShow(rows, state.brief.selectedId);
+    if (!rows.length) {
+      el.innerHTML = `<tbody><tr><td class="px-3 py-2 text-slate-500">ยังไม่มีข้อมูล</td></tr></tbody>`;
+      return;
+    }
+    el.innerHTML =
+      `<thead class="bg-slate-50 text-slate-600"><tr>` +
+      `<th class="px-3 py-2 text-left font-medium">ข้อมูลวันที่</th>` +
+      `<th class="px-3 py-2 text-left font-medium">สถานะ</th>` +
+      `<th class="px-3 py-2 text-right font-medium">จุดที่ตก</th>` +
+      `<th class="px-3 py-2 text-left font-medium">เขียนเมื่อ</th>` +
+      `<th class="px-3 py-2 text-left font-medium">prompt</th>` +
+      `</tr></thead><tbody>` +
+      rows.map((r) => {
+        const st = briefStatusStyle(r.status);
+        const active = shown && String(shown.id) === String(r.id);
+        return `<tr data-brief-id="${escapeHtml(String(r.id))}" class="border-t border-slate-100 cursor-pointer hover:bg-slate-50${active ? " bg-slate-50" : ""}">` +
+          `<td class="px-3 py-1.5">${escapeHtml(formatThaiDate(r.trade_date))}</td>` +
+          `<td class="px-3 py-1.5"><span class="${st.cls}">${escapeHtml(st.label)}</span></td>` +
+          `<td class="px-3 py-1.5 text-right">${briefFindingCount(r) || "–"}</td>` +
+          `<td class="px-3 py-1.5">${r.publish_date ? escapeHtml(formatThaiDate(r.publish_date)) : "–"}</td>` +
+          `<td class="px-3 py-1.5 text-slate-500">${escapeHtml(r.prompt_version || "–")}</td>` +
+          `</tr>`;
+      }).join("") + `</tbody>`;
+    Array.from(el.querySelectorAll("tr[data-brief-id]")).forEach((tr) => {
+      tr.addEventListener("click", () => selectBrief(tr.getAttribute("data-brief-id")));
+    });
+  }
+
+  function bindBriefTabHandlers() {
+    const btn = byId("tabBtnBrief");
+    if (btn) btn.addEventListener("click", () => switchTab("brief"));
+    const refresh = byId("briefRefreshBtn");
+    if (refresh) refresh.addEventListener("click", () => loadBriefTab());
+  }
+
   // ---------------------------------------------------------------------
   // Small DOM utilities
   // ---------------------------------------------------------------------
@@ -6020,6 +6267,9 @@ window.QD = (function () {
     state.instrumentsLoaded = true;
     try {
       await loadInstruments();
+      // รอบ C′: รายชื่อ universe มาจากฐานข้อมูล · โหลดครั้งเดียวที่นี่
+      // ถ้าพลาด ให้ลงที่ catch ข้างล่างและขึ้นข้อความบนหน้าจอ ไม่ใช่เงียบ
+      await loadUniverses();
       renderAssetPicker();
       syncTopControlsFromState();
       renderVariantForms();
@@ -6149,6 +6399,7 @@ window.QD = (function () {
     bindCorrelationUIHandlers();
     bindHealthUIHandlers();
     bindEventsTabHandlers();
+    bindBriefTabHandlers();
     renderStatGlossary();
     renderMomentumGlossary();
     initTableLayout();
@@ -6256,6 +6507,10 @@ window.QD = (function () {
     computeEventStudy, esSourcesFromRows, esCurrentSource, renderEsPickers, renderEsPresetButtons,
     ensureEsPrices, esReadControls, runEventStudy, renderEventStudy, renderEventStudyChart,
     onEsControlChange, ES_MIN_N, ES_MAX_N, ES_NORM_STEPS, ES_PRESETS,
+    // Brief tab + universe จากฐานข้อมูล (รอบ C′ 2026-11-15)
+    UNIVERSE_DB_MODES, loadUniverses, BRIEF_HISTORY_LIMIT, BRIEF_STATUS_STYLE, briefStatusStyle,
+    latestPublishedBrief, briefToShow, newerHeldBriefs, briefFindingCount, briefSections,
+    fetchBriefs, loadBriefTab, selectBrief, renderBriefTab, renderBriefHistory, bindBriefTabHandlers,
     loadAdminApprovedGroups, refreshAdminGroupLists, loadGroupRows,
     deleteSelectedGroupRows, deleteSelectedDraftRows, renderGroupAdminList, adminGroupById,
     init

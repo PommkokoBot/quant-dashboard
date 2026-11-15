@@ -118,6 +118,47 @@ const MUTATIONS = [
     script: "tools/build-csp.js",
     why: "the tool CI runs must refuse a page that would load dead, not just report the policy",
     apply: () => write("index.html", read("index.html").replace("</body>", INLINE))
+  },
+  // ---- รอบ C′ (2026-11-15): แท็บ Brief + universe จากฐานข้อมูล ----
+  // ทั้งห้าข้อนี้คือความพลาดที่ "ดูถูกต้องทุกวันที่ทุกอย่างปกติ" ซึ่งเป็น
+  // ความพลาดชนิดเดียวที่ชุดเทสต์ต้องมีไว้จับ
+  {
+    id: "M7", name: "brief tab shows the newest row",
+    script: "tests/test_brief_tab.js",
+    why: "the obvious one-liner: a brief that failed the gates would replace the published one on the page",
+    apply: () => write("app.js", read("app.js").replace(
+      'return (rows || []).find((r) => r.status === "published") || null;',
+      "return (rows || [])[0] || null;"))
+  },
+  {
+    id: "M8", name: "newer held briefs reported silently",
+    script: "tests/test_brief_tab.js",
+    why: "the reader would not know the numbers on screen are from an older week",
+    apply: () => write("app.js", read("app.js").replace(
+      'return (rows || []).filter((r) => r.status !== "published" && String(r.trade_date) > cut);',
+      "return [];"))
+  },
+  {
+    id: "M9", name: "brief body injected as HTML",
+    script: "tests/test_brief_tab.js",
+    why: "daily_brief holds text a model wrote; unescaped it is a script tag away from running",
+    apply: () => write("app.js", read("app.js").replace(
+      '<p class="text-sm leading-7 text-slate-700">${escapeHtml(s.text)}</p>',
+      '<p class="text-sm leading-7 text-slate-700">${s.text}</p>'))
+  },
+  {
+    id: "M10", name: "brief tab never loads",
+    script: "tests/test_brief_tab.js",
+    why: "an empty tab with no error reads as 'no brief yet' forever",
+    apply: () => write("app.js", read("app.js").replace(
+      'if (tab === "brief" && !state.brief.loaded && !state.brief.loading) loadBriefTab();', ""))
+  },
+  {
+    id: "M11", name: "universe falls back to a list in the file",
+    script: "tests/test_app.js",
+    why: "the page would rank a different set of funds than the weekly brief, and nothing would say so",
+    apply: () => write("app.js", read("app.js").replace(
+      "if (!state.universes.loaded) {", "if (false) {"))
   }
 ];
 
