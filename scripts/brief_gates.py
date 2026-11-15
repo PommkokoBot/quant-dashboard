@@ -229,6 +229,40 @@ def _ranks_offered(cited_ids) -> set[int]:
     return out
 
 
+def _implied_periods(cited_ids, index) -> list:
+    """หมายเลขงวดของหน้าต่างฤดูกาลที่ประโยคอ้างอยู่แล้ว
+
+    ประโยคที่อ้าง seasonal.week_current.win_pct ได้ผูกตัวเองกับหน้าต่าง
+    week_current ไปแล้ว และหน้าต่างนั้นมีหมายเลขงวดค่าเดียวจากแผ่น (46) ·
+    เลข 46 จึงถูกบ่งชี้ด้วยการอ้างนั้น ไม่ต่างจากที่ rank.all_top.1 บ่งชี้
+    ว่าอันดับคือ 1 (ดู _ranks_offered ซึ่งเป็นกลไกเดียวกัน: ตัวระบุมาจาก
+    "ประโยคอ้าง fact ตัวไหน" ไม่ใช่จาก "ประโยคเขียนเลขอะไร")
+
+    ทำไมไม่ใช่การผ่อนด่าน: ค่าที่เพิ่มเข้ามาคือ period ของหน้าต่างที่ถูก
+    อ้างเท่านั้น ไม่ใช่ค่าอื่นของหน้าต่างนั้น และไม่ใช่ period ของหน้าต่าง
+    อื่น · เขียนเลขสัปดาห์ผิด (45) ยังถูกกัก · อ้างแต่สัปดาห์ที่ปิดแล้ว
+    แล้วเขียนเลขของสัปดาห์ถัดไป (47) ก็ยังถูกกัก
+
+    ที่มา: 15 พ.ย. 2026 รอบ no-write ที่สาม · B2a.2 ส่ง period เป็น fact
+    แล้วแต่โมเดลอ้างเฉพาะ win_pct/mean_pct/n กับฐานเทียบ ด่าน 1 จึงยังกัก
+    เลข 46 · การส่ง fact ให้พร้อมใช้ ไม่เท่ากับการที่โมเดลจะอ้างมัน
+    """
+    out = []
+    seen = set()
+    for fid in cited_ids:
+        parts = str(fid).split(".")
+        if len(parts) != 3 or parts[0] != "seasonal":
+            continue
+        sibling = f"seasonal.{parts[1]}.period"
+        if sibling in seen:
+            continue
+        f = index.get(sibling)
+        if f is not None and f.value is not None:
+            seen.add(sibling)
+            out.append(f)
+    return out
+
+
 def _matches(n: float, v: float) -> bool:
     """True when n is v written to the precision n uses.
 
@@ -266,6 +300,8 @@ def gate1_numbers(response: dict, sel: Selection) -> list[Finding]:
 
         cited = [index[fid] for fid in cited_ids if fid in index]
         numeric = [f for f in cited if f.value is not None]
+        # หมายเลขงวดที่หน้าต่างซึ่งประโยคอ้างบ่งชี้ไว้แล้ว (ดู _implied_periods)
+        numeric += _implied_periods(cited_ids, index)
 
         offered = _ranks_offered(cited_ids)
         for pos in _rank_claims(text):

@@ -273,6 +273,23 @@ MUTATIONS = [
      "        if False:\n            out.append(Fact(id=f\"seasonal.{key}.period\",",
      "every brief that names its week would be held by gate 1 again"),
 
+    # ----------------------------------------------- รอบ B2a.3 (15 พ.ย. 2026)
+
+    ("M56", "scripts/brief_gates.py", "the window stops implying its period",
+     "        numeric += _implied_periods(cited_ids, index)",
+     "        numeric += []",
+     "the brief would be held every week for naming the week it summarises"),
+
+    ("M57", "scripts/brief_gates.py", "every seasonal window implies every period",
+     '        if len(parts) != 3 or parts[0] != "seasonal":\n            continue\n        sibling = f"seasonal.{parts[1]}.period"',
+     '        if len(parts) != 3 or parts[0] != "seasonal":\n            continue\n        sibling = "seasonal.week_next.period"',
+     "citing one window would license another window's number"),
+
+    ("M58", "scripts/brief_gates.py", "any sibling of a cited seasonal fact admitted",
+     '        sibling = f"seasonal.{parts[1]}.period"\n        if sibling in seen:',
+     '        sibling = f"seasonal.{parts[1]}.win_pct"\n        if sibling in seen:',
+     "the mechanism must admit the period only, not other values of the window"),
+
     ("M53", "scripts/brief_gates.py", "the current value may come from any sentence",
      '            now = _value_in(cited, "breadth.today.pct")',
      '            now = _value_in(pool_facts, "breadth.today.pct")',
