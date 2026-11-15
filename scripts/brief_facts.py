@@ -49,6 +49,11 @@ RETW_LOOKBACKS = [1, 4]
 REQUIRED_GROUPS_V1 = ["ret.day", "beta", "rank", "pair", "breadth", "events"]
 REQUIRED_GROUPS_V2 = REQUIRED_GROUPS_V1 + ["ret.week", "vol.week", "seasonal"]
 
+# ชื่อเดือนไทยสำหรับป้าย · ค่าจริงของ fact ยังเป็นหมายเลขเดือน (12) ตามแผ่น
+MONTH_TH = {1: "มกราคม", 2: "กุมภาพันธ์", 3: "มีนาคม", 4: "เมษายน", 5: "พฤษภาคม",
+            6: "มิถุนายน", 7: "กรกฎาคม", 8: "สิงหาคม", 9: "กันยายน", 10: "ตุลาคม",
+            11: "พฤศจิกายน", 12: "ธันวาคม"}
+
 # รหัสกลุ่มดิบที่เคยหลุดเข้าไปอยู่ในบทสรุปที่คนอ่าน (11 พ.ย.: "อันดับ 1 ของ all_top")
 # ต้นตอคือป้ายชื่อ fact ที่เราเขียนเอง ไม่ใช่โมเดลดื้อ จึงแก้ที่ป้าย
 RANK_LABEL = {
@@ -311,8 +316,23 @@ def _seasonal_facts(seasonal: dict) -> list[Fact]:
         w = seasonal.get(key) or {}
         if not w.get("available"):
             continue
-        period = w.get("period")
-        head = f"SPY {th} ({period})"
+        # หมายเลขงวดเป็นตัวเลขที่บรีฟจะเอ่ยถึงแน่ ("สัปดาห์ที่ 46") และด่าน 1
+        # ตรวจทุกตัวเลขกับ fact ที่ประโยคอ้าง · ถ้าไม่ส่งเป็น fact เลข 46 จะ
+        # ไม่มีอะไรรองรับและบทสรุปถูกกักทุกสัปดาห์ (เกิดจริง 15 พ.ย. 2026)
+        # แผ่นเก็บ period เป็นจำนวนเต็มทั้งสามงวด: สัปดาห์ ISO หรือหมายเลขเดือน
+        period = _num(w.get("period"))
+        is_week = key.startswith("week")
+        if period is None:
+            head = f"SPY {th}"
+        elif is_week:
+            head = f"SPY {th} (สัปดาห์ที่ {period:g})"
+        else:
+            name = MONTH_TH.get(int(period), "")
+            head = f"SPY {th} (เดือนที่ {period:g}{' · ' + name if name else ''})"
+        if period is not None:
+            out.append(Fact(id=f"seasonal.{key}.period",
+                            label=f"{head} {'หมายเลขสัปดาห์ ISO' if is_week else 'หมายเลขเดือน'}",
+                            value=period, unit="count"))
         for suffix, unit, what in (
             ("win_pct", "pct_level", "สัดส่วนครั้งที่ปิดบวกในอดีต"),
             ("mean_pct", "pct", "ผลตอบแทนเฉลี่ยในอดีต"),

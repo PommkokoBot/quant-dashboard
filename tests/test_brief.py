@@ -144,11 +144,14 @@ def sheet(trade_date: str = "2026-11-09", version: str = "v2") -> dict:
         ["EEM", 3.1], ["EFA", 2.0], ["VNQ", 1.7], ["IWM", 1.28], ["IEF", 0.4]]
     s["groups"]["seasonal"] = {
         "ticker": "SPY", "min_n": 8,
-        "week_current": {"available": True, "period": "สัปดาห์ที่ 46", "n": 10,
+        # period เป็นจำนวนเต็มตามแผ่นจริง (extract(week) / extract(month))
+        # ไม่ใช่ข้อความ — ฟิกซ์เจอร์เคยเขียนเป็น "สัปดาห์ที่ 46" และ "ธันวาคม"
+        # ซึ่งไม่ตรงกับของจริง (พบ 15 พ.ย. 2026)
+        "week_current": {"available": True, "period": 46, "n": 10,
                          "win_pct": 60.0, "mean_pct": 0.42},
-        "week_next": {"available": True, "period": "สัปดาห์ที่ 47", "n": 10,
+        "week_next": {"available": True, "period": 47, "n": 10,
                       "win_pct": 70.0, "mean_pct": 0.85},
-        "month_next": {"available": True, "period": "ธันวาคม", "n": 20,
+        "month_next": {"available": True, "period": 12, "n": 20,
                        "win_pct": 65.0, "mean_pct": 1.10},
         "baseline_week": {"n": 150, "win_pct": 58.9, "mean_pct": 0.21},
         "baseline_month": {"n": 35, "win_pct": 62.3, "mean_pct": 0.78},
@@ -1172,4 +1175,243 @@ def test_prompt_tells_the_model_to_speak_in_weeks_first():
     heading, what = bp.SECTIONS[0]
     assert heading == "ภาพรวม"
     assert "สัปดาห์" in what
-    assert bp.PROMPT_VERSION == "v2.1"
+    assert bp.PROMPT_VERSION == "v2.2"
+
+
+# ===========================================================================
+# รอบ B2a.2 · หมายเลขงวด · ตัวเลขในป้ายชื่อ · ขอบเขตของคำขยายสองค่า · แผ่นจริง
+# ===========================================================================
+
+import json as _json
+from pathlib import Path as _Path
+
+GOLDEN_PATH = _Path(__file__).parent / "fixtures" / "daily_facts_2026-11-13_v2.json"
+
+
+def golden():
+    """แผ่นจริงของ 13 พ.ย. 2026 (v2) ตัดกลุ่มที่บทสรุปไม่ได้อ่าน · ดูหัวไฟล์"""
+    return _json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+
+
+# ------------------------------------------------------------- หมายเลขงวด
+
+def test_period_numbers_are_facts_so_the_brief_may_name_the_week():
+    """"สัปดาห์ที่ 46" คือชื่อของงวด เหมือน "อันดับ 1" · ด่าน 1 ตรวจทุกตัวเลข
+    กับ fact ที่ประโยคอ้าง ถ้าไม่ส่ง period เป็น fact เลข 46 จะไม่มีอะไรรองรับ
+    และบทสรุปถูกกักทุกสัปดาห์ (เกิดจริง 15 พ.ย. 2026 รอบ no-write ที่สอง)
+    """
+    index = SEL.by_id()
+    assert index["seasonal.week_current.period"].value == 46
+    assert index["seasonal.week_next.period"].value == 47
+    assert index["seasonal.month_next.period"].value == 12
+    assert index["seasonal.week_current.period"].unit == "count"
+    # ประโยคที่เอ่ยเลขสัปดาห์ต้องผ่านด่าน 1 ได้เมื่ออ้าง fact นี้
+    ok = say("ในอดีต SPY สัปดาห์ที่ 46 เคยปิดบวก 60.00% จาก 10 ครั้ง "
+             "เทียบค่าปกติทุกสัปดาห์ 58.90%",
+             ["seasonal.week_current.period", "seasonal.week_current.win_pct",
+              "seasonal.week_current.n", "seasonal_baseline.week.win_pct"])
+    assert bg.gate1_numbers(ok, SEL) == []
+    # และยังต้องถูกกักถ้าเขียนเลขสัปดาห์ผิด
+    bad = say("ในอดีต SPY สัปดาห์ที่ 45 เคยปิดบวก 60.00% จาก 10 ครั้ง "
+              "เทียบค่าปกติทุกสัปดาห์ 58.90%",
+              ["seasonal.week_current.period", "seasonal.week_current.win_pct",
+               "seasonal.week_current.n", "seasonal_baseline.week.win_pct"])
+    assert [x.code for x in bg.gate1_numbers(bad, SEL)] == ["unbacked_number"]
+
+
+def test_period_labels_name_the_week_and_the_thai_month():
+    index = SEL.by_id()
+    assert "สัปดาห์ที่ 46" in index["seasonal.week_current.win_pct"].label
+    assert "สัปดาห์ที่ 47" in index["seasonal.week_next.win_pct"].label
+    m = index["seasonal.month_next.win_pct"].label
+    assert "เดือนที่ 12" in m and "ธันวาคม" in m
+
+
+# ------------------------------------------ ตัวเลขในป้ายชื่อต้องเป็น fact เสมอ
+
+def _label_numbers_without_a_fact(sel) -> list[tuple[str, float]]:
+    """เอาตัวดึงตัวเลขของด่าน 1 มารันกับป้ายชื่อ fact ทุกอัน
+
+    ป้ายชื่อคือสิ่งที่โมเดลลอกไปเขียน · ตัวเลขใดในป้ายที่ด่าน 1 จะเรียกหา fact
+    (ไม่ใช่วันที่ · ไม่ใช่ความยาวหน้าต่าง ≤31 ที่ตามด้วยหน่วยเวลา · ไม่ใช่
+    อันดับ · ไม่ใช่เลขที่ติดกับชื่อตัวชี้วัด) ต้องเท่ากับค่าของ fact สักตัว
+    ไม่งั้นโมเดลจะเขียนเลขนั้นแล้วถูกกักในโปรดักชัน — "(46)" เคยเป็นแบบนี้
+    """
+    values = [f.value for f in sel.facts if f.value is not None]
+    missing = []
+    for f in sel.facts:
+        for n, _tail in bg._numbers(f.label):
+            if not any(bg._matches(n, v) for v in values):
+                missing.append((f.id, n))
+    return missing
+
+
+def test_every_number_shown_in_a_label_is_backed_by_a_fact():
+    assert _label_numbers_without_a_fact(SEL) == []
+    assert _label_numbers_without_a_fact(SEL_V1) == []
+
+
+def test_the_label_number_check_itself_can_go_red():
+    # ชุดเทสต์ต้องพิสูจน์ว่าแดงได้: ป้ายที่มีเลข 46 โดยไม่มี fact ค่า 46 ต้องถูกจับ
+    sel = bf.Selection(
+        facts=[bf.Fact(id="x.one", label="SPY สัปดาห์ที่ปิดแล้ว (สัปดาห์ที่ 46) อะไรสักอย่าง",
+                       value=60.0, unit="pct_level")],
+        universe=set(), trade_date="2026-11-13")
+    assert _label_numbers_without_a_fact(sel) == [("x.one", 46.0)]
+
+
+# ----------------------------------------- คำขยายสองค่า: ไม่สมมาตรโดยตั้งใจ
+
+def _weak_sheet():
+    s = sheet()
+    s["groups"]["breadth"]["today"]["pct"] = 45.1612903225806
+    s["groups"]["breadth"]["today"]["above"] = 42
+    return bf.select_facts(s)
+
+
+def _two_sentence_section(first_facts, second_facts, heading="ความกว้างของตลาดและปฏิทิน"):
+    return {"sections": [{"heading": heading, "sentences": [
+        {"text": "ความกว้างของตลาดอ่อนแอลง อยู่ที่ 45.16% หรือ 42 กอง จาก 93 กอง",
+         "facts": first_facts},
+        {"text": "เทียบกับ 21 วันก่อนหน้าที่ 54.84%", "facts": second_facts},
+    ]}]}
+
+
+def test_fragile_word_passes_when_the_comparison_sits_in_the_next_sentence():
+    """15 พ.ย. 2026 รอบ no-write ที่สอง: ข้อมูลเดียวกัน กฎเดียวกัน ผ่านเมื่อ
+    โมเดลเขียนรวมประโยค ถูกกักเมื่อแยกประโยค — ด่านกำลังวัดตำแหน่งจุด
+    """
+    sel = _weak_sheet()
+    r = _two_sentence_section(
+        ["breadth.today.pct", "breadth.today.above", "breadth.today.universe"],
+        ["breadth.prior_21d.pct"])
+    assert bg.gate4_adjectives(r, sel) == []
+    assert bg.gate1_numbers(r, sel) == []
+
+
+def test_fragile_word_still_needs_the_current_value_in_its_own_sentence():
+    # คำขยายต้องเกาะอยู่กับตัวเลขที่มันตัดสิน · ประโยคที่มีคำแต่ไม่อ้างค่าล่าสุด
+    # ต้องถูกกัก แม้หัวข้อเดียวกันจะมีค่าทั้งสองอยู่ในประโยคอื่น
+    sel = _weak_sheet()
+    r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+        {"text": "ภาวะตลาดอ่อนแอลง", "facts": []},
+        {"text": "สัดส่วนเหนือ SMA200 อยู่ที่ 45.16% จาก 54.84% เมื่อ 21 วันก่อน",
+         "facts": ["breadth.today.pct", "breadth.prior_21d.pct"]},
+    ]}]}
+    f = bg.gate4_adjectives(r, sel)
+    assert [x.code for x in f] == ["unbacked_adjective"]
+    assert "ประโยคนี้" in f[0].detail
+
+
+def test_fragile_word_does_not_borrow_the_comparison_from_another_section():
+    sel = _weak_sheet()
+    r = {"sections": [
+        {"heading": "ภาพรวม", "sentences": [
+            {"text": "ความกว้าง 21 วันก่อนอยู่ที่ 54.84%", "facts": ["breadth.prior_21d.pct"]}]},
+        {"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+            {"text": "ความกว้างของตลาดอ่อนแอลง อยู่ที่ 45.16%", "facts": ["breadth.today.pct"]}]},
+    ]}
+    assert [x.code for x in bg.gate4_adjectives(r, sel)] == ["unbacked_adjective"]
+
+
+def test_fragile_word_direction_is_still_checked_across_sentences():
+    # ขอบเขตกว้างขึ้น แต่เงื่อนไขตัวเลขไม่ผ่อน: ถ้าค่าเดิมต่ำกว่า (กำลังดีขึ้น) ต้องกัก
+    s = sheet()
+    s["groups"]["breadth"]["today"]["pct"] = 45.1612903225806
+    s["groups"]["breadth"]["prior_21d"]["pct"] = 40.0
+    sel = bf.select_facts(s)
+    r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+        {"text": "ความกว้างของตลาดอ่อนแอลง อยู่ที่ 45.16%", "facts": ["breadth.today.pct"]},
+        {"text": "เทียบกับ 21 วันก่อนที่ 40.00%", "facts": ["breadth.prior_21d.pct"]},
+    ]}]}
+    assert [x.code for x in bg.gate4_adjectives(r, sel)] == ["unbacked_adjective"]
+
+
+def test_single_value_adjectives_keep_sentence_scope():
+    # ผ่อนเฉพาะคำสองค่า · "ผิดปกติ" ยังต้องมีเปอร์เซ็นไทล์ในประโยคเดียวกัน
+    r = {"sections": [{"heading": "คู่เทียบ", "sentences": [
+        {"text": "ส่วนต่าง QQQ − SPY ต่ำผิดปกติ", "facts": []},
+        {"text": "อยู่ที่เปอร์เซ็นไทล์ 0.11", "facts": ["pair.qqq_spy.pctile_3y"]},
+    ]}]}
+    # "ต่ำผิดปกติ" ชนทั้ง "ผิดปกติ" และ "ต่ำผิดปกติ" ในบัญชี จึงได้สอง finding
+    f = bg.gate4_adjectives(r, SEL)
+    assert f and all(x.code == "unbacked_adjective" for x in f)
+
+
+# -------------------------------------------------- แผ่นจริง (golden fixture)
+
+def test_golden_sheet_matches_its_recorded_md5():
+    """ไฟล์นี้ต้องเป็นแผ่นจริงทุกไบต์ ไม่ใช่สิ่งที่ใครเข้าใจว่าแผ่นจริงเป็น
+
+    md5 คิดจากข้อความ JSON ของ sheet ตามรูปแบบ jsonb::text ของ Postgres
+    ซึ่งเป็นสิ่งที่คิวรีในหัวไฟล์คืนมา · ถ้าใครแก้ค่าในไฟล์ด้วยมือ เทสต์นี้แดง
+    """
+    import hashlib
+    txt = GOLDEN_PATH.read_text(encoding="utf-8")
+    start = txt.index('"sheet": ') + len('"sheet": ')
+    end = txt.rindex("\n}")
+    g = golden()
+    assert hashlib.md5(txt[start:end].encode("utf-8")).hexdigest() == g["trimmed_md5"]
+    assert len(txt[start:end]) == g["trimmed_chars"]
+
+
+def test_golden_sheet_is_accepted_by_gate0_and_selects_every_group():
+    g = golden()["sheet"]
+    assert g["meta"]["facts_version"] == "v2"
+    assert bf.missing_groups(g) == []
+    sel = bf.select_facts(g)
+    ids = {f.id for f in sel.facts}
+    for prefix in ("ret.", "retw.", "volw.", "beta.", "rank.", "pair.", "breadth.",
+                   "events.", "seasonal.", "seasonal_baseline."):
+        assert any(i.startswith(prefix) for i in ids), f"ไม่มี fact ขึ้นต้นด้วย {prefix}"
+
+
+def test_golden_sheet_values_reach_the_model_unchanged():
+    # ตัวเลขที่ตรวจกับฐานข้อมูลจริงเมื่อ 15 พ.ย. 2026
+    sel = bf.select_facts(golden()["sheet"])
+    index = sel.by_id()
+    assert index["retw.SPY.1w"].value == 2.5948969331844
+    assert index["volw.PAWZ.z"].value == 1.70983070668752
+    assert index["volw.PAWZ.rvol"].value == 2.34441757717997
+    assert index["seasonal.week_current.period"].value == 46
+    assert index["seasonal_baseline.week.n"].value == 521
+    assert index["breadth.today.pct"].value == 45.1612903225806
+    assert "สัปดาห์ที่เริ่ม 2026-11-09" in index["volw.PAWZ.z"].label
+
+
+def test_golden_sheet_labels_pass_the_same_label_rules_as_the_synthetic_one():
+    sel = bf.select_facts(golden()["sheet"])
+    for f in sel.facts:
+        for w in READER_RELATIVE_WORDS:
+            assert w not in f.label, f"{f.id}: {w}"
+        for code in bg.RAW_CODES:
+            assert code not in f.label, f"{f.id}: {code}"
+    assert _label_numbers_without_a_fact(sel) == []
+
+
+def test_golden_sheet_reproduces_the_second_no_write_run_and_now_passes():
+    """ประโยคที่ถูกกักจริงเมื่อ 15 พ.ย. 2026 (เลขสัปดาห์ + การเปรียบเทียบที่แยกประโยค)
+    ต้องผ่านด้วยกฎของรอบนี้ โดยตัวเลขทุกตัวยังถูกตรวจ
+    """
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [
+        {"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+            {"text": "ภาวะตลาดอ่อนแอลง โดยสัดส่วนกองทุนที่อยู่เหนือ SMA200 ณ วันที่ 2026-11-13 "
+                     "ลดลงมาอยู่ที่ 45.16% หรือคิดเป็น 42 กองจากทั้งหมด 93 กองทุนที่ติดตาม",
+             "facts": ["breadth.today.pct", "breadth.today.above", "breadth.today.universe"]},
+            {"text": "เมื่อเทียบกับ 21 วันก่อนหน้าที่สัดส่วนกองทุนเหนือ SMA200 อยู่ที่ 55.91% "
+                     "หรือคิดเป็น 52 กองจากทั้งหมด 93 กองทุนที่ติดตาม",
+             "facts": ["breadth.prior_21d.pct", "breadth.prior_21d.above",
+                       "breadth.prior_21d.universe"]},
+        ]},
+        {"heading": "สถิติฤดูกาล", "sentences": [
+            {"text": "ในอดีต SPY สัปดาห์ที่ 46 เคยมีสัดส่วนครั้งที่ปิดบวก 60.00% และมีผลตอบแทน"
+                     "เฉลี่ย +0.27% จากการคิดคำนวณ 10 ครั้ง เมื่อเทียบกับค่าปกติทุกสัปดาห์ที่มี"
+                     "สัดส่วนปิดบวก 58.90% และผลตอบแทนเฉลี่ย +0.29% จาก 521 งวด",
+             "facts": ["seasonal.week_current.period", "seasonal.week_current.win_pct",
+                       "seasonal.week_current.mean_pct", "seasonal.week_current.n",
+                       "seasonal_baseline.week.win_pct", "seasonal_baseline.week.mean_pct",
+                       "seasonal_baseline.week.n"]},
+        ]},
+    ]}
+    assert bg.validate(r, sel) == []

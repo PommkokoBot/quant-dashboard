@@ -265,6 +265,23 @@ MUTATIONS = [
      '    week_of = f"สัปดาห์ที่เริ่ม {week_start}" if week_start else "สัปดาห์ที่ปิดแล้ว"',
      '    week_of = "สัปดาห์นี้"',
      "every volume sentence would be wrong to anyone reading it a week later"),
+
+    # ----------------------------------------------- รอบ B2a.2 (15 พ.ย. 2026)
+
+    ("M52", "scripts/brief_facts.py", "the period number stops being a fact",
+     "        if period is not None:\n            out.append(Fact(id=f\"seasonal.{key}.period\",",
+     "        if False:\n            out.append(Fact(id=f\"seasonal.{key}.period\",",
+     "every brief that names its week would be held by gate 1 again"),
+
+    ("M53", "scripts/brief_gates.py", "the current value may come from any sentence",
+     '            now = _value_in(cited, "breadth.today.pct")',
+     '            now = _value_in(pool_facts, "breadth.today.pct")',
+     "a sentence could carry the verdict and no number at all"),
+
+    ("M54", "scripts/brief_gates.py", "section pools leak into each other",
+     "        ids = set()\n        for s in section.get(\"sentences\") or []:",
+     "        ids = set().union(*(set(f.id for f in p) for p in pools)) if pools else set()\n        for s in section.get(\"sentences\") or []:",
+     "a comparison cited in the overview would license a verdict five sections later"),
 ]
 
 
