@@ -19,7 +19,7 @@ from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
                          SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
                          VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v2.4"
+PROMPT_VERSION = "v2.5"
 
 # เป้าหมายจำนวนตัวเลขต่อหัวข้อ (รอบ B2b-1.1 · 16 พ.ย. 2026)
 #
@@ -37,7 +37,7 @@ SECTION_NUMBERS_TARGET = 12
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "78a7785f5dbb"
+PROMPT_FINGERPRINT = "2e17ec031830"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -99,9 +99,9 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
    - {leader}: ต้องอ้าง fact ที่เป็นอันดับต้น (rank.*_top.*)
    - {volume}: ต้องอ้างปริมาณซื้อขายรายสัปดาห์ของกองนั้น และต้องถึง
      z {vol_z:g} ขึ้นไป หรือ {vol_r:g} เท่าของฐานขึ้นไป
-   - {fragile}: ประโยคนั้นต้องอ้างความกว้างของตลาดค่าล่าสุด และต้องมีประโยค
-     ในหัวข้อเดียวกันที่อ้างค่า 21 วันก่อน โดยค่าล่าสุดต้องต่ำกว่า {weak:g}%
-     และต่ำกว่าค่าเดิม
+   - {fragile}: ประโยคนั้นต้องอ้าง fact ความกว้างของตลาดอย่างน้อยหนึ่งตัว
+     และหัวข้อเดียวกันต้องมีทั้งค่าล่าสุดและค่า 21 วันก่อน โดยค่าล่าสุด
+     ต้องต่ำกว่า {weak:g}% และต่ำกว่าค่าเดิม
    - {diverge}: ต้องอ้างตัวเลขสองตัวที่ทิศทางต่างกันจริงในประโยคเดียวกัน
    - {strong}: ต้องอ้างตำแหน่งราคาในกรอบ 1 ปีของกองนั้น (risk.*.pos_52w)
      และค่าต้องถึง {strong_min:g} ขึ้นไป
@@ -132,6 +132,12 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
     ห้ามเขียนคำว่า "อันดับ N" คลุมกองมากกว่าหนึ่งกองด้วยคำเดียว เพราะสองกอง
     ที่ปัดทศนิยมแล้วเท่ากัน ยังเป็นอันดับที่ต่างกันอยู่ ถ้าจำเป็นต้องระบุเลข
     อันดับจริง ให้เขียนทีละกองพร้อมเลขของกองนั้นเอง
+15. ชื่อ fact id เป็นที่อยู่ของตัวเลข ไม่ใช่คำบอกความยาวของช่วงเวลา
+    ห้ามเดาความยาวของช่วงจากชื่อ id เช่น pctile_3y ไม่ได้แปลว่า "3 ปี"
+    ถ้าจะบอกว่าเปอร์เซ็นไทล์คิดจากช่วงยาวเท่าไร ให้ใช้จำนวนวันจาก fact ที่
+    บอกไว้ (pair.*.n_days) เท่านั้น หรือไม่ต้องบอกความยาวของช่วงเลย
+    และคำว่า "กรอบ 1 ปี" ในข้อ 12 ใช้กับตัวเลข risk.* เท่านั้น
+    ห้ามดัดแปลงเป็น "กรอบ N ปี" กับตัวเลขกลุ่มอื่น
 
 ภาษา เขียนภาษาไทย แต่คง ticker และศัพท์เทคนิคไว้เป็นภาษาอังกฤษ
 เช่น SPY, Breadth, Momentum, Low Beta, SMA200, drawdown

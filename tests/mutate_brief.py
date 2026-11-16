@@ -340,8 +340,8 @@ MUTATIONS = [
      'a reader would be shown "pos_52w" as if it were a word'),
 
     ("M69", "scripts/brief_prompt.py", "the new rule added without a version bump",
-     'PROMPT_VERSION = "v2.4"', 'PROMPT_VERSION = "v2.3"',
-     "briefs written under the risk rules would claim the older prompt"),
+     'PROMPT_VERSION = "v2.5"', 'PROMPT_VERSION = "v2.4"',
+     "briefs written under the new rules would claim the older prompt"),
 
     # ---- รอบ B2b-1.1 · prompt บอกให้เลือก + วิธีเรียงลำดับ ----------------
     ("M72", "scripts/brief_prompt.py", "the pick-don't-list rule removed",
@@ -379,6 +379,24 @@ MUTATIONS = [
      "        ids = set()\n        for s in section.get(\"sentences\") or []:",
      "        ids = set().union(*(set(f.id for f in p) for p in pools)) if pools else set()\n        for s in section.get(\"sentences\") or []:",
      "a comparison cited in the overview would license a verdict five sections later"),
+
+    # ---------------------------------------------------------- รอบ B2b-1.2
+    ("M76", "scripts/brief_gates.py", "the breadth-citation condition dropped",
+     '            if now is None and any(f.id.startswith("breadth.") for f in cited):',
+     "            if now is None:",
+     'a sentence about one fund ("ส่วนต่าง QQQ − SPY อ่อนแอลง") would borrow '
+     "the market-breadth evidence from a neighbouring sentence"),
+
+    ("M77", "scripts/brief.py", "the published edition is no longer protected",
+     '    return bool(prior) and prior.get("status") == "published" and not force',
+     "    return False",
+     "Sunday's run would call the model again and overwrite Saturday's "
+     "published brief in place, with no revision kept"),
+
+    ("M78", "scripts/brief_prompt.py", "the do-not-guess-the-window rule removed",
+     "15. ชื่อ fact id เป็นที่อยู่ของตัวเลข", "15. (ว่าง)",
+     'the brief would again call a 721-day percentile "ในรอบ 3 ปี" because an '
+     "id says 3y"),
 ]
 
 
