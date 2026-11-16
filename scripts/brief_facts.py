@@ -41,7 +41,31 @@ RET_LOOKBACKS = [21]
 # Weekly returns, which is the granularity the brief's own title claims.
 # Without these every sentence about "this week" had no fact to cite -- the
 # gap that made every volume claim in the 14 พ.ย. draft contradict the sheet.
-RETW_LOOKBACKS = [1, 4]
+# 13 สัปดาห์เพิ่มในรอบ B2b-1 (16 พ.ย. 2026): แผ่น v2 พกมาตั้งแต่ต้น
+# (keys [1, 4, 13]) แต่ไม่เคยถูกส่งเข้า prompt · ต่างจาก 5 วันที่ถูกตัดออก
+# เพราะซ้ำกับ 1 สัปดาห์ ค่านี้ไม่ซ้ำกับกรอบเวลาใดที่ส่งอยู่
+RETW_LOOKBACKS = [1, 4, 13]
+
+# ---- ความผันผวนและตำแหน่งราคา (รอบ B2b-1) --------------------------------
+# กลุ่ม risk อยู่บนแผ่นมาตั้งแต่ v1 แต่บทสรุปไม่เคยอ่าน · คีย์ทั้งสี่ตรงกับ
+# risk_metrics() ในฐานข้อมูล
+#
+# ป้ายเรียกช่วงนี้ว่า "กรอบ 1 ปี" เสมอ ไม่ใช่ "52 สัปดาห์" (มติรอบ B2b):
+# เลข 52 ไม่มี fact รองรับ ด่าน 1 จึงกักทุกประโยคที่เขียนเลขนี้ — ป้ายต้อง
+# ไม่ชวนให้โมเดลเขียนคำที่จะถูกจับ (บทเรียนเดียวกับป้าย "วันนี้")
+#
+# หน่วยของตำแหน่งราคาคือ pct_level (สัดส่วน ไม่มีเครื่องหมาย +) ส่วนระยะห่าง
+# จากจุดสูงสุดเป็น pct ที่มีเครื่องหมาย เพราะค่านี้ติดลบหรือเป็นศูนย์เท่านั้น
+RISK_FIELDS = [
+    ("atr_pct", "pct_level", "ATR คิดเป็นสัดส่วนของราคา"),
+    ("atr_pctile_1y", "pctile", "เปอร์เซ็นไทล์ของ ATR ในกรอบ 1 ปี"),
+    ("pos_52w", "pct_level",
+     "ตำแหน่งราคาในกรอบ 1 ปี (ร้อยละของระยะจากจุดต่ำสุดถึงจุดสูงสุดของกรอบ)"),
+    ("pct_from_high", "pct", "ระยะห่างจากจุดสูงสุดของกรอบ 1 ปี"),
+]
+# เฉพาะ asset class + broad market และห้าตัวบนของทั้งลิสต์ ด้วยเหตุผลเดียวกับ
+# ปริมาณซื้อขาย: ตัวเลขที่ส่งไปแต่ไม่ได้ใช้ คือตัวเลขที่โมเดลอาจหยิบมาพูด
+RISK_TOP_N = 5
 
 # v1 sheets were frozen before the weekly groups existed. Demanding the new
 # groups from them would hold every brief built from an older sheet, so gate 0
@@ -238,6 +262,11 @@ def select_facts(sheet: dict) -> Selection:
                                   "เป็นกี่เท่าของฐาน 20 สัปดาห์",
                             value=rvol, unit="times", ticker=ticker))
 
+    # ---- ความผันผวนและตำแหน่งราคาในกรอบ 1 ปี (รอบ B2b-1) -------------------
+    top = [p[0] for p in (rank.get("all_top") or [])[:RISK_TOP_N]
+           if isinstance(p, list) and len(p) == 2]
+    out.extend(_risk_facts(groups.get("risk", {}), ret_tickers + top))
+
     # ---- สถิติฤดูกาล ต้องมาคู่กับฐานเทียบเสมอ (รอบ B2a) --------------------
     out.extend(_seasonal_facts(groups.get("seasonal", {})))
 
@@ -294,6 +323,37 @@ def _asset_class_tickers(groups: dict) -> list[str]:
         if tickers:
             return tickers
     return list(ASSET_CLASS_FALLBACK)
+
+
+def _risk_facts(risk: dict, tickers: list[str]) -> list[Fact]:
+    """ATR และตำแหน่งราคาในกรอบ 1 ปี ของกองที่บทสรุปพูดถึงอยู่แล้ว
+
+    อ่านตำแหน่งของค่าจาก keys ของแผ่นเอง ไม่ยึดลำดับตายตัว: ถ้าฐานข้อมูล
+    เพิ่มหรือสลับคอลัมน์ ค่าจะยังไปถูกชื่อ และคีย์ที่แผ่นไม่มีจะไม่ถูกส่ง
+    แทนที่จะส่งค่าของคอลัมน์ข้างเคียงไปใต้ป้ายผิด
+    """
+    out: list[Fact] = []
+    if not isinstance(risk, dict) or risk.get("available") is False:
+        return out
+    keys = list(risk.get("keys") or [])
+    values = risk.get("values") or {}
+    seen: set[str] = set()
+    for ticker in tickers:
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        row = values.get(ticker)
+        if not isinstance(row, list):
+            continue
+        for key, unit, what in RISK_FIELDS:
+            if key not in keys or keys.index(key) >= len(row):
+                continue
+            v = _num(row[keys.index(key)])
+            if v is None:
+                continue
+            out.append(Fact(id=f"risk.{ticker}.{key}", label=f"{ticker} {what}",
+                            value=v, unit=unit, ticker=ticker))
+    return out
 
 
 def _seasonal_facts(seasonal: dict) -> list[Fact]:

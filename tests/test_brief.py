@@ -103,8 +103,21 @@ def sheet(trade_date: str = "2026-11-09", version: str = "v2") -> dict:
                           {"date": "2026-11-20", "name": "วันหมดอายุออปชันรายเดือน",
                            "type": "opex_monthly"}],
             },
+            # รอบ B2b-1: บทสรุปเริ่มอ่าน risk · รูปร่างตรงกับแผ่นจริงของ 13 พ.ย.
+            # (keys สี่ตัว · values เป็นแถวตามลำดับ keys) ค่าปัดจากของจริง
+            "risk": {
+                "available": True, "unit": "pct", "source": "risk_metrics(active)",
+                "keys": ["atr_pct", "atr_pctile_1y", "pos_52w", "pct_from_high"],
+                "values": {
+                    "SPY": [1.69, 100, 82.48, -3.49],
+                    "QQQ": [2.74, 98.41, 60.20, -10.88],
+                    "DBC": [1.72, 61.90, 73.20, -9.81],
+                    "PAWZ": [1.71, 98.02, 87.47, -2.50],
+                    # ไม่ใช่ asset class และไม่ได้อยู่ห้าอันดับแรก ต้องไม่ถูกส่ง
+                    "XLK": [3.68, 98.81, 57.11, -16.22],
+                },
+            },
             # groups the brief does not use -- present so the fixture matches reality
-            "risk": {"available": True, "values": {}},
             "health": {"available": True, "health": {}},
             "macro": {"items": []},
             "vol.day": {"keys": ["z", "rvol"], "values": {}},
@@ -197,7 +210,8 @@ def test_values_carry_through_unrounded():
 
 def test_facts_from_groups_the_brief_does_not_use_are_absent():
     ids = {f.id for f in SEL.facts}
-    assert not any(i.startswith(("risk.", "health.", "vol.", "macro.")) for i in ids)
+    # risk ออกจากรายการนี้ในรอบ B2b-1 (บทสรุปเริ่มอ่าน) · ดู test_risk_* ท้ายไฟล์
+    assert not any(i.startswith(("health.", "vol.", "macro.")) for i in ids)
 
 
 def test_rank_and_pair_and_events_are_all_citable():
@@ -441,13 +455,13 @@ def test_prompt_is_versioned():
     assert bp.PROMPT_VERSION
 
 
-def test_user_prompt_carries_every_fact_and_the_five_headings():
+def test_user_prompt_carries_every_fact_and_every_heading():
     text = bp.build_user(SEL)
     for f in SEL.facts:
         assert f.id in text, f"{f.id} ไม่ได้ถูกส่งให้โมเดล"
     for heading, _what in bp.SECTIONS:
         assert heading in text
-    assert len(bp.SECTIONS) == 6
+    assert len(bp.SECTIONS) == 7      # รอบ B2b-1 เพิ่ม "ความผันผวนและตำแหน่งราคา"
     assert SEL.trade_date in text
 
 
@@ -835,7 +849,9 @@ SEL_V1 = bf.select_facts(sheet(version="v1"))
 def test_weekly_returns_reach_the_model():
     ids = {f.id for f in SEL.facts}
     assert "retw.SPY.1w" in ids and "retw.SPY.4w" in ids
-    assert "retw.SPY.13w" not in ids, "13 สัปดาห์อยู่ในแผ่นแต่ไม่ส่งเข้า prompt"
+    # 13 สัปดาห์อยู่ในแผ่นมาตลอด เริ่มส่งเข้า prompt ในรอบ B2b-1
+    assert "retw.SPY.13w" in ids
+    assert SEL.by_id()["retw.SPY.13w"].value == 3.40
     assert SEL.by_id()["retw.QQQ.4w"].value == -6.80
 
 
@@ -1175,7 +1191,7 @@ def test_prompt_tells_the_model_to_speak_in_weeks_first():
     heading, what = bp.SECTIONS[0]
     assert heading == "ภาพรวม"
     assert "สัปดาห์" in what
-    assert bp.PROMPT_VERSION == "v2.2"
+    assert bp.PROMPT_VERSION == "v2.3"
 
 
 # ===========================================================================
@@ -1362,7 +1378,7 @@ def test_golden_sheet_is_accepted_by_gate0_and_selects_every_group():
     sel = bf.select_facts(g)
     ids = {f.id for f in sel.facts}
     for prefix in ("ret.", "retw.", "volw.", "beta.", "rank.", "pair.", "breadth.",
-                   "events.", "seasonal.", "seasonal_baseline."):
+                   "events.", "seasonal.", "seasonal_baseline.", "risk."):
         assert any(i.startswith(prefix) for i in ids), f"ไม่มี fact ขึ้นต้นด้วย {prefix}"
 
 
@@ -1505,3 +1521,213 @@ def test_the_real_held_brief_now_passes_every_gate_on_the_real_sheet():
                    "seasonal_baseline.week.mean_pct"]},
     ]}]}
     assert bg.validate(r, sel) == []
+
+
+# ===========================================================================
+# รอบ B2b-1 · ความผันผวนและตำแหน่งราคา (กลุ่ม risk) · คำว่า แข็งแกร่ง / ขยายตัวชัด
+# ===========================================================================
+
+RISK_KEYS = ["atr_pct", "atr_pctile_1y", "pos_52w", "pct_from_high"]
+
+
+def test_risk_facts_reach_the_model_for_the_funds_the_brief_already_covers():
+    ids = {f.id for f in SEL.facts if f.id.startswith("risk.")}
+    for t in ("SPY", "QQQ", "DBC", "PAWZ"):       # asset class · broad · หัวแถว
+        for k in RISK_KEYS:
+            assert f"risk.{t}.{k}" in ids
+    # XLK มีค่าอยู่ในแผ่น แต่ไม่ใช่กองที่บทสรุปพูดถึงอยู่แล้ว
+    assert not any(i.startswith("risk.XLK") for i in ids)
+    index = SEL.by_id()
+    assert index["risk.SPY.pos_52w"].value == 82.48
+    assert index["risk.SPY.pct_from_high"].value == -3.49
+    assert index["risk.SPY.atr_pctile_1y"].unit == "pctile"
+
+
+def test_risk_values_follow_the_sheets_keys_not_a_fixed_position():
+    # สลับคอลัมน์ในแผ่น: ค่าต้องตามชื่อคีย์ไป ไม่ใช่ตามตำแหน่งเดิม
+    s = sheet()
+    s["groups"]["risk"]["keys"] = ["pos_52w", "pct_from_high", "atr_pct", "atr_pctile_1y"]
+    s["groups"]["risk"]["values"]["SPY"] = [82.48, -3.49, 1.69, 100]
+    index = bf.select_facts(s).by_id()
+    assert index["risk.SPY.pos_52w"].value == 82.48
+    assert index["risk.SPY.atr_pct"].value == 1.69
+    assert index["risk.SPY.atr_pctile_1y"].value == 100
+
+    # คีย์ที่แผ่นไม่มี ต้องไม่ถูกส่ง (ไม่ใช่ส่งค่าของคอลัมน์ข้าง ๆ ไปแทน)
+    s2 = sheet()
+    s2["groups"]["risk"]["keys"] = ["atr_pct", "atr_pctile_1y", "pos_52w"]
+    s2["groups"]["risk"]["values"]["SPY"] = [1.69, 100, 82.48]
+    ids2 = {f.id for f in bf.select_facts(s2).facts}
+    assert "risk.SPY.pos_52w" in ids2 and "risk.SPY.pct_from_high" not in ids2
+
+
+def test_a_sheet_without_risk_still_makes_a_brief():
+    # risk ไม่อยู่ใน REQUIRED_GROUPS โดยตั้งใจ: แผ่น v1 ที่แช่แข็งแล้วต้องไม่ถูกกัก
+    for mutate in (lambda g: g.pop("risk"),
+                   lambda g: g.__setitem__("risk", {"available": False})):
+        s = sheet()
+        mutate(s["groups"])
+        assert bf.missing_groups(s) == []
+        assert not any(f.id.startswith("risk.") for f in bf.select_facts(s).facts)
+
+
+def test_risk_labels_call_the_window_one_year_and_never_fifty_two_weeks():
+    labels = [f.label for f in SEL.facts if f.id.startswith("risk.")]
+    assert labels
+    for label in labels:
+        assert "52" not in label and "สัปดาห์" not in label, label
+    for f in SEL.facts:
+        if f.id.endswith((".atr_pctile_1y", ".pos_52w", ".pct_from_high")):
+            assert "กรอบ 1 ปี" in f.label, f.id
+
+
+def test_writing_fifty_two_weeks_is_held_because_no_fact_carries_that_number():
+    r = say("SPY อยู่ที่ 82.48% ของกรอบ 52 สัปดาห์", ["risk.SPY.pos_52w"])
+    assert [x.code for x in bg.gate1_numbers(r, SEL)] == ["unbacked_number"]
+    ok = say("SPY อยู่ที่ 82.48% ของกรอบ 1 ปี ห่างจากจุดสูงสุดของกรอบ 3.49% ในทิศลดลง",
+             ["risk.SPY.pos_52w", "risk.SPY.pct_from_high"])
+    assert bg.validate(ok, SEL) == []
+
+
+def test_position_is_printed_as_a_level_and_distance_keeps_its_sign():
+    text = bp.build_user(SEL)
+    assert "risk.SPY.pos_52w | " in text
+    pos_line = next(l for l in text.splitlines() if l.startswith("risk.SPY.pos_52w |"))
+    assert pos_line.endswith("| 82.48%"), pos_line        # ไม่มี + นำหน้า
+    high_line = next(l for l in text.splitlines() if l.startswith("risk.SPY.pct_from_high |"))
+    assert high_line.endswith("| -3.49%"), high_line
+    atr_line = next(l for l in text.splitlines() if l.startswith("risk.SPY.atr_pct |"))
+    assert atr_line.endswith("| 1.69%"), atr_line
+
+
+def test_gate3_refuses_raw_risk_keys_in_the_prose():
+    for code in ("pos_52w", "atr_pctile_1y", "pct_from_high", "atr_pct"):
+        f = bg.gate3_language(say(f"SPY มี {code} สูง", ["risk.SPY.pos_52w"]))
+        assert any(x.code == "raw_code" for x in f), code
+
+
+def _codes4(text, facts, sel=None):
+    return [x.code for x in bg.gate4_adjectives(say(text, facts), sel or SEL)]
+
+
+def test_strong_word_needs_a_position_in_the_upper_part_of_the_range():
+    assert bg.STRONG_POS_MIN == 80.0
+    # SPY 82.48 ถึงเกณฑ์
+    assert _codes4("SPY แข็งแกร่ง อยู่ที่ 82.48% ของกรอบ 1 ปี", ["risk.SPY.pos_52w"]) == []
+    # QQQ 60.20 ไม่ถึง
+    assert _codes4("QQQ แข็งแกร่ง อยู่ที่ 60.20% ของกรอบ 1 ปี",
+                   ["risk.QQQ.pos_52w"]) == ["unbacked_adjective"]
+    # ไม่ได้อ้างตำแหน่งราคาเลย
+    assert _codes4("SPY แข็งแกร่ง", ["retw.SPY.1w"]) == ["unbacked_adjective"]
+    # ขอบเกณฑ์: 80 พอดีผ่าน · 79.99 ไม่ผ่าน
+    for value, want in ((80.0, []), (79.99, ["unbacked_adjective"])):
+        sel = bf.Selection(facts=[bf.Fact(id="risk.AAA.pos_52w", label="x", value=value,
+                                          unit="pct_level", ticker="AAA")],
+                           universe={"AAA"}, trade_date="2026-11-13")
+        assert _codes4("AAA แข็งแกร่ง", ["risk.AAA.pos_52w"], sel) == want, value
+
+
+def test_strong_word_is_tied_to_the_position_fact_not_to_any_high_level():
+    # สัดส่วนอื่นที่สูงเกิน 80 (เช่น breadth หรือสถิติฤดูกาล) ไม่ได้พิสูจน์ว่ากองไหนแข็งแกร่ง
+    sel = bf.Selection(
+        facts=[bf.Fact(id="breadth.today.pct", label="x", value=85.0, unit="pct_level"),
+               bf.Fact(id="risk.AAA.atr_pct", label="x", value=90.0, unit="pct_level",
+                       ticker="AAA")],
+        universe={"AAA"}, trade_date="2026-11-13")
+    assert _codes4("ตลาดแข็งแกร่ง 85%", ["breadth.today.pct"], sel) == ["unbacked_adjective"]
+    assert _codes4("AAA แข็งแกร่ง", ["risk.AAA.atr_pct"], sel) == ["unbacked_adjective"]
+
+
+def test_expand_word_needs_an_atr_percentile_at_the_top_of_the_range():
+    assert bg.EXPAND_ATR_PCTILE == 90.0
+    assert _codes4("ATR ของ SPY ขยายตัวชัด ที่เปอร์เซ็นไทล์ 100 ของกรอบ 1 ปี",
+                   ["risk.SPY.atr_pctile_1y"]) == []
+    assert _codes4("ATR ของ DBC ขยายตัวชัด ที่เปอร์เซ็นไทล์ 61.90",
+                   ["risk.DBC.atr_pctile_1y"]) == ["unbacked_adjective"]
+    for value, want in ((90.0, []), (89.99, ["unbacked_adjective"])):
+        sel = bf.Selection(facts=[bf.Fact(id="risk.AAA.atr_pctile_1y", label="x",
+                                          value=value, unit="pctile", ticker="AAA")],
+                           universe={"AAA"}, trade_date="2026-11-13")
+        assert _codes4("ATR ของ AAA ขยายตัวชัด", ["risk.AAA.atr_pctile_1y"], sel) == want
+
+
+def test_expand_word_is_not_satisfied_by_a_percentile_of_something_else():
+    # 98.74 คือเปอร์เซ็นไทล์ของส่วนต่างคู่ ไม่ใช่ของความผันผวน
+    assert SEL.by_id()["pair.lowbeta_highbeta.pctile_3y"].value > bg.EXPAND_ATR_PCTILE
+    assert _codes4("ความผันผวนขยายตัวชัด",
+                   ["pair.lowbeta_highbeta.pctile_3y"]) == ["unbacked_adjective"]
+
+
+def test_prompt_tells_the_model_every_conditional_word_the_gates_judge():
+    """กลุ่มคำที่ด่าน 4 ตัดสินทุกกลุ่ม ต้องถูกบอกใน prompt พร้อมเกณฑ์ของมัน
+
+    เทสต์เดิม (test_prompt_rules_and_gates_agree_on_every_word) ตรวจห้ากลุ่มแรก
+    เทสต์นี้ไล่กลุ่มที่เพิ่มทีหลังทั้งหมด รวมสองคำของรอบ B2b-1
+    """
+    for group in (bg.WIDE_WORDS, bg.VOLUME_WORDS, bg.FRAGILE_WORDS,
+                  bg.DIVERGE_WORDS, bg.STRONG_WORDS, bg.EXPAND_WORDS):
+        assert group
+        for w in group:
+            assert w in bp.SYSTEM, f'prompt ไม่ได้บอกกติกาเรื่อง "{w}" แต่ด่านจับ'
+    assert f"ถึง {bg.STRONG_POS_MIN:g} ขึ้นไป" in bp.SYSTEM
+    assert f"ถึง {bg.EXPAND_ATR_PCTILE:g} ขึ้นไป" in bp.SYSTEM
+    assert "กรอบ 1 ปี" in bp.SYSTEM
+    # คำสองคำนี้ต้องไม่ชนกับคำห้ามของด่าน 3 ไม่งั้นใช้ไม่ได้เลยไม่ว่าจะมีตัวเลขหรือไม่
+    for w in bg.STRONG_WORDS + bg.EXPAND_WORDS:
+        assert bg.gate3_language(say(w, [])) == [], w
+
+
+def test_the_volatility_section_exists_and_names_the_window():
+    headings = [h for h, _ in bp.SECTIONS]
+    assert "ความผันผวนและตำแหน่งราคา" in headings
+    what = dict(bp.SECTIONS)["ความผันผวนและตำแหน่งราคา"]
+    assert "กรอบ 1 ปี" in what and "52" not in what
+    assert headings[-1] == "สถิติฤดูกาล"       # ลำดับท้ายไม่เปลี่ยน
+
+
+def test_golden_sheet_risk_values_reach_the_model_unchanged():
+    # ค่าจากฐานข้อมูลจริงของ 13 พ.ย. 2026 (ดึงเมื่อ 16 พ.ย. 2026)
+    sel = bf.select_facts(golden()["sheet"])
+    index = sel.by_id()
+    assert index["risk.SPY.atr_pct"].value == 1.69233081621494
+    assert index["risk.SPY.atr_pctile_1y"].value == 100
+    assert index["risk.SPY.pos_52w"].value == 82.4772038640668
+    assert index["risk.SPY.pct_from_high"].value == -3.48634888695681
+    assert index["retw.SPY.13w"].value == -2.58865666334175
+    risk_tickers = {f.ticker for f in sel.facts if f.id.startswith("risk.")}
+    # asset class 6 + QQQ, IWM + ห้าตัวบน (FIW PAWZ PHO AGNG INDA) ไม่มีตัวซ้ำ
+    assert risk_tickers == {"VNQ", "EFA", "IEF", "SPY", "EEM", "DBC", "QQQ", "IWM",
+                            "FIW", "PAWZ", "PHO", "AGNG", "INDA"}
+    assert sum(f.id.startswith("risk.") for f in sel.facts) == 13 * 4
+
+
+def test_a_real_volatility_paragraph_passes_every_gate_on_the_real_sheet():
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "ความผันผวนและตำแหน่งราคา", "sentences": [
+        {"text": "ATR ของ SPY อยู่ที่ 1.69% ของราคา ขยายตัวชัด ที่เปอร์เซ็นไทล์ 100 ของกรอบ 1 ปี",
+         "facts": ["risk.SPY.atr_pct", "risk.SPY.atr_pctile_1y"]},
+        {"text": "ราคา SPY อยู่ที่ 82.48% ของกรอบ 1 ปี ต่ำกว่าจุดสูงสุดของกรอบ 3.49%",
+         "facts": ["risk.SPY.pos_52w", "risk.SPY.pct_from_high"]},
+        {"text": "FIW แข็งแกร่ง ที่ 89.50% ของกรอบ 1 ปี ขณะที่ QQQ อยู่ที่ 60.20%",
+         "facts": ["risk.FIW.pos_52w", "risk.QQQ.pos_52w"]},
+    ]}]}
+    assert bg.validate(r, sel) == []
+    # ประโยคเดียวกันแต่ยกคำประเมินให้กองที่ไม่ถึงเกณฑ์ ต้องถูกกัก
+    r["sections"][0]["sentences"][2] = {
+        "text": "QQQ แข็งแกร่ง ที่ 60.20% ของกรอบ 1 ปี", "facts": ["risk.QQQ.pos_52w"]}
+    assert [x.code for x in bg.validate(r, sel)] == ["unbacked_adjective"]
+
+
+# ------------------------------------------- ตัวซ้อม (rehearse_brief.py) ต้องไม่เน่า
+
+def test_the_rehearsal_examples_still_mean_what_their_titles_say():
+    """ตัวอย่าง "ผ่านด่านครบ" ต้องผ่านจริง และตัวอย่าง "มีปัญหา" ต้องถูกกักจริง
+
+    ไฟล์ซ้อมเคยเน่าเงียบ ๆ ตั้งแต่รอบ B2a ถึง B2b-1: ตัวอย่างที่ควรผ่านอ้าง
+    ret.SPY.1d ซึ่งถูกตัดออกไปแล้ว จึงถูกกัก 4 จุด โดยไม่มีชุดเทสต์ใดรันมัน
+    """
+    import rehearse_brief as rb
+    sel = bf.select_facts(sheet(rb.TRADE_DATE))
+    assert bg.validate(rb.GOOD, sel) == []
+    assert {h for h, _ in bp.SECTIONS} >= {s["heading"] for s in rb.GOOD["sections"]}
+    assert len({x.gate for x in bg.validate(rb.BAD, sel)}) >= 3

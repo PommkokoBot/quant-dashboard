@@ -30,10 +30,10 @@ TRADE_DATE = "2026-11-09"
 
 GOOD = {"sections": [
     {"heading": "ภาพรวม", "sentences": [
-        {"text": "ข้อมูลวันที่ 2026-11-09 SPY บวก 2.37% ในวันเดียว แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
-         "facts": ["ret.SPY.1d", "ret.SPY.21d"]},
-        {"text": "QQQ บวกแรงกว่าที่ 3.54% ในวันเดียว ขณะที่รอบ 21 วันยังติดลบ 9.57%",
-         "facts": ["ret.QQQ.1d", "ret.QQQ.21d"]}]},
+        {"text": "ข้อมูลวันที่ 2026-11-09 SPY บวก 1.85% ในรอบ 1 สัปดาห์ แต่ยังติดลบ 3.32% ในรอบ 21 วัน",
+         "facts": ["retw.SPY.1w", "ret.SPY.21d"]},
+        {"text": "QQQ บวก 2.40% ในรอบ 1 สัปดาห์ ขณะที่รอบ 21 วันยังติดลบ 9.57%",
+         "facts": ["retw.QQQ.1w", "ret.QQQ.21d"]}]},
     {"heading": "กลุ่มตามพฤติกรรม", "sentences": [
         {"text": "High Beta 30 กองเฉลี่ยติดลบ 11.02% ในรอบ 21 วัน ขณะที่ Low Beta 18 กองบวก 2.91%",
          "facts": ["beta.high_beta.avg_21d", "beta.high_beta.n",
@@ -49,6 +49,11 @@ GOOD = {"sections": [
         {"text": "ส่วนต่าง Low Beta − High Beta อยู่ที่ 13.92 จุด เปอร์เซ็นไทล์ 98.74 จาก 717 วัน",
          "facts": ["pair.lowbeta_highbeta.spread", "pair.lowbeta_highbeta.pctile_3y",
                    "pair.lowbeta_highbeta.n_days"]}]},
+    {"heading": "ความผันผวนและตำแหน่งราคา", "sentences": [
+        {"text": "ATR ของ SPY ขยายตัวชัด ที่เปอร์เซ็นไทล์ 100 ของกรอบ 1 ปี",
+         "facts": ["risk.SPY.atr_pctile_1y"]},
+        {"text": "ราคา SPY อยู่ที่ 82.48% ของกรอบ 1 ปี ต่ำกว่าจุดสูงสุดของกรอบ 3.49%",
+         "facts": ["risk.SPY.pos_52w", "risk.SPY.pct_from_high"]}]},
     {"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
         {"text": "47 จาก 93 กองที่ติดตามอยู่เหนือ SMA200 คิดเป็น 50.54% ลดจาก 51 กองเมื่อ 21 วันก่อน",
          "facts": ["breadth.today.above", "breadth.today.universe",
@@ -60,7 +65,7 @@ GOOD = {"sections": [
 BAD = {"sections": [
     {"heading": "ภาพรวม", "sentences": [
         {"text": "วันนี้ SPY ปรับขึ้น 2.4% และ NVDA นำตลาด",
-         "facts": ["ret.SPY.1d"]}]},
+         "facts": ["retw.SPY.1w"]}]},
     {"heading": "คู่เทียบ", "sentences": [
         {"text": "ส่วนต่าง IWM − SPY กว้างผิดปกติที่ 4.60 จุด",
          "facts": ["pair.iwm_spy.spread", "pair.iwm_spy.pctile_3y"]},

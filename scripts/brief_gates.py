@@ -79,6 +79,11 @@ VOLUME_WORDS = ["มาเร็ว", "เร่งขึ้น", "คึกค�
 FRAGILE_WORDS = ["เปราะบาง", "อ่อนแอลง", "ไม่ทั่วถึง"]
 # คำที่บอกว่าของสองอย่างไปคนละทาง ต้องมีตัวเลขสองตัวที่เครื่องหมายต่างกันจริง
 DIVERGE_WORDS = ["สวนทาง", "ขัดแย้งกัน", "ไปคนละทาง"]
+# รอบ B2b-1: สองคำที่จองไว้ตั้งแต่ข้อ 11.5 แต่ไม่เคยมี fact รองรับ จนกลุ่ม risk
+# ถูกส่งเข้า prompt · ก่อนรอบนี้ไม่มีด่านใดจับสองคำนี้เลย โมเดลจึงใช้ได้ฟรี
+# แข็งแกร่ง = ราคาอยู่ช่วงบนของกรอบ 1 ปี · ขยายตัวชัด = ATR อยู่ปลายบนของกรอบ 1 ปี
+STRONG_WORDS = ["แข็งแกร่ง"]
+EXPAND_WORDS = ["ขยายตัวชัด"]
 
 EXTREME_PCTILE = 95.0
 SUPERLATIVE_PCTILE = 99.0
@@ -86,6 +91,8 @@ WIDE_PCTILE = 90.0
 VOL_Z_MIN = 1.0          # ปริมาณซื้อขายสูงกว่าฐาน 1 ส่วนเบี่ยงเบน
 VOL_RVOL_MIN = 1.5       # หรือ 1.5 เท่าของฐาน 20 สัปดาห์
 BREADTH_WEAK_PCT = 50.0  # เกณฑ์ "ไม่ทั่วถึง": ต่ำกว่าครึ่ง และต่ำกว่า 21 วันก่อน
+STRONG_POS_MIN = 80.0    # ตำแหน่งราคาในกรอบ 1 ปี (risk.*.pos_52w)
+EXPAND_ATR_PCTILE = 90.0  # เปอร์เซ็นไทล์ของ ATR ในกรอบ 1 ปี (risk.*.atr_pctile_1y)
 
 # รหัส fact และรหัสกลุ่มดิบ: เป็นชื่อภายในของเรา ไม่ใช่ภาษาที่คนอ่านรู้จัก
 # 11 พ.ย. โมเดลเขียน "อันดับ 1 ของ all_top" ลงในบทสรุปที่ส่งถึงคนจริง
@@ -95,6 +102,7 @@ RAW_CODES = [
     "low_beta", "high_beta", "market_beta", "negative_corr",
     "seasonal_baseline", "baseline_week", "baseline_month",
     "ret.day", "ret.week", "vol.week", "facts_version",
+    "atr_pct", "pos_52w", "pct_from_high",   # atr_pct ครอบ atr_pctile_1y ด้วย
 ]
 # ความยาวสูงสุดของทั้งบทสรุป: ยาวกว่านี้คือเขียนเกินตัวเลขที่มี
 BODY_MAX_CHARS = 5000
@@ -494,6 +502,35 @@ def gate4_adjectives(response: dict, sel: Selection) -> list[Finding]:
                     f'ใช้คำว่า "{w}" ต้องอ้างความกว้างล่าสุดในประโยคนี้ และค่า 21 วันก่อน '
                     f"ในหัวข้อเดียวกัน และล่าสุดต้องต่ำกว่า {BREADTH_WEAK_PCT:g}% "
                     f"และต่ำกว่าเดิม (ที่อ้างมา: ล่าสุด={now} เดิม={was})"))
+
+        # แข็งแกร่ง: ต้องอ้างตำแหน่งราคาในกรอบ 1 ปีที่อยู่ช่วงบนจริง
+        # ผูกกับ id ไม่ใช่กับหน่วย: breadth.today.pct ก็เป็น pct_level เหมือนกัน
+        # และ 85% ของกองที่เหนือ SMA200 ไม่ได้พิสูจน์ว่ากองไหนแข็งแกร่ง
+        for w in STRONG_WORDS:
+            if w not in text:
+                continue
+            pos = [f.value for f in cited
+                   if f.id.startswith("risk.") and f.id.endswith(".pos_52w")
+                   and f.value is not None]
+            if not any(p >= STRONG_POS_MIN for p in pos):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องอ้างตำแหน่งราคาในกรอบ 1 ปีที่ถึง '
+                    f"{STRONG_POS_MIN:g} ขึ้นไป (ที่อ้างมา: {pos or 'ไม่มี'})"))
+
+        # ขยายตัวชัด: ต้องอ้างเปอร์เซ็นไทล์ของ ATR ไม่ใช่เปอร์เซ็นไทล์อะไรก็ได้
+        # (pair.*.pctile_3y ที่ 98 บอกเรื่องส่วนต่างของคู่ ไม่ได้บอกความผันผวน)
+        for w in EXPAND_WORDS:
+            if w not in text:
+                continue
+            atr = [f.value for f in cited
+                   if f.id.startswith("risk.") and f.id.endswith(".atr_pctile_1y")
+                   and f.value is not None]
+            if not any(a >= EXPAND_ATR_PCTILE for a in atr):
+                out.append(Finding(
+                    4, "unbacked_adjective", where,
+                    f'ใช้คำว่า "{w}" ต้องอ้างเปอร์เซ็นไทล์ของ ATR ในกรอบ 1 ปีที่ถึง '
+                    f"{EXPAND_ATR_PCTILE:g} ขึ้นไป (ที่อ้างมา: {atr or 'ไม่มี'})"))
 
         # สวนทาง: ต้องมีตัวเลขสองตัวที่เครื่องหมายต่างกันจริง
         for w in DIVERGE_WORDS:

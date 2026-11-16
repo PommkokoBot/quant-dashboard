@@ -12,18 +12,20 @@ from __future__ import annotations
 
 from brief_facts import Selection
 from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
+                         EXPAND_ATR_PCTILE, EXPAND_WORDS,
                          EXTREME_PCTILE, EXTREME_WORDS, FORBIDDEN_TH,
-                         FRAGILE_WORDS, LEADER_WORDS, SUPERLATIVE_PCTILE,
+                         FRAGILE_WORDS, LEADER_WORDS, STRONG_POS_MIN,
+                         STRONG_WORDS, SUPERLATIVE_PCTILE,
                          SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
                          VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v2.2"
+PROMPT_VERSION = "v2.3"
 
 # Changing the rules below changes what the model writes, so two briefs must
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "0c472f7dbfca"
+PROMPT_FINGERPRINT = "1ea47ff2162e"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -31,7 +33,7 @@ PROMPT_FINGERPRINT = "0c472f7dbfca"
 # รายสัปดาห์ และเพิ่มหัวข้อฤดูกาลเป็นหัวข้อที่ 6
 SECTIONS = [
     ("ภาพรวม",
-     "ผลตอบแทน 1 สัปดาห์และ 4 สัปดาห์ของ asset class หลักและ broad market "
+     "ผลตอบแทน 1 สัปดาห์ 4 สัปดาห์ และ 13 สัปดาห์ของ asset class หลักและ broad market "
      "แล้วจึงเทียบกับแนวโน้ม 21 วัน · ให้พูดเป็นสัปดาห์ก่อนเป็นวัน "
      "เพราะบทสรุปนี้เป็นรายสัปดาห์"),
     ("กลุ่มตามพฤติกรรม",
@@ -41,6 +43,9 @@ SECTIONS = [
      "และปริมาณซื้อขายรายสัปดาห์ของกองหัวแถวถ้ามีตัวเลขรองรับ"),
     ("คู่เทียบ",
      "ส่วนต่างสามคู่พร้อมเปอร์เซ็นไทล์ ชี้ว่าคู่ไหนอยู่ในระดับที่ไม่ปกติ"),
+    ("ความผันผวนและตำแหน่งราคา",
+     "ATR และเปอร์เซ็นไทล์ของ ATR กับตำแหน่งราคาและระยะห่างจากจุดสูงสุด "
+     "ของ asset class หลักและกองหัวแถว · ช่วงเทียบทั้งหมดในหัวข้อนี้คือกรอบ 1 ปี"),
     ("ความกว้างของตลาดและปฏิทิน",
      "สัดส่วนที่อยู่เหนือ SMA200 พร้อมตัวหารเสมอ และเหตุการณ์ที่กำหนดไว้ข้างหน้า"),
     ("สถิติฤดูกาล",
@@ -84,6 +89,10 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
      ในหัวข้อเดียวกันที่อ้างค่า 21 วันก่อน โดยค่าล่าสุดต้องต่ำกว่า {weak:g}%
      และต่ำกว่าค่าเดิม
    - {diverge}: ต้องอ้างตัวเลขสองตัวที่ทิศทางต่างกันจริงในประโยคเดียวกัน
+   - {strong}: ต้องอ้างตำแหน่งราคาในกรอบ 1 ปีของกองนั้น (risk.*.pos_52w)
+     และค่าต้องถึง {strong_min:g} ขึ้นไป
+   - {expand}: ต้องอ้างเปอร์เซ็นไทล์ของ ATR ในกรอบ 1 ปีของกองนั้น
+     (risk.*.atr_pctile_1y) และค่าต้องถึง {expand_min:g} ขึ้นไป
    ถ้าไม่ถึงเกณฑ์ ให้พูดเป็นตัวเลขเปล่า ๆ ไม่ต้องใส่คำประเมิน
 7. ห้ามอธิบายสาเหตุ ห้ามคาดการณ์ ห้ามบอกว่าจะเกิดอะไรต่อ
 8. ห้ามให้คะแนนความมั่นใจของตัวเอง
@@ -96,6 +105,8 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
     ค่าปกติคือเท่าไร
 11. สถิติฤดูกาลคือสิ่งที่เคยเกิดในอดีต ไม่ใช่สิ่งที่จะเกิด
     ให้เขียนในรูป "ในอดีต ... เคย ..." ห้ามเขียนว่าสัปดาห์หน้าจะเป็นอย่างไร
+12. ตัวเลข risk.* ทุกตัวเทียบกับช่วงเดียวกัน ให้เรียกช่วงนั้นว่า "กรอบ 1 ปี"
+    ห้ามเรียกเป็นจำนวนสัปดาห์หรือจำนวนวัน
 
 ภาษา เขียนภาษาไทย แต่คง ticker และศัพท์เทคนิคไว้เป็นภาษาอังกฤษ
 เช่น SPY, Breadth, Momentum, Low Beta, SMA200, drawdown
@@ -119,6 +130,8 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
     volume=_words(VOLUME_WORDS), vol_z=VOL_Z_MIN, vol_r=VOL_RVOL_MIN,
     fragile=_words(FRAGILE_WORDS), weak=BREADTH_WEAK_PCT,
     diverge=_words(DIVERGE_WORDS),
+    strong=_words(STRONG_WORDS), strong_min=STRONG_POS_MIN,
+    expand=_words(EXPAND_WORDS), expand_min=EXPAND_ATR_PCTILE,
     maxchars=BODY_MAX_CHARS,
 )
 
