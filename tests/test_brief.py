@@ -1731,3 +1731,68 @@ def test_the_rehearsal_examples_still_mean_what_their_titles_say():
     assert bg.validate(rb.GOOD, sel) == []
     assert {h for h, _ in bp.SECTIONS} >= {s["heading"] for s in rb.GOOD["sections"]}
     assert len({x.gate for x in bg.validate(rb.BAD, sel)}) >= 3
+
+
+# ---------------------------------- ป้ายชื่อ fact ต้องไม่มีคำที่ด่าน 2 อ่านเป็น ticker
+
+def _label_tokens_gate2_would_reject(sel) -> list[tuple[str, str]]:
+    """เอาตัวจับ ticker ของด่าน 2 มาไล่ป้ายชื่อ fact ทุกอัน
+
+    ตระกูลเดียวกับ _label_numbers_without_a_fact: ป้ายคือสิ่งที่โมเดลลอกไปเขียน
+    โทเคนตัวพิมพ์ใหญ่ใดในป้ายที่ด่าน 2 จะไม่ยอมรับ ต้องไม่มีอยู่ตั้งแต่ในป้าย
+    ไม่งั้นบทสรุปถูกกักในโปรดักชันด้วยคำที่เราเขียนให้โมเดลเอง
+
+    ที่มา: 16 พ.ย. 2026 รอบ no-write ของจริง · ป้าย "หมายเลขสัปดาห์ ISO" ทำให้
+    ถูกกักสองประโยค ทั้งที่ชุดเทสต์เขียวสนิท
+    """
+    out = []
+    for f in sel.facts:
+        for tok in bg.TICKER_RE.findall(f.label):
+            if tok not in bg.NON_TICKERS and tok not in sel.universe:
+                out.append((f.id, tok))
+    return out
+
+
+def test_no_fact_label_looks_like_an_unknown_ticker():
+    assert _label_tokens_gate2_would_reject(SEL) == []
+    assert _label_tokens_gate2_would_reject(SEL_V1) == []
+    assert _label_tokens_gate2_would_reject(bf.select_facts(golden()["sheet"])) == []
+
+
+def test_the_label_ticker_check_itself_can_go_red():
+    sel = bf.Selection(
+        facts=[bf.Fact(id="x.one", label="SPY หมายเลขสัปดาห์ WXYZ", value=46.0,
+                       unit="count")],
+        universe={"SPY"}, trade_date="2026-11-13")
+    assert _label_tokens_gate2_would_reject(sel) == [("x.one", "WXYZ")]
+
+
+def test_the_week_number_sentence_that_was_held_on_16_nov_now_passes():
+    """ประโยคจริงจากรอบ no-write 16 พ.ย. 2026 ที่ด่าน 2 กักเพราะคำว่า ISO"""
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "สถิติฤดูกาล", "sentences": [
+        {"text": "ในอดีต SPY สำหรับสัปดาห์ ISO ที่ 46 เคยมีสัดส่วนครั้งที่ปิดบวก 60.00% "
+                 "และมีผลตอบแทนเฉลี่ย +0.27% จาก 10 ครั้ง เมื่อเทียบกับค่าปกติทุกสัปดาห์ "
+                 "ที่มีสัดส่วนปิดบวก 58.90% และผลตอบแทนเฉลี่ย +0.29% จาก 521 งวด",
+         "facts": ["seasonal.week_current.win_pct", "seasonal.week_current.mean_pct",
+                   "seasonal.week_current.n", "seasonal_baseline.week.win_pct",
+                   "seasonal_baseline.week.mean_pct", "seasonal_baseline.week.n"]},
+    ]}]}
+    assert bg.validate(r, sel) == []
+
+
+def test_the_prompt_says_the_baseline_is_needed_in_every_seasonal_sentence():
+    """16 พ.ย.: โมเดลอ้างฐานเทียบในประโยคแรก แล้วลืมในประโยคที่สองของหัวข้อเดียวกัน
+
+    ด่าน 5 ทำงานถูก (มติ: ไม่ผ่อนด่าน) · ที่ขาดคือ prompt ไม่ได้บอกว่ากติกานี้
+    ใช้กับทุกประโยค ไม่ใช่กับหัวข้อ
+    """
+    assert "ทุกประโยคที่มีตัวเลขฤดูกาล" in bp.SYSTEM
+    assert "ประโยคของแต่ละงวด" in bp.SYSTEM
+    # และด่านยังเข้มเหมือนเดิม: งวดที่สองไม่มีฐานเทียบ ต้องถูกกัก
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "สถิติฤดูกาล", "sentences": [
+        {"text": "ในอดีต SPY สัปดาห์ที่ 47 เคยปิดบวก 50.00% จาก 10 ครั้ง",
+         "facts": ["seasonal.week_next.win_pct", "seasonal.week_next.n"]},
+    ]}]}
+    assert [x.gate for x in bg.validate(r, sel)] == [5]

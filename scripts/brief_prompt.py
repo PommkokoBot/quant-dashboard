@@ -25,7 +25,7 @@ PROMPT_VERSION = "v2.3"
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "1ea47ff2162e"
+PROMPT_FINGERPRINT = "e23f71a5195f"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -103,6 +103,8 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
     ของงวดเดียวกันมาเทียบด้วย (seasonal_baseline.week.* หรือ
     seasonal_baseline.month.*) เพราะ "ชนะ 60%" ไม่มีความหมายจนกว่าจะรู้ว่า
     ค่าปกติคือเท่าไร
+    กติกานี้ใช้กับทุกประโยคที่มีตัวเลขฤดูกาล ไม่ใช่เฉพาะประโยคแรกของหัวข้อ
+    ถ้าหัวข้อพูดถึงสองงวด ต้องอ้างค่าปกติในประโยคของแต่ละงวด
 11. สถิติฤดูกาลคือสิ่งที่เคยเกิดในอดีต ไม่ใช่สิ่งที่จะเกิด
     ให้เขียนในรูป "ในอดีต ... เคย ..." ห้ามเขียนว่าสัปดาห์หน้าจะเป็นอย่างไร
 12. ตัวเลข risk.* ทุกตัวเทียบกับช่วงเดียวกัน ให้เรียกช่วงนั้นว่า "กรอบ 1 ปี"

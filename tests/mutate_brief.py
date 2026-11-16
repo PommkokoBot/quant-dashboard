@@ -343,6 +343,15 @@ MUTATIONS = [
      'PROMPT_VERSION = "v2.3"', 'PROMPT_VERSION = "v2.2"',
      "briefs written under the risk rules would claim the older prompt"),
 
+    ("M70", "scripts/brief_gates.py", "ISO dropped back out of the non-ticker list",
+     '"ISM", "PPI", "ISO",', '"ISM", "PPI",',
+     "our own fact label would hold the brief every week it names a week number"),
+
+    ("M71", "scripts/brief_prompt.py", "the per-sentence baseline rule removed",
+     "    กติกานี้ใช้กับทุกประโยคที่มีตัวเลขฤดูกาล ไม่ใช่เฉพาะประโยคแรกของหัวข้อ\n",
+     "",
+     "the model would cite the baseline once and have the rest of the section held"),
+
     ("M53", "scripts/brief_gates.py", "the current value may come from any sentence",
      '            now = _value_in(cited, "breadth.today.pct")',
      '            now = _value_in(pool_facts, "breadth.today.pct")',
