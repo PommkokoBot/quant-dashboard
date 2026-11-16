@@ -340,8 +340,26 @@ MUTATIONS = [
      'a reader would be shown "pos_52w" as if it were a word'),
 
     ("M69", "scripts/brief_prompt.py", "the new rule added without a version bump",
-     'PROMPT_VERSION = "v2.3"', 'PROMPT_VERSION = "v2.2"',
+     'PROMPT_VERSION = "v2.4"', 'PROMPT_VERSION = "v2.3"',
      "briefs written under the risk rules would claim the older prompt"),
+
+    # ---- รอบ B2b-1.1 · prompt บอกให้เลือก + วิธีเรียงลำดับ ----------------
+    ("M72", "scripts/brief_prompt.py", "the pick-don't-list rule removed",
+     "13. เลือกสิ่งที่จะพูด อย่าไล่รายการ", "13. (ว่าง)",
+     "the brief would go back to reciting 7 funds x 4 timeframes in one paragraph"),
+
+    ("M73", "scripts/brief_prompt.py", "the number target removed from the length line",
+     "และตัวเลขต่อหัวข้อไม่เกิน {sec_max} ตัวตามกติกาข้อ 13\n", "",
+     "the target would be stated once and easy for the model to miss"),
+
+    ("M74", "scripts/brief_prompt.py", "the order-sentence pattern removed",
+     '14. บอกลำดับด้วยการเรียงชื่อ ไม่ใช่ด้วยการแปะเลขอันดับ',
+     '14. (ว่าง)',
+     'one "อันดับ 1" would again be stamped on two funds that are 1st and 2nd'),
+
+    ("M75", "scripts/brief_prompt.py", "the section target loosened to the old reality",
+     "SECTION_NUMBERS_TARGET = 12", "SECTION_NUMBERS_TARGET = 40",
+     "the target would sit above anything the model could write, so it would say nothing"),
 
     ("M70", "scripts/brief_gates.py", "ISO dropped back out of the non-ticker list",
      '"ISM", "PPI", "ISO",', '"ISM", "PPI",',

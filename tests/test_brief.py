@@ -1191,7 +1191,8 @@ def test_prompt_tells_the_model_to_speak_in_weeks_first():
     heading, what = bp.SECTIONS[0]
     assert heading == "ภาพรวม"
     assert "สัปดาห์" in what
-    assert bp.PROMPT_VERSION == "v2.3"
+    # เวอร์ชันถูกตรวจที่ test_prompt_tells_the_model_to_pick_instead_of_listing_everything
+    # (เทสต์นี้เฝ้าเรื่อง "พูดเป็นสัปดาห์ก่อนเป็นวัน" ไม่ใช่เฝ้าเลขเวอร์ชัน)
 
 
 # ===========================================================================
@@ -1796,3 +1797,68 @@ def test_the_prompt_says_the_baseline_is_needed_in_every_seasonal_sentence():
          "facts": ["seasonal.week_next.win_pct", "seasonal.week_next.n"]},
     ]}]}
     assert [x.gate for x in bg.validate(r, sel)] == [5]
+
+
+# =========================================================================
+# รอบ B2b-1.1 · prompt บอกให้ "เลือก" และบอกวิธีเรียงลำดับโดยไม่แปะเลขอันดับ
+# =========================================================================
+
+def _numbers_per_section(response) -> dict:
+    """นับตัวเลขที่ด่าน 1 ต้องตรวจ แยกตามหัวข้อ
+
+    ตัวช่วยนี้ยังไม่ได้ถูกใช้เป็นด่าน (มติ 27) แต่เป็นตัวเดียวกับที่จะใช้
+    ถ้าวันหนึ่งยกเป็นด่าน — เขียนไว้ที่นี่เพื่อให้เลขที่บอกโมเดลกับเลขที่วัด
+    เป็นนิยามเดียวกันตั้งแต่ต้น
+    """
+    out = {}
+    for section in response.get("sections") or []:
+        n = sum(len(bg._numbers(s.get("text") or ""))
+                for s in (section.get("sentences") or []))
+        out[section.get("heading")] = n
+    return out
+
+
+def test_prompt_tells_the_model_to_pick_instead_of_listing_everything():
+    assert bp.PROMPT_VERSION == "v2.4"
+    assert bp.SECTION_NUMBERS_TARGET == 12
+    # กติกาข้อ 13 ต้องอยู่จริงและต้องพกตัวเลขเป้าหมายไปด้วย
+    assert "เลือกสิ่งที่จะพูด อย่าไล่รายการ" in bp.SYSTEM
+    assert f"ไม่เกิน {bp.SECTION_NUMBERS_TARGET} ตัว" in bp.SYSTEM
+    # และต้องปรากฏในบรรทัดความยาวด้วย ไม่ใช่ซ่อนอยู่ในกติกาข้อเดียว
+    assert f"ตัวเลขต่อหัวข้อไม่เกิน {bp.SECTION_NUMBERS_TARGET} ตัว" in bp.SYSTEM
+    # หัวข้อที่พุ่งเกินในฉบับซ้อม ต้องถูกสั่งให้เลือก
+    assert "ไม่ต้องไล่ทุกกองทุกกรอบเวลา" in dict(bp.SECTIONS)["ภาพรวม"]
+    assert "ไม่เกินสามกอง" in dict(bp.SECTIONS)["เด่นและแย่"]
+
+
+def test_prompt_gives_the_order_sentence_pattern_and_forbids_one_rank_for_many():
+    assert "ตามลำดับ" in bp.SYSTEM and "นำโดย" in bp.SYSTEM
+    assert 'ห้ามเขียนคำว่า "อันดับ N" คลุมกองมากกว่าหนึ่งกอง' in bp.SYSTEM
+    # คำที่ prompt เสนอให้ใช้ ต้องไม่ไปชนด่าน 3 หรือด่าน 4 เอง
+    for w in ("นำโดย", "ตามลำดับ"):
+        assert bg.gate3_language(say(w, [])) == [], w
+        assert bg.gate4_adjectives(say(w, []), SEL) == [], w
+
+
+def test_the_rehearsal_good_example_stays_within_the_number_target():
+    """ตัวอย่างที่เราถือว่าอ่านรู้เรื่อง ต้องอยู่ใต้เป้าหมายที่บอกโมเดล
+
+    ถ้าวันหนึ่งเป้าหมายถูกลดลงจนตัวอย่างของเราเองไม่ผ่าน แปลว่าเลขนั้นผิด
+    """
+    import rehearse_brief as rb
+    per = _numbers_per_section(rb.GOOD)
+    assert per, "ตัวอย่างต้องมีหัวข้อ"
+    assert max(per.values()) <= bp.SECTION_NUMBERS_TARGET, per
+
+
+def test_the_number_counter_matches_what_the_published_briefs_measured():
+    """นิยามของ "ตัวเลขต่อหัวข้อ" ต้องนับแบบเดียวกับที่ด่าน 1 เห็น
+
+    เคสนี้คือประโยคจริงจากบทสรุปที่เผยแพร่เมื่อ 13 พ.ย. ซึ่งนับได้ 6 ตัว
+    (42 · 93 · 45.16 · 52 · 93 · 55.91) — ตัวเลขวันที่ไม่นับ
+    """
+    r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+        {"text": "เมื่อ 2026-11-13 มีกองทุนที่อยู่เหนือ SMA200 จำนวน 42 จาก 93 กอง "
+                 "คิดเป็น +45.16% ลดลงจาก 52 จาก 93 กอง (+55.91%) ในช่วง 21 วันก่อนหน้า",
+         "facts": []}]}]}
+    assert _numbers_per_section(r) == {"ความกว้างของตลาดและปฏิทิน": 6}
