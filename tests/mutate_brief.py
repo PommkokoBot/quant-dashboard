@@ -153,9 +153,12 @@ MUTATIONS = [
 
     # ------------------------------------------------- รอบ B2a (15 พ.ย. 2026)
 
-    ("M29", "scripts/brief_facts.py", "a weekly timeframe nobody agreed to",
-     "RETW_LOOKBACKS = [1, 4]", "RETW_LOOKBACKS = [1, 4, 13]",
-     "13 สัปดาห์อยู่ในแผ่นแต่ไม่ได้ตกลงกันว่าจะให้โมเดลพูดถึง"),
+    # เดิม M29 คือ "13 สัปดาห์หลุดเข้ามา" · รอบ B2b-1 ตกลงส่ง 13 สัปดาห์แล้ว
+    # mutation เดิมจึงกลายเป็นพฤติกรรมที่ถูกต้อง · เปลี่ยนเป็นเฝ้าฝั่งตรงข้าม
+    # (4 สัปดาห์หาย) ส่วน 13 สัปดาห์หาย เฝ้าด้วย M67
+    ("M29", "scripts/brief_facts.py", "the 4-week timeframe dropped",
+     "RETW_LOOKBACKS = [1, 4, 13]", "RETW_LOOKBACKS = [1, 13]",
+     "ภาพรวมจะเหลือแค่ 1 กับ 13 สัปดาห์ ทั้งที่หัวข้อบอกว่ามี 4 สัปดาห์"),
 
     ("M30", "scripts/brief_gates.py", "gate 5 stops asking for a baseline",
      "            if not any(fid.startswith(prefix) for fid in ids):",
@@ -289,6 +292,65 @@ MUTATIONS = [
      '        sibling = f"seasonal.{parts[1]}.period"\n        if sibling in seen:',
      '        sibling = f"seasonal.{parts[1]}.win_pct"\n        if sibling in seen:',
      "the mechanism must admit the period only, not other values of the window"),
+
+    # ---- รอบ B2b-1 · กลุ่ม risk และสองคำประเมินใหม่ ------------------------
+    ("M59", "scripts/brief_gates.py", '"แข็งแกร่ง" threshold removed',
+     "STRONG_POS_MIN = 80.0", "STRONG_POS_MIN = 0.0",
+     "any fund could be called strong wherever it sits in its range"),
+
+    ("M60", "scripts/brief_gates.py", '"ขยายตัวชัด" threshold removed',
+     "EXPAND_ATR_PCTILE = 90.0", "EXPAND_ATR_PCTILE = 0.0",
+     "ordinary volatility would be reported as expanding"),
+
+    ("M61", "scripts/brief_gates.py", '"แข็งแกร่ง" accepts any proportion',
+     'if f.id.startswith("risk.") and f.id.endswith(".pos_52w")',
+     'if f.unit == "pct_level"',
+     "breadth at 85% would license calling the market strong"),
+
+    ("M62", "scripts/brief_gates.py", '"ขยายตัวชัด" accepts any percentile',
+     'if f.id.startswith("risk.") and f.id.endswith(".atr_pctile_1y")',
+     'if f.unit == "pctile"',
+     "a pair spread's percentile would be passed off as evidence about volatility"),
+
+    ("M63", "scripts/brief_facts.py", "risk numbers sent for every fund",
+     'out.extend(_risk_facts(groups.get("risk", {}), ret_tickers + top))',
+     'out.extend(_risk_facts(groups.get("risk", {}), list((groups.get("risk", {}).get("values") or {}))))',
+     "372 numbers nobody asked for would sit in the prompt waiting to be quoted"),
+
+    ("M64", "scripts/brief_facts.py", "risk values read by fixed position",
+     "            v = _num(row[keys.index(key)])\n            if v is None:\n                continue\n            out.append(Fact(id=f\"risk.",
+     "            v = _num(row[[k for k, _u, _w in RISK_FIELDS].index(key)])\n            if v is None:\n                continue\n            out.append(Fact(id=f\"risk.",
+     "a reordered column in the database would put ATR under the position label"),
+
+    ("M65", "scripts/brief_facts.py", "the label goes back to saying 52 weeks",
+     '"ตำแหน่งราคาในกรอบ 1 ปี (ร้อยละของระยะจากจุดต่ำสุดถึงจุดสูงสุดของกรอบ)"',
+     '"ตำแหน่งราคาในรอบ 52 สัปดาห์ (ร้อยละของระยะจากจุดต่ำสุดถึงจุดสูงสุด)"',
+     "the model would copy a number no fact carries and be held every week"),
+
+    ("M66", "scripts/brief_facts.py", "position printed as a signed change",
+     '    ("pos_52w", "pct_level",', '    ("pos_52w", "pct",',
+     '"+82.48%" reads as a gain of 82%, which is not what the number says'),
+
+    ("M67", "scripts/brief_facts.py", "13-week returns dropped again",
+     "RETW_LOOKBACKS = [1, 4, 13]", "RETW_LOOKBACKS = [1, 4]",
+     "the quarter-length view would silently leave the brief"),
+
+    ("M68", "scripts/brief_gates.py", "raw risk keys allowed in the prose",
+     '    "atr_pct", "pos_52w", "pct_from_high",', '',
+     'a reader would be shown "pos_52w" as if it were a word'),
+
+    ("M69", "scripts/brief_prompt.py", "the new rule added without a version bump",
+     'PROMPT_VERSION = "v2.3"', 'PROMPT_VERSION = "v2.2"',
+     "briefs written under the risk rules would claim the older prompt"),
+
+    ("M70", "scripts/brief_gates.py", "ISO dropped back out of the non-ticker list",
+     '"ISM", "PPI", "ISO",', '"ISM", "PPI",',
+     "our own fact label would hold the brief every week it names a week number"),
+
+    ("M71", "scripts/brief_prompt.py", "the per-sentence baseline rule removed",
+     "    กติกานี้ใช้กับทุกประโยคที่มีตัวเลขฤดูกาล ไม่ใช่เฉพาะประโยคแรกของหัวข้อ\n",
+     "",
+     "the model would cite the baseline once and have the rest of the section held"),
 
     ("M53", "scripts/brief_gates.py", "the current value may come from any sentence",
      '            now = _value_in(cited, "breadth.today.pct")',
