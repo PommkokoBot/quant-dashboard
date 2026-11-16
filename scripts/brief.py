@@ -420,6 +420,24 @@ def existing_brief(sb, trade_date: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def should_skip_published(prior: dict | None, force: bool) -> bool:
+    """ฉบับที่เผยแพร่แล้วของวันข้อมูลเดียวกัน ต้องไม่ถูกสร้างทับโดยรอบปกติ
+
+    ฟังก์ชันบริสุทธิ์ ไม่อ่านฐานข้อมูลและไม่อ่านนาฬิกา เหมือน
+    should_write_weekly() เพื่อให้เทสต์จับได้ว่าเงื่อนไขยังอยู่
+
+    ทำไมต้องมี: มติ 17 ให้งานรันทุกวันแล้วตัดสินจากข้อมูล ซึ่งทำให้ "เสาร์"
+    กับ "อาทิตย์" ผ่านเงื่อนไขรอบเขียนด้วย trade_date เดียวกัน (วันศุกร์อยู่
+    สัปดาห์ ISO เดียวกับทั้งสองวัน) · ถ้าไม่มีด่านนี้ อาทิตย์จะเรียกโมเดลใหม่
+    แล้ว store() จะ update ทับแถวของเสาร์ ซึ่งหายถาวรเพราะยังไม่มีประวัติ
+    revision (ข้อ 11.6) · ออกก่อนเรียกโมเดลด้วย จึงไม่เสียโควตาเปล่า
+
+    force ยังข้ามด่านนี้ได้โดยตั้งใจ (ใช้กดสร้างใหม่ตอนแก้ของพัง) แต่นั่น
+    หมายความว่า force ที่ไม่ได้ติ๊ก no-write จะทับฉบับที่เผยแพร่จริง
+    """
+    return bool(prior) and prior.get("status") == "published" and not force
+
+
 def store(sb, trade_date: str, row: dict, existing: dict | None) -> None:
     if existing:
         sb.table("daily_brief").update(row).eq("id", existing["id"]).execute()
@@ -476,7 +494,7 @@ def main() -> int:
             return 0
 
     prior = existing_brief(sb, trade_date)
-    if prior and prior["status"] == "published" and not force:
+    if should_skip_published(prior, force):
         # Weekends and holidays land here: data_as_of() still points at the
         # last trading day, whose brief was published when it was new.
         print(f"มีบทสรุปที่เผยแพร่แล้วของวันที่ {trade_date} — ไม่ทำซ้ำ")

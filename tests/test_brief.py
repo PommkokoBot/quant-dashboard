@@ -1306,9 +1306,10 @@ def test_fragile_word_passes_when_the_comparison_sits_in_the_next_sentence():
     assert bg.gate1_numbers(r, sel) == []
 
 
-def test_fragile_word_still_needs_the_current_value_in_its_own_sentence():
-    # คำขยายต้องเกาะอยู่กับตัวเลขที่มันตัดสิน · ประโยคที่มีคำแต่ไม่อ้างค่าล่าสุด
-    # ต้องถูกกัก แม้หัวข้อเดียวกันจะมีค่าทั้งสองอยู่ในประโยคอื่น
+def test_fragile_word_still_needs_a_breadth_fact_in_its_own_sentence():
+    # คำขยายต้องเกาะอยู่กับเรื่องที่มันตัดสิน · ประโยคที่มีคำแต่ไม่อ้าง fact
+    # ความกว้างเลย ต้องถูกกัก แม้หัวข้อเดียวกันจะมีค่าทั้งสองอยู่ในประโยคอื่น
+    # (รอบ B2b-1.2 ผ่อนเฉพาะ "ค่าล่าสุดต้องอยู่ประโยคเดียวกัน" ไม่ได้ผ่อนข้อนี้)
     sel = _weak_sheet()
     r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
         {"text": "ภาวะตลาดอ่อนแอลง", "facts": []},
@@ -1819,7 +1820,6 @@ def _numbers_per_section(response) -> dict:
 
 
 def test_prompt_tells_the_model_to_pick_instead_of_listing_everything():
-    assert bp.PROMPT_VERSION == "v2.4"
     assert bp.SECTION_NUMBERS_TARGET == 12
     # กติกาข้อ 13 ต้องอยู่จริงและต้องพกตัวเลขเป้าหมายไปด้วย
     assert "เลือกสิ่งที่จะพูด อย่าไล่รายการ" in bp.SYSTEM
@@ -1862,3 +1862,88 @@ def test_the_number_counter_matches_what_the_published_briefs_measured():
                  "คิดเป็น +45.16% ลดลงจาก 52 จาก 93 กอง (+55.91%) ในช่วง 21 วันก่อนหน้า",
          "facts": []}]}]}
     assert _numbers_per_section(r) == {"ความกว้างของตลาดและปฏิทิน": 6}
+
+
+# ---------------------------------------------------------------- รอบ B2b-1.2
+# ด่าน 4 ผ่อนแบบมีเงื่อนไข · ด่านกันทับฉบับที่เผยแพร่ · prompt ข้อ 15
+
+def test_the_fragile_sentence_that_was_held_on_16_nov_now_passes():
+    """ประโยคจริงจากรอบซ้อมบน main คืน 16 พ.ย. 2026
+
+    ข้อมูลถูกครบทั้งสองค่า แต่โมเดลแยกสองประโยคแล้วคำว่า "อ่อนแอลง" ไปตกอยู่
+    ในประโยคของค่าเทียบ ด่าน 4 จึงรายงาน "ล่าสุด=None" และกักบทสรุปทั้งฉบับ
+    """
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+        {"text": "ความกว้างของตลาด ณ วันที่ 2026-11-13 เปราะบาง โดยสัดส่วนกองทุน"
+                 "ที่อยู่เหนือ SMA200 อยู่ที่ 45.16% (42 จาก 93 กอง)",
+         "facts": ["breadth.today.pct", "breadth.today.above",
+                   "breadth.today.universe"]},
+        {"text": "ซึ่งอ่อนแอลง เมื่อเทียบกับ 21 วันก่อนหน้าที่เคยอยู่ที่ 55.91% "
+                 "(52 จาก 93 กอง)",
+         "facts": ["breadth.prior_21d.pct", "breadth.prior_21d.above",
+                   "breadth.prior_21d.universe"]},
+    ]}]}
+    assert bg.gate4_adjectives(r, sel) == []
+    assert bg.gate1_numbers(r, sel) == []
+
+
+def test_fragile_word_without_any_breadth_fact_in_the_sentence_is_still_held():
+    """เงื่อนไขที่เหลือไว้ตอนผ่อน: คำต้องเกาะอยู่กับเรื่องที่มันตัดสิน
+
+    ถ้าลบเงื่อนไข "ประโยคนี้ต้องอ้าง fact ความกว้าง" ออก ประโยคนี้จะผ่าน
+    ทั้งที่มันพูดถึงกองทุนรายตัว ไม่ได้พูดถึงความกว้างของตลาดเลย
+    """
+    sel = bf.select_facts(golden()["sheet"])
+    r = {"sections": [{"heading": "ความกว้างของตลาดและปฏิทิน", "sentences": [
+        {"text": "ส่วนต่าง QQQ − SPY อ่อนแอลง", "facts": ["pair.qqq_spy.spread"]},
+        {"text": "สัดส่วนเหนือ SMA200 อยู่ที่ 45.16% จาก 55.91% เมื่อ 21 วันก่อน",
+         "facts": ["breadth.today.pct", "breadth.prior_21d.pct"]},
+    ]}]}
+    f = bg.gate4_adjectives(r, sel)
+    assert [x.code for x in f] == ["unbacked_adjective"]
+    assert "ประโยคนี้" in f[0].detail
+
+
+def test_published_edition_is_not_regenerated_by_the_next_days_run():
+    """มติ 17 ทำให้เสาร์กับอาทิตย์ใช้ trade_date เดียวกัน
+
+    ถ้าด่านนี้หลุด อาทิตย์จะเรียกโมเดลใหม่แล้ว store() จะ update ทับแถวของ
+    เสาร์ ซึ่งหายถาวรเพราะยังไม่มีประวัติ revision
+    """
+    assert brief_main.should_skip_published({"id": 1, "status": "published"},
+                                            force=False) is True
+    # ฉบับที่ถูกกักไว้ ต้องสร้างทับได้ เพราะยังไม่มีใครอ่าน
+    assert brief_main.should_skip_published({"id": 1, "status": "held"},
+                                            force=False) is False
+    # ยังไม่มีแถวของวันนั้น
+    assert brief_main.should_skip_published(None, force=False) is False
+    # force ข้ามได้โดยตั้งใจ (ใช้กดสร้างใหม่) — จึงต้องคู่กับ no-write เสมอ
+    assert brief_main.should_skip_published({"id": 1, "status": "published"},
+                                            force=True) is False
+
+
+def test_prompt_forbids_guessing_a_window_length_from_a_fact_id():
+    """"ในรอบ 3 ปี" ในฉบับซ้อม 16 พ.ย. ไม่ได้มาจากป้ายชื่อ fact
+
+    ป้ายทุกใบสะอาดแล้วตั้งแต่ B2a — คำนี้มาจาก id `pair.*.pctile_3y` ที่โมเดล
+    เห็นในรายการ fact · ของจริงคิดจาก 721 วัน (ไม่ถึง 3 ปี) และมี fact
+    n_days บอกไว้อยู่แล้ว
+    """
+    assert "pctile_3y" in bp.SYSTEM and "n_days" in bp.SYSTEM
+    assert "ห้ามเดาความยาวของช่วงจากชื่อ id" in bp.SYSTEM
+    # และต้องกันการลาก "กรอบ 1 ปี" ของข้อ 12 ไปใช้กับกลุ่มอื่น
+    assert 'ห้ามดัดแปลงเป็น "กรอบ N ปี"' in bp.SYSTEM
+    # fact ที่บอกความยาวจริงต้องยังมีอยู่ ไม่ใช่กติกาที่ชี้ไปที่ของที่ไม่มี
+    sel = bf.select_facts(golden()["sheet"])
+    assert sel.by_id()["pair.lowbeta_highbeta.n_days"].value == 721.0
+
+
+def test_prompt_version_and_fingerprint_move_together():
+    """ที่เดียวที่ตรึง "เวอร์ชันคู่กับลายนิ้วมือ"
+
+    test_changing_the_prompt_forces_a_new_version จับได้แค่ว่า SYSTEM เปลี่ยน
+    แล้วลายนิ้วมือต้องตาม · ถ้าอัปลายนิ้วมือแต่ลืมขยับเวอร์ชัน บทสรุปสองฉบับ
+    จะอ้าง prompt_version เดียวกันทั้งที่กติกาต่างกัน เคสนี้คือตัวจับ
+    """
+    assert (bp.PROMPT_VERSION, bp.PROMPT_FINGERPRINT) == ("v2.5", "2e17ec031830")
