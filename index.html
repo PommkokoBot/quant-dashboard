@@ -99,6 +99,9 @@
         <label class="flex items-center gap-1.5 text-xs text-slate-400">
           <input type="checkbox" id="exportCompare" disabled /> Compare snapshot
         </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-400">
+          <input type="checkbox" id="exportHeatmap" disabled /> Heat Calendar
+        </label>
         <button id="exportBtn" class="ml-auto bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-lg px-4 py-2">
           Export Excel
         </button>
@@ -156,6 +159,22 @@
       </div>
       <p id="seasonalAsOfNote" class="text-[11px] text-slate-500 mt-2 hidden"></p>
       <p id="overviewError" class="text-sm text-red-600 mt-2 hidden"></p>
+    </section>
+
+    <!-- ---------- Heat Calendar: ผลตอบแทนจริงรายงวด (17 พ.ย. 2026) ---------- -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center gap-3 mb-1">
+        <h2 class="text-sm font-semibold text-slate-800">Heat Calendar — ผลตอบแทนจริงรายงวด</h2>
+        <div id="heatModeBtns" class="flex gap-1 ml-auto"></div>
+      </div>
+      <p class="text-xs text-slate-500 mb-3">ตารางนี้คือตัวเลขดิบที่ตารางภาพรวมด้านบนถูกสรุปมา ใช้ดูว่าค่าเฉลี่ยของงวดนั้นมาจากหลายปี หรือมาจากปีเดียว — ใช้ Asset / Period Type / Lookback ชุดเดียวกับด้านบน</p>
+      <div id="heatLoading" class="hidden flex items-center gap-2 text-xs text-slate-500 mb-2"><div class="spinner"></div> กำลังโหลดข้อมูล...</div>
+      <div class="overflow-x-auto border border-slate-200 rounded-lg">
+        <table id="heatCalendarTable" class="text-xs w-full"></table>
+      </div>
+      <p id="heatScaleNote" class="text-[11px] text-slate-500 mt-2"></p>
+      <p id="heatNote" class="text-[10px] text-slate-400 mt-1"></p>
+      <p id="heatError" class="text-sm text-red-600 mt-2 hidden"></p>
     </section>
 
     <!-- ---------- Level 2: Period Controls ---------- -->

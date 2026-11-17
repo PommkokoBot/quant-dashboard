@@ -153,6 +153,46 @@ const MUTATIONS = [
     apply: () => write("app.js", read("app.js").replace(
       'if (tab === "brief" && !state.brief.loaded && !state.brief.loading) loadBriefTab();', ""))
   },
+  // ---- Heat Calendar (2026-11-17) ----
+  // สี่ข้อแรกคือความพลาดที่ตารางยังวาดออกมาสวยเหมือนเดิมทุกช่อง ผิดแต่ตัวเลข
+  // หรือผิดแต่ความหมายของสี ซึ่งตาคนมองไม่ออกจากหน้าจอ
+  {
+    id: "M12", name: "ISO week ลืมเลื่อนไปวันพฤหัสฯ",
+    script: "tests/test_heat_calendar.js",
+    why: "สัปดาห์ต้นปีกับปลายปีจะเด้งไปผิดแถว และคนละชุดกับที่ seasonal_stats ใช้",
+    apply: () => write("app.js", read("app.js").replace(
+      "    dt.setUTCDate(dt.getUTCDate() + 4 - dow); // เลื่อนไปวันพฤหัสฯ ของสัปดาห์นั้น\n", ""))
+  },
+  {
+    id: "M13", name: "ส่วนต่างทั้งปีใช้ผลรวมแทนผลทบต้น",
+    script: "tests/test_heat_calendar.js",
+    why: "วิธีที่ง่ายกว่าและดูสมเหตุสมผล แต่ให้คนละคำตอบกับที่คนอ่านคิดถึง",
+    apply: () => write("app.js", read("app.js").replace(
+      "absTotal === null || benchTotal === null ? null : absTotal - benchTotal",
+      "absTotal === null ? null : periods.reduce((acc, p) => { const c = cells[y] && cells[y][p]; return acc + (c && c.rel !== null && c.rel !== undefined ? c.rel : 0); }, 0)"))
+  },
+  {
+    id: "M14", name: "ไม้บรรทัดสีใช้ค่าสูงสุดแทนเปอร์เซ็นไทล์ 90",
+    script: "tests/test_heat_calendar.js",
+    why: "เดือนเดียวที่ -16% จะทำให้อีกสามร้อยช่องซีดจนอ่านไม่ออก",
+    apply: () => write("app.js", read("app.js").replace(
+      "    return Math.max(v[idx], 0.5);", "    return Math.max(v[v.length - 1], 0.5);"))
+  },
+  {
+    id: "M15", name: "สีไม่ขึ้นกับไม้บรรทัดของตาราง",
+    script: "tests/test_heat_calendar.js",
+    why: "ความหมายของสีจะเปลี่ยนไปตามตาราง ทำให้เทียบข้ามปีไม่ได้โดยไม่มีอะไรบอก",
+    apply: () => write("app.js", read("app.js").replace(
+      "    const t = Math.min(1, Math.abs(value) / scale);",
+      "    const t = Math.min(1, Math.abs(value) / 100);"))
+  },
+  {
+    id: "M16", name: "Export ออกเฉพาะโหมดที่อยู่บนจอ",
+    script: "tests/test_heat_calendar.js",
+    why: "ไฟล์ที่ออกไปแล้วย้อนกลับมาเลือกโหมดใหม่ไม่ได้ (เคาะไว้ว่าต้องออกทั้งสอง)",
+    apply: () => write("app.js", read("app.js").replace(
+      "      if (heatRelAvailable()) {", "      if (false) {"))
+  },
   {
     id: "M11", name: "universe falls back to a list in the file",
     script: "tests/test_app.js",
