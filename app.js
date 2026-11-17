@@ -26,6 +26,13 @@ window.QD = (function () {
   const MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
                   "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 
+  // ชื่อย่อสำหรับหัวคอลัมน์ของ Heat Calendar — 12 คอลัมน์ด้วยชื่อเต็มกว้างเกินจอ
+  const MONTHS_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.",
+                        "ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+  // benchmark ของโหมด "ส่วนต่าง" ใน Heat Calendar · ตรึงไว้ที่เดียว
+  const HEAT_BENCHMARK_TICKER = "SPY";
+
   // 20 metrics (+ n, + cvar_5pct_n as supporting counts) exactly as returned by
   // the seasonal_stats() RPC. Order/grouping follows section 3.2 of the spec doc.
   // `direction` says which raw-value end is "good" for the Level 1 heatmap:
@@ -108,6 +115,10 @@ window.QD = (function () {
     ],
     results: [null, null, null], // per variant: { rollingSeries: [{endYear, stats}] | null, snapshot: stats | null }
     rollingStatKey: "mean_pct",
+    // Heat Calendar (17 พ.ย. 2026): ตารางผลตอบแทนจริง ปี × งวด ใต้ตารางภาพรวม
+    // ใช้ตัวควบคุมสามตัวเดิมของแท็บ (Asset / Period Type / Lookback) ไม่มีของตัวเอง
+    // ยกเว้นโหมดการแสดงผล ซึ่งเปลี่ยนแล้ววาดใหม่ได้โดยไม่ต้องโหลดข้อมูลซ้ำ
+    heat: { loaded: false, loading: false, mode: "abs", calendar: null, benchmarkId: null, key: null, error: "" },
 
     // ---- Momentum & Rotation tab (Phase 2) ----
     activeTab: "seasonality",
@@ -747,6 +758,18 @@ window.QD = (function () {
       sheets.compare = [header].concat(rows);
     }
 
+    // Heat Calendar ออกสองชีตเสมอเมื่อถูกเลือก: ค่าจริง และส่วนต่างจาก benchmark
+    // ไฟล์ที่ออกไปแล้วย้อนกลับมาเลือกโหมดใหม่ไม่ได้ และทั้งสองโหมดมาจากข้อมูล
+    // ชุดเดียวกันที่โหลดมาแล้ว จึงไม่มีเหตุผลให้ผู้ใช้ต้อง export สองรอบ
+    if (selections.heatmap && state.heat.calendar) {
+      const absSheet = buildHeatCalendarSheet(state.heat.calendar, "abs", state.periodType);
+      if (absSheet) sheets.heatAbs = absSheet;
+      if (heatRelAvailable()) {
+        const relSheet = buildHeatCalendarSheet(state.heat.calendar, "rel", state.periodType);
+        if (relSheet) sheets.heatRel = relSheet;
+      }
+    }
+
     return sheets;
   }
 
@@ -757,6 +780,9 @@ window.QD = (function () {
     const compareCb = byId("exportCompare");
     if (rollingCb) { rollingCb.disabled = !anyRolling; if (!anyRolling) rollingCb.checked = false; }
     if (compareCb) { compareCb.disabled = !anyCompare; if (!anyCompare) compareCb.checked = false; }
+    const heatCb = byId("exportHeatmap");
+    const anyHeat = !!(state.heat.calendar && state.heat.calendar.years.length);
+    if (heatCb) { heatCb.disabled = !anyHeat; if (!anyHeat) heatCb.checked = false; }
   }
 
   function exportToExcel() {
@@ -765,13 +791,15 @@ window.QD = (function () {
     const overviewCb = byId("exportOverview");
     const rollingCb = byId("exportRolling");
     const compareCb = byId("exportCompare");
+    const heatCb = byId("exportHeatmap");
     const selections = {
       overview: !!(overviewCb && overviewCb.checked),
       rolling: !!(rollingCb && rollingCb.checked && !rollingCb.disabled),
-      compare: !!(compareCb && compareCb.checked && !compareCb.disabled)
+      compare: !!(compareCb && compareCb.checked && !compareCb.disabled),
+      heatmap: !!(heatCb && heatCb.checked && !heatCb.disabled)
     };
 
-    if (!selections.overview && !selections.rolling && !selections.compare) {
+    if (!selections.overview && !selections.rolling && !selections.compare && !selections.heatmap) {
       showError(errEl, "กรุณาเลือกอย่างน้อย 1 ส่วนก่อน export");
       return null;
     }
@@ -784,12 +812,382 @@ window.QD = (function () {
     if (sheets.overview) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.overview), "Overview");
     if (sheets.rolling) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rolling), "Rolling");
     if (sheets.compare) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.compare), "Compare");
+    if (sheets.heatAbs) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.heatAbs), "Heat Calendar");
+    if (sheets.heatRel) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.heatRel), `Heat vs ${HEAT_BENCHMARK_TICKER}`);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAboutSheet("Seasonality")), "About");
 
     const ticker = tickerFor(state.assetId);
     const stamp = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `seasonal-stats-${ticker}-${stamp}.xlsx`);
     return sheets;
+  }
+
+  // =======================================================================
+  // Heat Calendar (17 พ.ย. 2026) — ตารางผลตอบแทนจริง ปี × งวด
+  // =======================================================================
+  // ตารางภาพรวมด้านบนบอก "ค่าเฉลี่ย/ความถี่ชนะ ของเดือนนี้" ซึ่งซ่อนได้ว่า
+  // ค่าเฉลี่ยนั้นมาจากหลายปีจริง ๆ หรือมาจากปีเดียวที่ลากทั้งกอง · ตารางนี้คือ
+  // วัตถุดิบดิบที่สถิติชุดนั้นถูกบีบมา จึงจงใจวางไว้ใต้กันในแท็บเดียวกัน
+  //
+  // สิ่งที่ตารางนี้ "ไม่" ทำ และห้ามทำ:
+  //   · ไม่แบ่งงวดเอง — ขอบเขตงวดมาจาก period_end_closes เท่านั้น (กติกา 7.2)
+  //   · ไม่ใช้ heatmapColor() ของตารางภาพรวม — ตัวนั้นระบายตาม "ทิศทางที่ดี"
+  //     ของแต่ละ metric (Loss Frequency ยิ่งต่ำยิ่งเขียว) และไล่สีรายคอลัมน์
+  //     ส่วนตารางนี้ระบายตามเครื่องหมายของผลตอบแทน ศูนย์อยู่กลางเสมอ และใช้
+  //     ไม้บรรทัดสีอันเดียวทั้งตาราง · ถ้ายืมกันจะอ่านข้ามความหมายกันทันที
+  //   · ไม่แสดงงวดที่ยังไม่จบ — เรียก period_end_closes ด้วย completeOnly=true
+  //     (บทเรียน: งวดที่ยังไม่จบทำให้ทุกตัวอ่านเป็น "ผิดปกติ")
+
+  // เลขสัปดาห์ ISO · ต้องตรงกับ extract(isoyear)/extract(week) ของ Postgres
+  // เพราะแท็บนี้ทั้งแท็บพูดถึง "สัปดาห์ที่ N" ชุดเดียวกับ seasonal_stats
+  // ✅ ตรวจแล้ว 17 พ.ย. 2026: ตรงกันทั้ง 14,975 วัน (1990-01-01 → 2030-12-31)
+  //    md5 ของรายการ "วันที่:isoyear-week" = 8a260029feb65aadeb8d68674d3bf522
+  //    ทั้งฝั่ง Postgres และฝั่งนี้ · เทสต์ล็อกค่านี้ไว้ ห้ามแก้เลขเวลามันแดง
+  function isoWeekParts(dateStr) {
+    const [y, m, d] = String(dateStr).slice(0, 10).split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dow = dt.getUTCDay() || 7;          // จันทร์=1 … อาทิตย์=7
+    dt.setUTCDate(dt.getUTCDate() + 4 - dow); // เลื่อนไปวันพฤหัสฯ ของสัปดาห์นั้น
+    const isoYear = dt.getUTCFullYear();
+    const jan1 = Date.UTC(isoYear, 0, 1);
+    const week = Math.ceil(((dt.getTime() - jan1) / 86400000 + 1) / 7);
+    return { isoYear, week };
+  }
+
+  // period_end คือวันทำการสุดท้ายของงวด ซึ่งอยู่ในงวดนั้นเสมอ จึงใช้หาแถว/คอลัมน์ได้
+  // ปีของโหมดสัปดาห์ต้องเป็น ISO year ไม่ใช่ปีปฏิทิน ไม่งั้น 1 ม.ค. ที่ตกอยู่ใน
+  // สัปดาห์ที่ 53 ของปีก่อนจะเด้งไปอยู่ผิดแถว
+  function calendarCellKey(dateStr, periodType) {
+    if (periodType === "week") {
+      const p = isoWeekParts(dateStr);
+      return { year: p.isoYear, period: p.week };
+    }
+    const [y, m] = String(dateStr).slice(0, 10).split("-").map(Number);
+    return { year: y, period: m };
+  }
+
+  // แถวจาก period_end_closes → ชุดเวลาต่อ instrument เรียงตามวัน
+  function groupCalendarRows(rows) {
+    const byInst = {};
+    (rows || []).forEach((r) => {
+      const id = r.instrument_id;
+      byInst[id] = byInst[id] || [];
+      byInst[id].push({ period_end: r.period_end, adj_close: Number(r.adj_close) });
+    });
+    Object.keys(byInst).forEach((k) =>
+      byInst[k].sort((a, b) => (a.period_end < b.period_end ? -1 : a.period_end > b.period_end ? 1 : 0))
+    );
+    return byInst;
+  }
+
+  // ผลตอบแทนของงวด = ราคาปิดงวดนี้ / ราคาปิดงวดก่อนหน้า − 1 (หน่วยเปอร์เซ็นต์)
+  // งวดแรกของชุดไม่มีงวดก่อนหน้าให้เทียบ จึงไม่มีค่า — นั่นคือเหตุผลที่ตัวเรียก
+  // ขอข้อมูลเผื่อไปอีกหนึ่งปีแล้วค่อยตัดปีส่วนเกินทิ้งทีหลัง
+  function periodReturns(series, periodType) {
+    const out = [];
+    for (let i = 1; i < (series || []).length; i++) {
+      const prev = series[i - 1].adj_close;
+      const cur = series[i].adj_close;
+      if (!isFinite(prev) || !isFinite(cur) || prev === 0) continue;
+      const key = calendarCellKey(series[i].period_end, periodType);
+      out.push({ year: key.year, period: key.period, ret: (cur / prev - 1) * 100 });
+    }
+    return out;
+  }
+
+  function compoundPct(list) {
+    if (!list.length) return null;
+    let acc = 1;
+    list.forEach((r) => { acc *= 1 + r / 100; });
+    return (acc - 1) * 100;
+  }
+
+  function meanPct(list) {
+    if (!list.length) return null;
+    return list.reduce((a, b) => a + b, 0) / list.length;
+  }
+
+  // โครงตารางทั้งใบ · บริสุทธิ์ ไม่แตะ DOM และไม่อ่าน state จึงทดสอบตรง ๆ ได้
+  //   abs = ผลตอบแทนจริงของกอง
+  //   rel = ผลตอบแทนของกอง − ผลตอบแทนของ benchmark ในงวดเดียวกัน (หน่วยจุด)
+  // rel ของทั้งปีคิดจาก "ทบต้นของกอง − ทบต้นของ benchmark" ไม่ใช่ผลรวมของ rel
+  // รายงวด เพราะการทบต้นกับการบวกกันให้คนละคำตอบ และอันแรกคือสิ่งที่คนอ่านคิดถึง
+  function buildHeatCalendar(assetSeries, benchSeries, periodType, yearsToKeep) {
+    const a = periodReturns(assetSeries, periodType);
+    const b = periodReturns(benchSeries, periodType);
+    const benchBy = {};
+    b.forEach((r) => { benchBy[r.year + ":" + r.period] = r.ret; });
+
+    const cells = {};
+    const yearSet = {};
+    a.forEach((r) => {
+      const bench = benchBy[r.year + ":" + r.period];
+      cells[r.year] = cells[r.year] || {};
+      cells[r.year][r.period] = {
+        abs: r.ret,
+        rel: bench === undefined ? null : r.ret - bench
+      };
+      yearSet[r.year] = true;
+    });
+
+    let years = Object.keys(yearSet).map(Number).sort((x, y) => y - x); // ใหม่อยู่บน
+    if (yearsToKeep && years.length > yearsToKeep) years = years.slice(0, yearsToKeep);
+    const keep = {};
+    years.forEach((y) => { keep[y] = true; });
+
+    const periods = periodOptions(periodType);
+
+    const yearTotal = {};
+    years.forEach((y) => {
+      const absList = [], benchList = [];
+      periods.forEach((p) => {
+        const c = cells[y] && cells[y][p];
+        if (c && c.abs !== null && c.abs !== undefined) absList.push(c.abs);
+        const bv = benchBy[y + ":" + p];
+        if (bv !== undefined) benchList.push(bv);
+      });
+      const absTotal = compoundPct(absList);
+      const benchTotal = compoundPct(benchList);
+      yearTotal[y] = {
+        abs: absTotal,
+        rel: absTotal === null || benchTotal === null ? null : absTotal - benchTotal
+      };
+    });
+
+    // แถวล่างสุด = ค่าเฉลี่ยของงวดนั้นข้ามปี · คิดจากเฉพาะปีที่แสดงอยู่จริง
+    // เพื่อให้สิ่งที่ตาเห็นกับตัวเลขสรุปมาจากชุดเดียวกัน
+    const periodMean = {};
+    periods.forEach((p) => {
+      const absList = [], relList = [];
+      years.forEach((y) => {
+        const c = cells[y] && cells[y][p];
+        if (!c) return;
+        if (c.abs !== null && c.abs !== undefined) absList.push(c.abs);
+        if (c.rel !== null && c.rel !== undefined) relList.push(c.rel);
+      });
+      periodMean[p] = { abs: meanPct(absList), rel: meanPct(relList), n: absList.length };
+    });
+
+    Object.keys(cells).forEach((y) => { if (!keep[y]) delete cells[y]; });
+    return { years, periods, cells, yearTotal, periodMean };
+  }
+
+  // ไม้บรรทัดสีอันเดียวทั้งตาราง ตรึงที่เปอร์เซ็นไทล์ 90 ของค่าสัมบูรณ์
+  // ทำไมไม่ใช้ค่าสูงสุด: เดือนเดียวที่ −16% จะทำให้อีก 300 ช่องซีดจนอ่านไม่ออก
+  // ทำไมไม่ไล่สีรายแถว: ปีที่แย่สุด −0.5% จะถูกระบายแดงเข้มเท่าปีที่ −8%
+  // ค่าที่เกินไม้บรรทัดถูกตัดที่ปลาย และมีคำอธิบายบอกไว้ใต้ตาราง
+  function calendarScale(values) {
+    const v = (values || [])
+      .filter((x) => x !== null && x !== undefined && isFinite(x))
+      .map((x) => Math.abs(x))
+      .sort((x, y) => x - y);
+    if (!v.length) return null;
+    const idx = Math.min(v.length - 1, Math.floor(0.9 * (v.length - 1)));
+    return Math.max(v[idx], 0.5);
+  }
+
+  const CALENDAR_NEUTRAL = "hsl(48, 18%, 96%)";
+
+  function calendarColor(value, scale) {
+    if (value === null || value === undefined || !isFinite(value) || !scale) return null;
+    const t = Math.min(1, Math.abs(value) / scale);
+    if (t < 0.02) return CALENDAR_NEUTRAL;
+    const hue = value >= 0 ? 142 : 6; // เขียว = บวก · แดง = ลบ (เครื่องหมาย ไม่ใช่ดี/แย่)
+    const light = 94 - 32 * t;
+    return `hsl(${hue}, 60%, ${light.toFixed(0)}%)`;
+  }
+
+  function calendarValuesForScale(cal, mode) {
+    const out = [];
+    cal.years.forEach((y) => {
+      cal.periods.forEach((p) => {
+        const c = cal.cells[y] && cal.cells[y][p];
+        if (c) out.push(mode === "rel" ? c.rel : c.abs);
+      });
+    });
+    return out;
+  }
+
+  function calendarPeriodHeader(periodType, period) {
+    return periodType === "month" ? MONTHS_SHORT[period - 1] : String(period);
+  }
+
+  function formatCalendarCell(value) {
+    if (value === null || value === undefined || !isFinite(value)) return "";
+    return (value >= 0 ? "+" : "") + value.toFixed(1);
+  }
+
+  // ---------------------------------------------------------------------
+  // Heat Calendar — data access + render
+  // ---------------------------------------------------------------------
+  function heatBenchmarkId() {
+    const spy = state.instruments.find((i) => i.ticker === HEAT_BENCHMARK_TICKER);
+    return spy ? spy.id : null;
+  }
+
+  // ขอข้อมูลเผื่อไปอีกหนึ่งปี เพราะงวดแรกที่จะแสดงต้องมีงวดก่อนหน้าไว้คิดผลตอบแทน
+  function heatStartDate(lookback) {
+    if (lookback === null || lookback === undefined) return null; // "ทั้งหมด"
+    const asOf = state.dataAsOf && state.dataAsOf.as_of ? String(state.dataAsOf.as_of).slice(0, 10) : null;
+    const endYear = asOf ? Number(asOf.slice(0, 4)) : new Date().getUTCFullYear();
+    return `${endYear - lookback - 1}-01-01`;
+  }
+
+  function heatFetchKey() {
+    return [state.assetId, state.periodType, lookbackToSelectValue(state.lookback)].join("|");
+  }
+
+  async function fetchHeatCalendar() {
+    const errEl = byId("heatError");
+    hide(errEl);
+    if (!state.assetId) return null;
+    const key = heatFetchKey();
+    setLoading("heatLoading", true);
+    state.heat.loading = true;
+    try {
+      const benchId = heatBenchmarkId();
+      const ids = benchId && benchId !== state.assetId ? [state.assetId, benchId] : [state.assetId];
+      const rows = await fetchPeriodEndCloses(ids, state.periodType, heatStartDate(state.lookback), null, true);
+      const byInst = groupCalendarRows(rows);
+      state.heat.calendar = buildHeatCalendar(
+        byInst[state.assetId] || [],
+        benchId ? byInst[benchId] || [] : [],
+        state.periodType,
+        state.lookback === null || state.lookback === undefined ? null : state.lookback
+      );
+      state.heat.benchmarkId = benchId;
+      state.heat.key = key;
+      state.heat.loaded = true;
+      state.heat.error = "";
+      renderHeatCalendar();
+      return state.heat.calendar;
+    } catch (e) {
+      state.heat.error = String((e && e.message) || e);
+      showError(errEl, `โหลด Heat Calendar ไม่สำเร็จ: ${state.heat.error}`);
+      return null;
+    } finally {
+      state.heat.loading = false;
+      setLoading("heatLoading", false);
+    }
+  }
+
+  // โหมด rel ใช้ไม่ได้เมื่อกองที่เลือกคือ benchmark เอง (ทุกช่องจะเป็นศูนย์)
+  function heatRelAvailable() {
+    return !!(state.heat.benchmarkId && state.heat.benchmarkId !== state.assetId);
+  }
+
+  function renderHeatModeButtons() {
+    const wrap = byId("heatModeBtns");
+    if (!wrap) return;
+    const relOk = heatRelAvailable();
+    if (!relOk && state.heat.mode === "rel") state.heat.mode = "abs";
+    const opts = [
+      { id: "abs", label: "ค่าจริง", enabled: true },
+      { id: "rel", label: `ส่วนต่างจาก ${HEAT_BENCHMARK_TICKER}`, enabled: relOk }
+    ];
+    wrap.innerHTML = opts
+      .map((o) => {
+        const on = state.heat.mode === o.id;
+        const cls = on
+          ? "bg-blue-600 text-white border-blue-600"
+          : o.enabled
+            ? "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+            : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed";
+        return `<button type="button" data-heat-mode="${o.id}" ${o.enabled ? "" : "disabled"} class="border text-xs rounded-lg px-3 py-1.5 ${cls}">${escapeHtml(o.label)}</button>`;
+      })
+      .join("");
+  }
+
+  function renderHeatCalendar() {
+    renderHeatModeButtons();
+    const table = byId("heatCalendarTable");
+    if (!table) return;
+    const cal = state.heat.calendar;
+    if (!cal || !cal.years.length) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-3 text-xs text-slate-400">ยังไม่มีข้อมูลพอสำหรับช่วงที่เลือก</td></tr></tbody>`;
+      setText("heatNote", "");
+      setText("heatScaleNote", "");
+      return;
+    }
+    const mode = state.heat.mode === "rel" && heatRelAvailable() ? "rel" : "abs";
+    const scale = calendarScale(calendarValuesForScale(cal, mode));
+    const pick = (c) => (!c ? null : mode === "rel" ? c.rel : c.abs);
+
+    const head =
+      `<th class="sticky-col text-left px-3 py-2 bg-slate-50 border-b border-slate-200">ปี</th>` +
+      cal.periods.map((p) => `<th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">${escapeHtml(calendarPeriodHeader(state.periodType, p))}</th>`).join("") +
+      `<th class="text-right px-2 py-2 bg-slate-100 border-b border-slate-200 font-semibold">ทั้งปี</th>`;
+
+    const rows = cal.years.map((y) => {
+      const cells = cal.periods
+        .map((p) => {
+          const v = pick(cal.cells[y] && cal.cells[y][p]);
+          const bg = calendarColor(v, scale);
+          const style = bg ? ` style="background:${bg}"` : "";
+          return `<td class="text-right px-2 py-1 border-b border-slate-100 tabular-nums"${style}>${formatCalendarCell(v)}</td>`;
+        })
+        .join("");
+      const tv = mode === "rel" ? cal.yearTotal[y].rel : cal.yearTotal[y].abs;
+      return (
+        `<tr><td class="sticky-col px-3 py-1 font-medium text-slate-700 border-b border-slate-100">${y}</td>` +
+        cells +
+        `<td class="text-right px-2 py-1 border-b border-slate-100 bg-slate-50 font-medium tabular-nums">${formatCalendarCell(tv)}</td></tr>`
+      );
+    });
+
+    const meanCells = cal.periods
+      .map((p) => {
+        const m = cal.periodMean[p];
+        const v = m ? (mode === "rel" ? m.rel : m.abs) : null;
+        return `<td class="text-right px-2 py-1 border-t border-slate-300 tabular-nums font-medium">${formatCalendarCell(v)}</td>`;
+      })
+      .join("");
+    const meanRow =
+      `<tr><td class="sticky-col px-3 py-1 font-semibold text-slate-600 border-t border-slate-300 bg-slate-50">เฉลี่ย</td>` +
+      meanCells +
+      `<td class="border-t border-slate-300 bg-slate-50"></td></tr>`;
+
+    table.innerHTML = `<thead><tr>${head}</tr></thead><tbody>${rows.join("")}${meanRow}</tbody>`;
+
+    setText(
+      "heatScaleNote",
+      scale ? `ไม้บรรทัดสี: แดงเข้มสุด ≤ −${scale.toFixed(1)} · เขียวเข้มสุด ≥ +${scale.toFixed(1)} (ตรึงทั้งตาราง ค่าที่เกินถูกตัดที่ปลาย)` : ""
+    );
+    setText(
+      "heatNote",
+      (mode === "rel"
+        ? `ตัวเลขเป็นส่วนต่างจาก ${HEAT_BENCHMARK_TICKER} หน่วยเป็นจุด · `
+        : "ตัวเลขเป็นผลตอบแทนจริงของงวดนั้น หน่วยเป็น % · ") +
+        "แถวล่างคือค่าเฉลี่ยของงวดนั้นเฉพาะปีที่แสดงอยู่ · ช่อง \"ทั้งปี\" ทบต้นจากงวดที่มีข้อมูลในปีนั้น จึงไม่เท่ากับผลตอบแทนทั้งปีปฏิทินถ้าข้อมูลเริ่มกลางปี · งวดที่ยังไม่จบไม่ถูกนำมาแสดง"
+    );
+  }
+
+  // Export: ออกทั้งสองโหมดเสมอเมื่อถูกเลือก (เคาะ 17 พ.ย.) เพราะไฟล์ที่ออกไปแล้ว
+  // ย้อนกลับมาเลือกโหมดใหม่ไม่ได้ และสองโหมดมาจากข้อมูลชุดเดียวกันอยู่แล้ว
+  function buildHeatCalendarSheet(cal, mode, periodType) {
+    if (!cal || !cal.years.length) return null;
+    const header = ["ปี"]
+      .concat(cal.periods.map((p) => calendarPeriodHeader(periodType, p)))
+      .concat(["ทั้งปี"]);
+    const body = cal.years.map((y) => {
+      const row = [y];
+      cal.periods.forEach((p) => {
+        const c = cal.cells[y] && cal.cells[y][p];
+        const v = !c ? null : mode === "rel" ? c.rel : c.abs;
+        row.push(v === null || v === undefined || !isFinite(v) ? null : Number(v.toFixed(4)));
+      });
+      const tv = mode === "rel" ? cal.yearTotal[y].rel : cal.yearTotal[y].abs;
+      row.push(tv === null || tv === undefined ? null : Number(tv.toFixed(4)));
+      return row;
+    });
+    const meanRow = ["เฉลี่ย"];
+    cal.periods.forEach((p) => {
+      const m = cal.periodMean[p];
+      const v = m ? (mode === "rel" ? m.rel : m.abs) : null;
+      meanRow.push(v === null || v === undefined || !isFinite(v) ? null : Number(v.toFixed(4)));
+    });
+    meanRow.push(null);
+    return [header].concat(body).concat([meanRow]);
   }
 
   // =======================================================================
@@ -6277,6 +6675,8 @@ window.QD = (function () {
       await fetchDataAsOf();
       renderSeasonalAsOfNote();
       await fetchOverview();
+      await fetchHeatCalendar();
+      updateExportAvailability();
 
       // Momentum tab: static pickers only -- price data loads lazily on first
       // switch to the tab (switchTab), so logging in never pays for it.
@@ -6369,13 +6769,13 @@ window.QD = (function () {
     if (logoutBtn) logoutBtn.addEventListener("click", () => logout());
 
     const assetPicker = byId("assetPicker");
-    if (assetPicker) assetPicker.addEventListener("change", (e) => { state.assetId = Number(e.target.value); fetchOverview(); });
+    if (assetPicker) assetPicker.addEventListener("change", (e) => { state.assetId = Number(e.target.value); fetchOverview(); fetchHeatCalendar(); });
 
     const periodTypePicker = byId("periodTypePicker");
-    if (periodTypePicker) periodTypePicker.addEventListener("change", (e) => { state.periodType = e.target.value; renderSeasonalAsOfNote(); fetchOverview(); });
+    if (periodTypePicker) periodTypePicker.addEventListener("change", (e) => { state.periodType = e.target.value; renderSeasonalAsOfNote(); fetchOverview(); fetchHeatCalendar(); });
 
     const lookbackPicker = byId("lookbackPicker");
-    if (lookbackPicker) lookbackPicker.addEventListener("change", (e) => { state.lookback = parseLookbackValue(e.target.value); fetchOverview(); });
+    if (lookbackPicker) lookbackPicker.addEventListener("change", (e) => { state.lookback = parseLookbackValue(e.target.value); fetchOverview(); fetchHeatCalendar(); });
 
     const calcBtn = byId("calculateBtn");
     if (calcBtn) calcBtn.addEventListener("click", () => runCalculate());
@@ -6385,6 +6785,16 @@ window.QD = (function () {
 
     const exportBtn = byId("exportBtn");
     if (exportBtn) exportBtn.addEventListener("click", () => exportToExcel());
+
+    // โหมดของ Heat Calendar เปลี่ยนที่การแสดงผลอย่างเดียว ข้อมูลชุดเดิมพอ
+    // จึงวาดใหม่โดยไม่ยิง query ซ้ำ (ทั้งสองโหมดมาจากการโหลดครั้งเดียวกัน)
+    const heatModeBtns = byId("heatModeBtns");
+    if (heatModeBtns) heatModeBtns.addEventListener("click", (e) => {
+      const btn = e.target.closest ? e.target.closest("[data-heat-mode]") : null;
+      if (!btn || btn.disabled) return;
+      state.heat.mode = btn.getAttribute("data-heat-mode");
+      renderHeatCalendar();
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -6433,6 +6843,13 @@ window.QD = (function () {
     renderOverviewTable, renderOverviewChart, renderAssetPicker, renderRollingStatPicker, syncTopControlsFromState,
     login, logout, bootDashboard, renderAuthState,
     fieldHeaderLabel, buildExportColumns, buildExportSheets, updateExportAvailability, exportToExcel,
+    // Heat Calendar (17 พ.ย. 2026) — ตัวบริสุทธิ์ทดสอบตรงได้ + ตัวโหลด/วาด
+    isoWeekParts, calendarCellKey, groupCalendarRows, periodReturns, compoundPct, meanPct,
+    buildHeatCalendar, calendarScale, calendarColor, calendarValuesForScale,
+    calendarPeriodHeader, formatCalendarCell, buildHeatCalendarSheet,
+    heatBenchmarkId, heatStartDate, heatFetchKey, heatRelAvailable,
+    fetchHeatCalendar, renderHeatCalendar, renderHeatModeButtons,
+    HEAT_BENCHMARK_TICKER, MONTHS_SHORT,
     renderStatGlossary,
     // Momentum & Rotation (Phase 2) -- pure helpers (unit-testable)
     getUniverseInstruments, computeTrailingReturn, computeSMASignal, computeReturnSeries, stdevSample,
