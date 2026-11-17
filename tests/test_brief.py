@@ -1947,3 +1947,43 @@ def test_prompt_version_and_fingerprint_move_together():
     จะอ้าง prompt_version เดียวกันทั้งที่กติกาต่างกัน เคสนี้คือตัวจับ
     """
     assert (bp.PROMPT_VERSION, bp.PROMPT_FINGERPRINT) == ("v2.5", "2e17ec031830")
+
+
+# --- รอบ B2b-1.2 เพิ่มเติม · รุ่นที่ถูกปิดต้องไม่ทำให้รอบพังทั้งรอบ --------
+# 16 พ.ย. รอบซ้อมบน branch: รุ่นหลักหมดเวลา 180 วินาทีสองครั้ง แล้วตกไปตัว
+# สำรอง gemini-2.5-flash ซึ่งตอบ 404 "no longer available to new users"
+# ตัว 404 ไม่ถูกนับเป็น ModelUnavailable จึงโยนทะลุออกมา งานแดง exit 1 และ
+# ไม่มี Telegram เลย ทั้งที่เส้นทาง "โมเดลไม่ว่าง" ส่ง Telegram แล้วออก 0
+
+def test_a_retired_model_is_a_model_we_step_over_not_a_crash():
+    assert brief_main.is_model_gone(404) is True
+    # 503/429 รอแล้วหายเอง ต้องอยู่เส้นทาง retry ไม่ใช่เส้นทางนี้
+    for status in (429, 500, 502, 503, 504):
+        assert brief_main.is_model_gone(status) is False
+        assert brief_main.is_retryable(status) is True
+    # 400 คือเราขอผิด แก้ได้ในโค้ด ต้องดังไม่ใช่เงียบ
+    assert brief_main.is_model_gone(400) is False
+    # 403 คือกุญแจถูกปฏิเสธ ซึ่งเป็นปัญหาระดับบัญชี ไม่ใช่ระดับรุ่น
+    # ถ้านับเป็น "ไม่ว่าง" รอบนั้นจะเขียวเงียบ ๆ ทั้งที่ต้องมีคนไปแก้
+    assert brief_main.is_model_gone(403) is False
+
+
+def test_the_default_fallback_chain_names_no_model_that_answered_404():
+    """ค่าตั้งต้นต้องใช้งานได้ตอน secret ไม่ได้ตั้ง
+
+    gemini-2.5-flash ยังอยู่ในรายการของ ListModels (วัด 17 พ.ย. · 49 รุ่น)
+    แต่ generateContent ตอบ 404 — รายการนั้นบอกว่ามองเห็น ไม่ได้บอกว่าเรียกได้
+    """
+    assert "gemini-2.5-flash" not in brief_main.FALLBACK_MODELS
+    assert len(brief_main.model_chain()) >= 3
+
+
+def test_the_unavailable_message_tells_a_retired_model_from_a_busy_one():
+    busy = brief_main.model_unavailable_message(
+        "2026-11-20", "ลองครบทุกรุ่นแล้ว (m1, m2) · ครั้งสุดท้าย: m2 ไม่ว่าง")
+    gone = brief_main.model_unavailable_message(
+        "2026-11-20", "m2 ใช้ไม่ได้แล้ว (HTTP 404): no longer available")
+    assert "2026-11-20" in busy and "2026-11-20" in gone
+    # เหตุผลต้องเดินทางไปถึงข้อความ ไม่ใช่ถูกกลืนด้วยประโยคตายตัว
+    assert "ไม่ว่าง" in busy and "404" in gone
+    assert busy != gone
