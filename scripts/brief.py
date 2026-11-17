@@ -75,9 +75,14 @@ LIST_URL = API_BASE + "/models"
 # once after holding the connection open for five minutes. Waiting longer on a
 # swamped model is the one thing that reliably does not work -- a quieter
 # model answers now. Older flash models carry far less traffic.
+# 17 พ.ย. gemini-2.5-flash ตอบ 404 "no longer available to new users" ทั้งที่
+# ยังโผล่ในรายการของ ListModels — รายการนั้นบอกว่า "มองเห็น" ไม่ได้บอกว่า
+# "เรียกได้" · ชื่อที่ตายคาแถวทำให้รอบนั้นพังทั้งรอบ จึงถอดออกจากค่าตั้งต้น
+# และให้ 404 เดินไปรุ่นถัดไปแทนการโยน error (ดู is_model_gone)
 FALLBACK_MODELS = [m.strip() for m in
                    (os.environ.get("GEMINI_FALLBACK_MODELS")
-                    or "gemini-3.6-flash,gemini-2.5-flash").split(",")
+                    or "gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash")
+                   .split(",")
                    if m.strip()]
 
 CONNECT_TIMEOUT_S = 15
@@ -91,6 +96,13 @@ READ_TIMEOUT_S = 180
 # runs chained to the morning fetch would be lost on any busy day, and the
 # fetch would go red for something that had nothing to do with the data.
 RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+# Statuses that mean "this model id will not serve us" -- it never existed or
+# Google retired it. Kept narrow on purpose: 404 is about the model named in
+# the URL, so the next model in the chain may well answer. 403 is NOT here,
+# because a rejected key is global -- walking the chain would turn a problem
+# we must fix into a quiet green run.
+GONE_STATUSES = (404,)
 # Two tries per model rather than four, because the chain now provides the
 # other attempts and they are worth more: the whole walk has to finish inside
 # the step's 30-minute cap.
@@ -144,6 +156,28 @@ def try_models(attempt, models):
 
 def is_retryable(status: int) -> bool:
     return status in RETRY_STATUSES
+
+
+def is_model_gone(status: int) -> bool:
+    """True when the answer says this model id cannot serve us at all.
+
+    Separate from is_retryable: waiting does not help, but the next model in
+    the chain is worth trying immediately.
+    """
+    return status in GONE_STATUSES
+
+
+def model_unavailable_message(trade_date: str, reason: str) -> str:
+    """The Telegram line when no model answered.
+
+    The reason travels into the text because the two causes need opposite
+    responses: a busy model clears by itself, a retired model needs the
+    GEMINI_MODEL / GEMINI_FALLBACK_MODELS secrets changed by hand. A message
+    that always says "Google is busy" would hide the second one.
+    """
+    return (f"⏳ ยังไม่มีบทสรุปของข้อมูลวันที่ {trade_date}\n"
+            f"{reason}\n"
+            "ข้อมูลในแดชบอร์ดไม่มีปัญหา · สั่งสร้างใหม่ได้ที่ Actions → brief")
 
 
 def with_retries(send, timeout_exc, waits=RETRY_WAITS_S, sleep=time.sleep):
@@ -266,6 +300,10 @@ def _ask_one_model(system: str, user: str, api_key: str, model: str) -> str:
         print("  รุ่นนี้ไม่รับ thinkingConfig ถอดออกแล้วลองใหม่")
         body["generationConfig"].pop("thinkingConfig", None)
         r = with_retries(post, requests.Timeout)
+
+    if is_model_gone(r.status_code):
+        raise ModelUnavailable(
+            f"{model} ใช้ไม่ได้แล้ว (HTTP {r.status_code}): {r.text[:160]}")
 
     if r.status_code != 200:
         raise RuntimeError(f"Gemini ตอบ HTTP {r.status_code}: {r.text[:400]}")
@@ -543,10 +581,7 @@ def main() -> int:
         # that no one can act on is a red that stops being read.
         print(f"โมเดลไม่ว่าง: {exc}")
         if not no_write:
-            notify.send(
-                f"⏳ ยังไม่มีบทสรุปของข้อมูลวันที่ {trade_date}\n"
-                f"โมเดลฝั่ง Google ไม่ว่าง ลองแล้ว {len(RETRY_WAITS_S) + 1} ครั้ง\n"
-                f"ข้อมูลในแดชบอร์ดไม่มีปัญหา · สั่งสร้างใหม่ได้ที่ Actions → brief")
+            notify.send(model_unavailable_message(trade_date, str(exc)))
         return 0
 
     try:

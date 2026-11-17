@@ -120,8 +120,8 @@ MUTATIONS = [
      "every failure would be reported as 'Google is busy' and nothing would go red"),
 
     ("M22", "scripts/brief.py", "no quieter model to fall back to",
-     'or "gemini-3.6-flash,gemini-2.5-flash").split(",")',
-     'or "").split(",")',
+     'or "gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash")',
+     'or "")',
      "one busy model would again cost the whole day's brief"),
 
     ("M23", "scripts/brief.py", "the fallback is never reached",
@@ -397,6 +397,21 @@ MUTATIONS = [
      "15. ชื่อ fact id เป็นที่อยู่ของตัวเลข", "15. (ว่าง)",
      'the brief would again call a 721-day percentile "ในรอบ 3 ปี" because an '
      "id says 3y"),
+
+    ("M79", "scripts/brief.py", "a retired model crashes the run again",
+     "GONE_STATUSES = (404,)", "GONE_STATUSES = ()",
+     "one dead model id in the chain would take the whole run down with it, "
+     "with no Telegram, instead of being stepped over"),
+
+    ("M80", "scripts/brief.py", "the unavailable message loses the reason",
+     '            f"{reason}\\n"', "",
+     'every failure would read "ยังไม่มีบทสรุป" alike, hiding the one case that '
+     "needs a secret changed by hand"),
+
+    ("M81", "scripts/brief.py", "the retired model is put back in the chain",
+     '"gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash"',
+     '"gemini-3.6-flash,gemini-2.5-flash"',
+     "a run with the secret unset would walk straight back into the 404"),
 ]
 
 
