@@ -1946,7 +1946,7 @@ def test_prompt_version_and_fingerprint_move_together():
     แล้วลายนิ้วมือต้องตาม · ถ้าอัปลายนิ้วมือแต่ลืมขยับเวอร์ชัน บทสรุปสองฉบับ
     จะอ้าง prompt_version เดียวกันทั้งที่กติกาต่างกัน เคสนี้คือตัวจับ
     """
-    assert (bp.PROMPT_VERSION, bp.PROMPT_FINGERPRINT) == ("v2.5", "2e17ec031830")
+    assert (bp.PROMPT_VERSION, bp.PROMPT_FINGERPRINT) == ("v2.6", "8a88baa87aa0")
 
 
 # --- รอบ B2b-1.2 เพิ่มเติม · รุ่นที่ถูกปิดต้องไม่ทำให้รอบพังทั้งรอบ --------
@@ -1987,3 +1987,68 @@ def test_the_unavailable_message_tells_a_retired_model_from_a_busy_one():
     # เหตุผลต้องเดินทางไปถึงข้อความ ไม่ใช่ถูกกลืนด้วยประโยคตายตัว
     assert "ไม่ว่าง" in busy and "404" in gone
     assert busy != gone
+
+
+# --- 17 พ.ย. · ป้ายของเราเองไปชนคำห้ามของเราเอง -------------------------
+# รันจริงสองรอบบนแผ่น 13 พ.ย. แผ่นเดียวกัน: รอบแรกถูกกักที่ด่าน 4 เพราะ
+# ประโยค "กลุ่มสวนทางตลาด 6 กอง -6.18% และ High Beta 30 กอง -8.41%"
+# รอบสองผ่าน เพราะบังเอิญหยิบ +0.05% มาวางในประโยคเดียวกันแทน
+# เนื้อหาเดียวกัน ความถูกต้องเท่ากัน คำตัดสินกลับด้าน — ด่านกำลังวัดรูปประโยค
+# ต้นเหตุไม่ใช่โมเดล: BUCKET_LABEL ของเราเองเขียนคำว่า "สวนทาง" ไว้ในป้าย
+
+def test_no_fact_label_contains_a_word_the_gates_ban():
+    """ป้ายที่เราส่งให้โมเดล ต้องไม่มีคำที่ด่านของเราเองห้าม
+
+    ถ้าป้ายมีคำนั้น โมเดลจะเขียนมันลงประโยคโดยไม่มีทางเลี่ยง แล้วถูกกัก
+    ด้วยเหตุผลที่ไม่ใช่ความผิดของมัน · กันทั้งตาราง ไม่ใช่เฉพาะตัวที่เคยพลาด
+    """
+    banned = (list(bg.DIVERGE_WORDS) + list(bg.FORBIDDEN_TH)
+              + list(bg.EXTREME_WORDS) + list(bg.SUPERLATIVE_WORDS)
+              + list(bg.WIDE_WORDS) + list(bg.LEADER_WORDS)
+              + list(bg.VOLUME_WORDS) + list(bg.FRAGILE_WORDS)
+              + list(bg.STRONG_WORDS) + list(bg.EXPAND_WORDS))
+    labels = dict(bf.BUCKET_LABEL)
+    labels.update(bf.RANK_LABEL)
+    for key, label in labels.items():
+        for word in banned:
+            assert word not in label, (
+                f'ป้าย "{label}" ของ {key} มีคำว่า "{word}" ซึ่งด่านคุมอยู่ — '
+                "เปลี่ยนป้าย อย่าไปผ่อนด่าน")
+
+
+def test_the_behaviour_buckets_are_named_the_same_way_as_each_other():
+    """สามกลุ่มแรกเป็นอังกฤษอยู่แล้ว ตัวที่สี่ต้องเป็นอังกฤษด้วย
+
+    ถ้าปล่อยให้ตัวเดียวเป็นไทย มันคือจุดที่คนแก้ครั้งต่อไปจะเติมคำไทยกลับเข้ามา
+    """
+    assert bf.BUCKET_LABEL["negative_corr"] == "Negative Correlation"
+    assert all(lbl.isascii() for lbl in bf.BUCKET_LABEL.values())
+
+
+def test_prompt_forbids_calling_our_own_list_the_market():
+    """breadth เป็นสัดส่วนในลิสต์ 93 กองที่เราเลือกเอง (54 เป็นกองธีม)
+
+    รอบแรกของ 17 พ.ย. เขียนว่า "ภาวะตลาดแสดงลักษณะอ่อนแอลง" ซึ่งผ่านทุกด่าน
+    เพราะไม่มีด่านไหนดูประธานของประโยค · รอบสองเขียนถูกเองโดยไม่มีใครบังคับ
+    กติกานี้จึงเป็นสิ่งเดียวที่ทำให้มันไม่ขึ้นกับโชค
+    """
+    assert "breadth.*" in bp.SYSTEM
+    assert "ภาวะตลาด" in bp.SYSTEM
+    assert "SMA200" in bp.SYSTEM
+    # และต้องสั่งห้ามแปลชื่อกลุ่มเอง ไม่งั้นป้ายที่แก้แล้วก็ยังถูกแปลกลับ
+    assert "ห้ามแปลเอง" in bp.SYSTEM
+
+
+def test_the_bucket_label_reaches_the_facts_the_model_sees():
+    """แก้ป้ายแล้วต้องไปถึงโมเดลจริง ไม่ใช่แก้ค้างอยู่ในตาราง
+
+    บทเรียน 15 พ.ย.: ส่งข้อมูลให้พร้อมใช้ ไม่เท่ากับผู้ใช้ข้อมูลจะหยิบไปใช้
+    """
+    sheet = {"groups": {"beta": {"buckets": {
+        "negative_corr": {"n": 6, "avg_21d": -6.18, "avg_1d": 0.05,
+                          "members": ["A", "B", "C", "D", "E", "F"]}}}}}
+    facts = bf.select_facts(sheet).facts
+    texts = [f.label for f in facts if f.id.startswith("beta.negative_corr")]
+    assert texts, "ไม่มี fact ของกลุ่มนี้เลย"
+    assert all("สวนทาง" not in t for t in texts)
+    assert any("Negative Correlation" in t for t in texts)

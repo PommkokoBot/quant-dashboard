@@ -193,6 +193,23 @@ MUTATIONS = [
      "if not vals:",
      "two instruments both rising would be described as moving apart"),
 
+    # --- 17 พ.ย. · ป้ายของเราเองไปชนคำห้ามของเราเอง ---------------------
+    ("M84", "scripts/brief_facts.py", "the bucket label carries a banned word again",
+     '"negative_corr": "Negative Correlation",',
+     '"negative_corr": "\u0e01\u0e25\u0e38\u0e48\u0e21\u0e2a\u0e27\u0e19\u0e17\u0e32\u0e07\u0e15\u0e25\u0e32\u0e14",',
+     "the 17 Nov run was held for naming a group, not for an error"),
+
+    ("M85", "scripts/brief_facts.py", "one bucket drifts back to Thai",
+     '"negative_corr": "Negative Correlation",',
+     '"negative_corr": "\u0e01\u0e25\u0e38\u0e48\u0e21\u0e2a\u0e2b\u0e2a\u0e31\u0e21\u0e1e\u0e31\u0e19\u0e18\u0e4c\u0e25\u0e1a",',
+     "a Thai name with no banned word still breaks the one-style rule, "
+     "and is where a banned word creeps back in next time"),
+
+    ("M86", "scripts/brief_facts.py", "the label never reaches the model",
+     'label = BUCKET_LABEL.get(code, code)',
+     'label = code',
+     "fixing the table is worthless if select_facts sends the raw key"),
+
     ("M37", "scripts/brief_gates.py", "internal codes allowed in the prose again",
      "        for code in RAW_CODES:\n            if code in text:",
      "        for code in RAW_CODES:\n            if False and code in text:",
@@ -339,8 +356,10 @@ MUTATIONS = [
      '    "atr_pct", "pos_52w", "pct_from_high",', '',
      'a reader would be shown "pos_52w" as if it were a word'),
 
+    # ⚠️ mutant นี้ตรึงสตริงเวอร์ชันไว้ ทุกครั้งที่ขยับ PROMPT_VERSION ต้องแก้
+    # สองค่านี้ตามด้วย ไม่งั้นมันจะ "หาเป้าไม่เจอ" แล้วนับเป็นตัวที่รอด
     ("M69", "scripts/brief_prompt.py", "the new rule added without a version bump",
-     'PROMPT_VERSION = "v2.5"', 'PROMPT_VERSION = "v2.4"',
+     'PROMPT_VERSION = "v2.6"', 'PROMPT_VERSION = "v2.5"',
      "briefs written under the new rules would claim the older prompt"),
 
     # ---- รอบ B2b-1.1 · prompt บอกให้เลือก + วิธีเรียงลำดับ ----------------
