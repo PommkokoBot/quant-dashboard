@@ -4,6 +4,10 @@
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src https://nsbreucmgfmphmfewnbw.supabase.co; base-uri 'none'; form-action 'none'" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- noindex: หน้านี้อยู่หลัง login ยังไม่ใช่หน้าสาธารณะ และอยู่บน GitHub Pages ซึ่งเปิดให้ทุกคนเข้าถึง URL ได้
+     ยังไม่สร้าง robots.txt โดยตั้งใจ เพราะ Disallow จะบล็อกหน้าบทสรุปสาธารณะของรอบ C ไปด้วย
+     รอบ C ต้องตัดสินบรรทัดนี้ใหม่ ถ้ากล่องบทสรุปมาอยู่บนหน้านี้ - ดู tool-quant-dashboard.md 11.6 -->
+<meta name="robots" content="noindex, nofollow" />
 <title>Quant-Dashboard</title>
 <link rel="stylesheet" href="assets/tailwind.css">
 <script src="vendor/chart.umd.js"></script>

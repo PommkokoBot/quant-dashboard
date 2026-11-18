@@ -88,13 +88,22 @@ assert.ok(flat.includes("Seasonality"), "the About sheet names the section it ca
 
 ["appDisclaimer", "authDisclaimer", "privacyNotice"].forEach((id) =>
   assert.ok(doc.getElementById(id) && doc.getElementById(id).textContent.trim().length > 40, id + " is on the page with real text"));
+
+// The page sits on a public GitHub Pages URL even though its contents are
+// behind login, and nothing on screen would ever say it had been indexed.
+// Matched as a tag, not as the word: the comment next to it says "noindex" too.
+const robots = html.match(/<meta\s+name=["']robots["']\s+content=["']([^"']+)["']/i);
+assert.ok(robots, "the dashboard page carries a <meta name=\"robots\"> tag");
+assert.ok(/noindex/i.test(robots[1]), "that tag says noindex -- found: " + robots[1]);
+// Round C may have to revisit this if the public brief lands on this same page.
+
 const foot = doc.getElementById("appDisclaimer").textContent;
 ["ไม่ใช่คำแนะนำการลงทุน", "ผลในอดีตไม่ได้รับประกันผลในอนาคต"].forEach((phrase) =>
   assert.ok(foot.includes(phrase), "disclaimer says: " + phrase));
 const privacy = doc.getElementById("privacyNotice").textContent;
 ["อีเมล", "Supabase", "mehresix@gmail.com"].forEach((phrase) =>
   assert.ok(privacy.includes(phrase), "privacy notice says what is stored / where / who to contact: " + phrase));
-console.log("[ok] version chip + Excel About sheet + on-page disclaimer + PDPA notice (login screen and footer)");
+console.log("[ok] version chip + Excel About sheet + on-page disclaimer + PDPA notice (login screen and footer) + noindex");
 
 // ---------------- 5. the Data Health rule that kept crying wolf ----------------
 assert.strictEqual(QD.MACRO_SERIES_INFO.CPIAUCSL.maxAgeDays, 100,

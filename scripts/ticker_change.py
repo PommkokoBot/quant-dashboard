@@ -177,7 +177,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--config", default=str(CONFIG_PATH))
     args = ap.parse_args()
-    changes = json.loads(Path(args.config).read_text())["changes"]
+    changes = json.loads(Path(args.config).read_text(encoding="utf-8"))["changes"]
     client = fp.get_client()
     failed = 0
     for ch in changes:

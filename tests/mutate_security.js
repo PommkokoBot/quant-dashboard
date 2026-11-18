@@ -75,6 +75,13 @@ const INLINE = "<script>window.QD_SNEAKY = 1;</script>\n</body>";
 
 const MUTATIONS = [
   {
+    id: "M17", name: "noindex dropped from the page",
+    script: "tests/test_security.js",
+    why: "the login-walled dashboard would become indexable, and nothing on screen would say so",
+    apply: () => write("index.html", read("index.html")
+      .replace(/<meta\s+name="robots"[^>]*>\n?/i, ""))
+  },
+  {
     id: "M1", name: "inline script pasted back",
     script: "tests/test_security.js",
     why: "code in the page would be blocked by script-src 'self' and silently never run",
