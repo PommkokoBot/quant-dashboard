@@ -22,6 +22,40 @@ REPO = Path(__file__).resolve().parent.parent
 
 # (name, what it breaks, old text, new text)
 MUTATIONS = [
+    # --- 17 พ.ย. · ด่านใหม่สามตัว ---
+    (
+        "M12 weekly brief staleness",
+        "a week could pass with no published brief and nothing would say so",
+        "    if published < due:",
+        "    if published < due - timedelta(days=99):",
+    ),
+    (
+        "M13 saturday grace removed",
+        "the brief gate would fire every Saturday morning before the queue "
+        "has even dispatched the run, and a gate that cries wolf stops being read",
+        "    if today.weekday() == 5:\n        return []",
+        "    if False:\n        return []",
+    ),
+    (
+        "M14 membership snapshot staleness",
+        "pg_cron could stop taking snapshots and we would find out on the day "
+        "we open the history and see the gap -- the day it cannot be bought back",
+        "    if age >= MAX_SNAPSHOT_AGE_DAYS:",
+        "    if age >= MAX_SNAPSHOT_AGE_DAYS + 30:",
+    ),
+    (
+        "M15 fetch pulse threshold",
+        "the daily job could stop running for days while the five-day rule "
+        "still reports everything as normal over a long weekend",
+        "    if gap >= MAX_FETCH_GAP_HOURS:",
+        "    if gap >= MAX_FETCH_GAP_HOURS * 10:",
+    ),
+    (
+        "M16 pulse gate unplugged from build_findings",
+        "the gate would still pass its own tests while never running in production",
+        "    findings += check_fetch_pulse(snapshot.fetch_last_at, now)",
+        "    findings += []",
+    ),
     (
         "M1 no-data threshold",
         "price data could stop arriving for 99 days without a word",
