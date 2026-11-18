@@ -93,7 +93,7 @@ class TestCuratedFile(unittest.TestCase):
             self.assertIn(date.fromisoformat(d), dates, d)
 
     def test_config_types(self):
-        cfg = json.loads(fe.CONFIG_PATH.read_text())
+        cfg = json.loads(fe.CONFIG_PATH.read_text(encoding="utf-8"))
         codes = [t["code"] for t in cfg["types"]]
         self.assertEqual(codes, ["fomc", "cpi", "pce", "us_election_pres", "us_election_mid", "opex_monthly"])
         self.assertTrue(all(set(fe.TYPE_FIELDS) <= set(t) for t in cfg["types"]))

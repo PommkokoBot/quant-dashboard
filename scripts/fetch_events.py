@@ -130,7 +130,7 @@ def check_fred_dates(dates: list, max_per_year: int):
 
 
 def load_curated(code: str, path: Path = CURATED_PATH):
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     block = data.get(code)
     if not block:
         raise ValueError(f"no curated block '{code}' in {path.name}")
@@ -212,7 +212,7 @@ def write_type(client, code: str, source: str, wanted: list, remove: list, notes
 
 
 def run(dry_run: bool, client=None, today: date = None, config: dict = None, fred_key=None):
-    cfg = config or json.loads(CONFIG_PATH.read_text())
+    cfg = config or json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     today = today or date.today()
     fred_key = fred_key if fred_key is not None else os.environ.get("FRED_API_KEY")
     client = client or get_client()
