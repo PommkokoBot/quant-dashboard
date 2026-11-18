@@ -19,7 +19,7 @@ from brief_gates import (BODY_MAX_CHARS, BREADTH_WEAK_PCT, DIVERGE_WORDS,
                          SUPERLATIVE_WORDS, VAGUE_TIME_TH, VOL_RVOL_MIN,
                          VOL_Z_MIN, VOLUME_WORDS, WIDE_PCTILE, WIDE_WORDS)
 
-PROMPT_VERSION = "v2.5"
+PROMPT_VERSION = "v2.6"
 
 # เป้าหมายจำนวนตัวเลขต่อหัวข้อ (รอบ B2b-1.1 · 16 พ.ย. 2026)
 #
@@ -37,7 +37,7 @@ SECTION_NUMBERS_TARGET = 12
 # never carry the same prompt_version with different instructions behind them.
 # A test compares this against the rendered SYSTEM text: when it fails, update
 # BOTH -- the fingerprint and the version right above it.
-PROMPT_FINGERPRINT = "2e17ec031830"
+PROMPT_FINGERPRINT = "8a88baa87aa0"
 
 # The sections, in order, with what each one is for. Written as part of the
 # request rather than the system rules because this is the part most likely to
@@ -50,7 +50,7 @@ SECTIONS = [
      "ไม่ต้องไล่ทุกกองทุกกรอบเวลา เลือกกองที่ต่างจากพวกมากที่สุดกับกองที่คนอ่าน "
      "ใช้เป็นหลัก (SPY) · ให้พูดเป็นสัปดาห์ก่อนเป็นวัน เพราะบทสรุปนี้เป็นรายสัปดาห์"),
     ("กลุ่มตามพฤติกรรม",
-     "กลุ่ม Low Beta / Market Beta / High Beta / สวนทางตลาด กลุ่มไหนนำกลุ่มไหนตาม"),
+     "กลุ่ม Low Beta / Market Beta / High Beta / Negative Correlation กลุ่มไหนนำกลุ่มไหนตาม"),
     ("เด่นและแย่",
      "กองที่ผลตอบแทน 21 วันสูงสุดและต่ำสุด US sector ที่หัวแถวกับท้ายแถว "
      "และปริมาณซื้อขายรายสัปดาห์ของกองหัวแถวถ้ามีตัวเลขรองรับ · "
@@ -138,6 +138,12 @@ SYSTEM = """คุณเขียนสรุปภาวะตลาด ETF ร
     บอกไว้ (pair.*.n_days) เท่านั้น หรือไม่ต้องบอกความยาวของช่วงเลย
     และคำว่า "กรอบ 1 ปี" ในข้อ 12 ใช้กับตัวเลข risk.* เท่านั้น
     ห้ามดัดแปลงเป็น "กรอบ N ปี" กับตัวเลขกลุ่มอื่น
+16. ตัวเลขความกว้าง (breadth.*) เป็นสัดส่วนภายในลิสต์ที่เราเลือกเองเท่านั้น
+    ไม่ใช่ของตลาด ห้ามตั้งประธานของประโยคเป็น ตลาด ภาวะตลาด หรือ หุ้นทั้งตลาด
+    ให้ประธานเป็นสิ่งที่วัดได้จริง เช่น "สัดส่วนกองที่อยู่เหนือ SMA200"
+    และต้องมีตัวหารอยู่ในประโยคเดียวกันเสมอ
+17. ชื่อกลุ่มและชื่อหัวข้อให้ใช้ตามป้ายที่ fact ให้มาตรงตัว ห้ามแปลเอง
+    ห้ามตั้งชื่อใหม่ เพราะชื่อที่แปลเองอาจไปตรงกับคำที่กติกาข้อ 6 คุมอยู่
 
 ภาษา เขียนภาษาไทย แต่คง ticker และศัพท์เทคนิคไว้เป็นภาษาอังกฤษ
 เช่น SPY, Breadth, Momentum, Low Beta, SMA200, drawdown
