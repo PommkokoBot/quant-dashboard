@@ -90,6 +90,11 @@ def healthy_snapshot() -> wd.Snapshot:
         flagged=[],
         classification=classification_rows(date(2026, 10, 1), date(2026, 10, 1)),
         fomc_last=date(2027, 12, 8),
+        # TODAY คือจันทร์ 9 พ.ย. · เสาร์ที่จบไปแล้วคือ 7 พ.ย.
+        brief_last={"publish_date": "2026-11-07", "trade_date": "2026-11-06",
+                    "status": "published"},
+        membership_last=TODAY,
+        fetch_last_at=datetime(2026, 11, 9, 4, 30, tzinfo=timezone.utc),
     )
 
 
@@ -99,12 +104,12 @@ def healthy_snapshot() -> wd.Snapshot:
 
 
 def test_healthy_snapshot_has_no_findings():
-    assert wd.build_findings(healthy_snapshot(), TODAY) == []
+    assert wd.build_findings(healthy_snapshot(), TODAY, NOW) == []
 
 
 def test_healthy_message_is_the_one_line_heartbeat():
     snap = healthy_snapshot()
-    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY, NOW), NOW)
     assert message.startswith("✅")
     assert "fact sheet ครบ" in message
     assert "ความถูกต้อง 5/5" in message
@@ -241,7 +246,7 @@ def test_flagged_is_a_note_not_an_alert():
 def test_notes_alone_do_not_turn_the_message_into_a_warning():
     snap = healthy_snapshot()
     snap.flagged = [{"ticker": "BNO", "status": "flagged"}]
-    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY, NOW), NOW)
     assert message.startswith("✅")
     assert "BNO" in message
 
@@ -312,7 +317,7 @@ def test_alert_message_lists_every_alert():
     snap = healthy_snapshot()
     snap.facts_max = AS_OF - timedelta(days=1)
     snap.integrity = integrity_rows(TODAY, bad={"check_name": "nulls", "bad_rows": 3})
-    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY, NOW), NOW)
     assert message.startswith("⚠️")
     assert "fact sheet" in message
     assert "nulls" in message
@@ -401,7 +406,7 @@ def test_incomplete_prices_report_one_cause_not_two():
     snap = healthy_snapshot()
     snap.coverage = coverage_row(54, 93, False)
     snap.facts_max = AS_OF - timedelta(days=1)
-    findings = wd.build_findings(snap, TODAY)
+    findings = wd.build_findings(snap, TODAY, NOW)
     codes = [f.code for f in findings]
     assert codes == ["coverage_incomplete"]
 
@@ -410,7 +415,7 @@ def test_a_missing_sheet_on_a_complete_day_is_still_reported():
     """The suppression above must not swallow the original check."""
     snap = healthy_snapshot()
     snap.facts_max = AS_OF - timedelta(days=1)
-    codes = [f.code for f in wd.build_findings(snap, TODAY)]
+    codes = [f.code for f in wd.build_findings(snap, TODAY, NOW)]
     assert "facts_behind" in codes
 
 
@@ -418,12 +423,117 @@ def test_heartbeat_shows_the_count_every_day():
     """A universe sliding from 93 to 88 over a month trips no single-day
     threshold. Printing it daily is what makes that visible to a person."""
     snap = healthy_snapshot()
-    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY, NOW), NOW)
     assert "ราคา 93/93" in message
 
 
 def test_heartbeat_without_coverage_does_not_invent_a_number():
     snap = healthy_snapshot()
     snap.coverage = None
-    message = wd.format_message(snap, wd.build_findings(snap, TODAY), NOW)
+    message = wd.format_message(snap, wd.build_findings(snap, TODAY, NOW), NOW)
     assert "ราคา —" in message
+
+
+# --------------------------------------------------------------------------
+# 17 พ.ย. 2026 · สามจุดบอดที่เปิดพร้อมกันในวันเดียว
+#
+# เช้าวันนั้นข้อมูลราคาค้างอยู่ที่ศุกร์ 13 พ.ย. ขณะที่เป็นวันอังคารที่ 17 แล้ว
+# check_data_arrival ใช้เกณฑ์ 5 วันเต็ม · อายุ 4 วัน · 4 >= 5 เป็นเท็จ เงียบ
+# เกณฑ์นั้นไม่ได้ตั้งผิด มันต้องกว้างพอทนวันหยุดยาว (ศุกร์+ส+อา+จันทร์หยุด)
+# ราคาที่จ่ายคือท่อตันวันอังคารจะรู้วันพุธ และตันวันศุกร์จะรู้หลังบทสรุปออก
+# --------------------------------------------------------------------------
+
+SAT = date(2026, 11, 7)
+SUN = date(2026, 11, 8)
+
+
+def test_last_saturday_is_today_when_today_is_saturday():
+    assert wd.last_saturday(SAT) == SAT
+    assert wd.last_saturday(SUN) == SAT
+    assert wd.last_saturday(TODAY) == SAT          # จันทร์ 9
+    assert wd.last_saturday(date(2026, 11, 13)) == SAT   # ศุกร์ 13
+
+
+def test_a_week_with_no_published_brief_is_reported():
+    snap = healthy_snapshot()
+    snap.brief_last = {"publish_date": "2026-10-31", "status": "published"}
+    codes = [f.code for f in wd.build_findings(snap, TODAY, NOW)]
+    assert codes == ["brief_stale"]
+
+
+def test_a_brief_published_for_the_finished_week_is_silent():
+    snap = healthy_snapshot()
+    snap.brief_last = {"publish_date": "2026-11-07", "status": "published"}
+    assert wd.build_findings(snap, TODAY, NOW) == []
+
+
+def test_saturday_itself_gets_the_day_to_finish():
+    """คิวส่งงานช้า 7-8 ชม. เป็นปกติ · เตือนตอนเช้าวันเสาร์คือเตือนก่อนเวลา"""
+    snap = healthy_snapshot()
+    snap.brief_last = {"publish_date": "2026-10-31", "status": "published"}
+    snap.membership_last = SAT
+    sat_now = datetime(2026, 11, 7, 9, 0, tzinfo=timezone.utc)
+    snap.fetch_last_at = datetime(2026, 11, 7, 4, 10, tzinfo=timezone.utc)
+    assert [f.code for f in wd.build_findings(snap, SAT, sat_now)] == []
+
+
+def test_never_having_published_a_brief_is_its_own_message():
+    assert [f.code for f in wd.check_weekly_brief(None, TODAY)] == ["brief_missing"]
+
+
+def test_a_missing_membership_snapshot_is_reported():
+    assert [f.code for f in wd.check_membership_snapshot(None, TODAY)] == ["snapshot_missing"]
+
+
+def test_one_missed_night_of_snapshots_is_tolerated_two_is_not():
+    assert wd.check_membership_snapshot(TODAY - timedelta(days=1), TODAY) == []
+    codes = [f.code for f in wd.check_membership_snapshot(TODAY - timedelta(days=2), TODAY)]
+    assert codes == ["snapshot_stale"]
+
+
+def test_a_late_queue_is_not_a_broken_pipeline():
+    """เคสจริงของ 17 พ.ย. เวลา 10:30 UTC
+
+    รอบล่าสุดเขียนเมื่อ 16 พ.ย. 12:24 UTC คือ 22.1 ชม. ก่อนหน้า ซึ่งอยู่ใน
+    พิสัยปกติของคิว · ด่านต้องเงียบ ไม่งั้นมันจะดังเกือบทุกเช้าและถูกเลิกอ่าน
+    """
+    last = datetime(2026, 11, 16, 12, 24, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 17, 10, 30, tzinfo=timezone.utc)
+    assert (now - last).total_seconds() / 3600 < wd.MAX_FETCH_GAP_HOURS
+    assert wd.check_fetch_pulse(last, now) == []
+
+
+def test_a_whole_cycle_missed_is_reported():
+    last = datetime(2026, 11, 16, 12, 24, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)   # 44.6 ชม.
+    codes = [f.code for f in wd.check_fetch_pulse(last, now)]
+    assert codes == ["fetch_gap"]
+
+
+def test_no_fetch_log_at_all_is_reported():
+    now = datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)
+    assert [f.code for f in wd.check_fetch_pulse(None, now)] == ["fetch_never"]
+
+
+def test_the_new_gate_sees_what_the_five_day_rule_cannot():
+    """ตัวพิสูจน์ว่าด่านใหม่มีเหตุผลที่จะมีอยู่
+
+    สถานะเดียวกัน: ข้อมูลล่าสุดศุกร์ 13 · วันนี้พุธ 18 · ท่อตันมาสองรอบ
+    ด่านเดิมที่นับเป็นวันยังไม่ถึงเกณฑ์ 5 · ด่านใหม่ที่นับเป็นชั่วโมงดังแล้ว
+    """
+    as_of = date(2026, 11, 13)
+    today = date(2026, 11, 18)
+    assert (today - as_of).days == 5
+    # ขยับไปวันก่อนหน้าหนึ่งวัน ด่านเดิมยังเงียบสนิท
+    assert wd.check_data_arrival(as_of, date(2026, 11, 17)) == []
+    last = datetime(2026, 11, 16, 12, 24, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)
+    assert [f.code for f in wd.check_fetch_pulse(last, now)] == ["fetch_gap"]
+
+
+def test_build_findings_passes_the_clock_through_to_the_pulse_gate():
+    """ถ้ามีใครลืมส่ง now ด่านนี้จะตายเงียบ · เคสนี้คือตัวกัน"""
+    snap = healthy_snapshot()
+    snap.fetch_last_at = datetime(2026, 11, 7, 4, 0, tzinfo=timezone.utc)
+    codes = [f.code for f in wd.build_findings(snap, TODAY, NOW)]
+    assert "fetch_gap" in codes

@@ -54,6 +54,20 @@ MAX_DATA_AGE_DAYS = 5
 # row means the job itself stopped.
 MAX_INTEGRITY_AGE_DAYS = 2
 
+# รูปสมาชิกถ่ายทุกวัน 01:20 UTC และ watchdog เดิน 09:00 UTC ดังนั้นวันปกติ
+# รูปล่าสุดต้องเป็นของวันนี้ (อายุ 0) · ตั้ง 2 เพื่อให้สะดุดหนึ่งคืนไม่ดัง
+MAX_SNAPSHOT_AGE_DAYS = 2
+
+# ท่อข้อมูลรายวัน · วัดเป็นชั่วโมง ไม่ใช่วัน
+# เวลาที่ตั้ง cron คือ 04:00 UTC แต่คิวของ GitHub ส่งงานช้าเสมอ วัดจริงได้
+# 1.9 ถึง 10.5 ชม. (คอมเมนต์ใน daily-fetch.yml) และสามวัน 14-16 พ.ย. 2026
+# เริ่มจริง 11:09 / 11:43 / 12:22 UTC คือช้า 7.2-8.4 ชม.
+# ด่านนี้เดินวันละครั้ง จึงต้องทนได้หนึ่งรอบเต็มบวกเวลาที่คิวช้าที่สุด
+# มิฉะนั้นมันจะดังทุกเช้าเพราะรอบของวันนั้นยังไม่ถึงคิว
+FETCH_CYCLE_HOURS = 24
+FETCH_QUEUE_GRACE_HOURS = 12
+MAX_FETCH_GAP_HOURS = FETCH_CYCLE_HOURS + FETCH_QUEUE_GRACE_HOURS
+
 # quarterly-classification runs on days 1-5 of Jan/Apr/Jul/Oct. Give it a few
 # days of slack before calling a missing quarter a problem.
 CLASSIFICATION_GRACE_DAYS = 8
@@ -103,6 +117,9 @@ class Snapshot:
     coverage: dict | None = None                   # coverage_report(as_of): one row, or None
     classification: list[dict] = field(default_factory=list) # latest quarter's rows
     fomc_last: date | None = None                  # max(market_events.event_date) for fomc
+    brief_last: dict | None = None                 # latest published daily_brief row
+    membership_last: date | None = None            # max(instrument_snapshot.snapshot_date)
+    fetch_last_at: datetime | None = None          # max(fetch_log.run_at)
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +340,75 @@ def check_fomc_runway(last_fomc: date | None, today: date) -> list[Finding]:
     ]
 
 
-def build_findings(snapshot: Snapshot, today: date) -> list[Finding]:
+def last_saturday(today: date) -> date:
+    """วันเสาร์ล่าสุดที่ถึงแล้ว · ถ้าวันนี้เป็นเสาร์ ตอบวันนี้"""
+    return today - timedelta(days=(today.weekday() - 5) % 7)
+
+
+def check_weekly_brief(brief_last: dict | None, today: date) -> list[Finding]:
+    """สัปดาห์ที่จบไปแล้วมีบทสรุปที่เผยแพร่หรือยัง
+
+    บทสรุปเขียนวันเสาร์ และงานที่เขียนมันเป็นสเตปหนึ่งใน daily-fetch ซึ่งถ้า
+    รอบวันเสาร์ไม่เดินหรือถูกด่านกัก จะไม่มีอะไรบอกเลยจนกว่าจะมีคนเปิดดู
+    วันเสาร์เองยังไม่เตือน เพราะคิวอาจส่งงานตอนบ่ายหรือค่ำ
+    """
+    if today.weekday() == 5:
+        return []
+    due = last_saturday(today)
+    published = parse_date((brief_last or {}).get("publish_date"))
+    if published is None:
+        return [Finding(ALERT, "brief_missing", "ยังไม่มีบทสรุปที่เผยแพร่เลยสักฉบับ")]
+    if published < due:
+        return [Finding(
+            ALERT, "brief_stale",
+            f"ยังไม่มีบทสรุปของสัปดาห์ที่จบ {thai_date(due)} "
+            f"(ฉบับล่าสุดเผยแพร่ {thai_date(published)})",
+        )]
+    return []
+
+
+def check_membership_snapshot(latest: date | None, today: date) -> list[Finding]:
+    """ประวัติสมาชิกรายวันยังถูกถ่ายอยู่ไหม
+
+    ถ้า pg_cron หยุดเดิน ไม่มีอะไรบอกเลย และรู้ตัวอีกทีคือวันที่ไปเปิดดู
+    ประวัติแล้วพบว่ามันขาดช่วง — ซึ่งเป็นวันที่ซื้อคืนไม่ได้แล้ว
+    """
+    if latest is None:
+        return [Finding(ALERT, "snapshot_missing", "ยังไม่มีประวัติสมาชิกเลยสักวัน")]
+    age = (today - latest).days
+    if age >= MAX_SNAPSHOT_AGE_DAYS:
+        return [Finding(
+            ALERT, "snapshot_stale",
+            f"ไม่มีรูปสมาชิกใหม่ {age} วันแล้ว (ล่าสุด {thai_date(latest)})",
+        )]
+    return []
+
+
+def check_fetch_pulse(last_at: datetime | None, now: datetime) -> list[Finding]:
+    """รอบดึงข้อมูลยังเดินอยู่ไหม — วัดเป็นชั่วโมงจากการเขียนจริง
+
+    ต่างจาก check_data_arrival ที่ถามว่า "ข้อมูลเก่ากี่วัน" ซึ่งตอบว่าปกติ
+    ตลอดวันหยุดยาว · ด่านนี้ถามว่า "รอบล่าสุดเขียนอะไรลงฐานเมื่อไร" ซึ่งเดิน
+    ทุกวันไม่ว่าตลาดจะเปิดหรือปิด เพราะสคริปต์ upsert ทุกครั้งที่รัน
+    """
+    if last_at is None:
+        return [Finding(ALERT, "fetch_never", "ไม่มีบันทึกการดึงข้อมูลเลย")]
+    gap = (now - last_at).total_seconds() / 3600.0
+    if gap >= MAX_FETCH_GAP_HOURS:
+        return [Finding(
+            ALERT, "fetch_gap",
+            f"รอบดึงข้อมูลไม่ได้เขียนอะไรมา {gap:.0f} ชั่วโมง "
+            f"(เกิน {MAX_FETCH_GAP_HOURS}) — รอบใดรอบหนึ่งไม่ได้เดิน",
+        )]
+    return []
+
+
+def build_findings(snapshot: Snapshot, today: date, now: datetime) -> list[Finding]:
+    """`now` เป็นอาร์กิวเมนต์ ไม่ใช่ `datetime.now()` ข้างใน
+
+    ทั้งไฟล์นี้ตั้งใจให้ด่านเป็นฟังก์ชันบริสุทธิ์ ข้อมูลเข้า ผลออก ไม่มี I/O
+    ไม่มีนาฬิกา · ด่านท่อข้อมูลต้องรู้เวลาปัจจุบัน จึงรับมาเป็นพารามิเตอร์
+    """
     findings: list[Finding] = []
     findings += check_data_arrival(snapshot.as_of, today)
 
@@ -339,6 +424,9 @@ def build_findings(snapshot: Snapshot, today: date) -> list[Finding]:
     findings += check_flagged(snapshot.flagged)
     findings += check_classification(snapshot.classification, today)
     findings += check_fomc_runway(snapshot.fomc_last, today)
+    findings += check_weekly_brief(snapshot.brief_last, today)
+    findings += check_membership_snapshot(snapshot.membership_last, today)
+    findings += check_fetch_pulse(snapshot.fetch_last_at, now)
     return findings
 
 
@@ -446,6 +534,7 @@ def read_snapshot(client) -> Snapshot:
         .data
     )
     if last_fetch:
+        snapshot.fetch_last_at = parse_dt(last_fetch[0]["run_at"])
         day = parse_date(last_fetch[0]["run_at"])
         rows = (
             client.table("fetch_log")
@@ -470,6 +559,31 @@ def read_snapshot(client) -> Snapshot:
         .execute()
         .data
         or []
+    )
+
+    brief = (
+        client.table("daily_brief")
+        .select("publish_date,trade_date,status")
+        .eq("status", "published")
+        .order("publish_date", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    snapshot.brief_last = brief[0] if brief else None
+
+    membership = (
+        client.table("instrument_snapshot")
+        .select("snapshot_date")
+        .order("snapshot_date", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    snapshot.membership_last = (
+        parse_date(membership[0]["snapshot_date"]) if membership else None
     )
 
     fomc = (
@@ -505,7 +619,7 @@ def main() -> int:
 
     now = datetime.now(BANGKOK)
     snapshot = read_snapshot(get_client())
-    findings = build_findings(snapshot, now.date())
+    findings = build_findings(snapshot, now.date(), now)
     message = format_message(snapshot, findings, now)
 
     print(message)

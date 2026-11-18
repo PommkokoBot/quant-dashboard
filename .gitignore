@@ -13,3 +13,6 @@ __pycache__/
 # ความลับที่รันในเครื่อง -- repo นี้เป็น public
 .env
 .env.*
+
+# ภาพจากการรันเทสต์ในเบราว์เซอร์ (browser-check, shot:heat)
+shot-*.png

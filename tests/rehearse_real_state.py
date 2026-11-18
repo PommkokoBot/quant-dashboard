@@ -71,7 +71,7 @@ def real_state() -> wd.Snapshot:
 
 
 def show(title: str, snapshot: wd.Snapshot, now: datetime = NOW) -> None:
-    findings = wd.build_findings(snapshot, now.date())
+    findings = wd.build_findings(snapshot, now.date(), now)
     alerts = sum(1 for f in findings if f.level == wd.ALERT)
     print("=" * 68)
     print(f"{title}   [alert {alerts} · note {len(findings) - alerts}]")

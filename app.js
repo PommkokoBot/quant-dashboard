@@ -6,8 +6,8 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Version is shown in the header and written into every Excel export, so a
   // report can always be traced back to the build that produced it.
-  const APP_VERSION = "1.0.2";
-  const APP_BUILD_DATE = "2026-11-15";
+  const APP_VERSION = "1.0.3";
+  const APP_BUILD_DATE = "2026-11-17";
 
   const SUPABASE_URL = "https://nsbreucmgfmphmfewnbw.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_7KHllF7ZjELjitvKTo0-ag_3GWgKtZp";
