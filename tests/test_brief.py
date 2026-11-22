@@ -771,13 +771,135 @@ def test_giving_up_names_every_model_tried():
 
 
 def test_the_whole_walk_fits_inside_the_step_cap():
-    tries = len(brief_main.RETRY_WAITS_S) + 1
-    models = len(brief_main.model_chain())
-    worst = models * tries * brief_main.READ_TIMEOUT_S + \
-        models * sum(brief_main.RETRY_WAITS_S)
+    """เจตนาเดิมไม่เปลี่ยน: การเดินทั้งโซ่ต้องจบในเพดาน 30 นาทีของสเตป
+
+    สิ่งที่เปลี่ยนคือกลไกที่บังคับมัน · 22 พ.ย. 2026 เลิกคุมด้วยจำนวนครั้ง
+    มาคุมด้วยงบเวลา ฉบับที่นับครั้งจึงไม่ใช่แบบจำลองของระบบนี้อีก
+    (และฉบับนั้นคือตัวที่จับได้ว่าการเพิ่มครั้งเฉย ๆ จะทะลุเพดาน)
+
+    งบตัดได้แค่การรอครั้งถัดไปกับการขึ้นรุ่นถัดไป ไม่ใช่สายที่ค้างอยู่ และ
+    _ask_one_model เรียก with_retries ได้ถึง 3 รอบ ซึ่งรอบสองกับสามยิงทันที
+    โดยไม่ผ่านด่านงบ · เลวร้ายสุดจึงเป็น งบ + 3 × READ_TIMEOUT_S
+    """
+    worst = brief_main.WALK_BUDGET_S + 3 * brief_main.READ_TIMEOUT_S
     assert worst < 30 * 60, (
         f"กรณีเลวร้ายสุด {worst / 60:.1f} นาที เกิน timeout-minutes: 30 "
         "ของสเตปใน workflow — งานจะถูกตัดกลางคันแทนที่จะรายงานว่าโมเดลไม่ว่าง")
+
+    ladder = len(brief_main.model_chain()) * sum(brief_main.RETRY_WAITS_S)
+    assert ladder < brief_main.WALK_BUDGET_S, (
+        f"บันไดรอทั้งโซ่ {ladder / 60:.1f} นาที มากกว่างบ "
+        f"{brief_main.WALK_BUDGET_S / 60:.1f} นาที — งบจะตัดบันไดที่ตั้งใจให้เดินครบ "
+        "แปลว่าค่าใน RETRY_WAITS_S บางตัวไม่มีโอกาสถูกใช้เลย")
+
+
+# --------------------------------------------------------------------------
+# งบเวลาเดินโซ่ (22 พ.ย. 2026) · บทสรุปของสัปดาห์ 21 พ.ย. หายเพราะทั้งสี่รุ่น
+# ตอบ 503 ภายในสองนาที ด่านชุดนี้เฝ้าทั้งสองทาง: งบต้องตัดได้จริง และต้องไม่
+# ตัดบันไดที่ตั้งใจให้เดินครบ
+# --------------------------------------------------------------------------
+
+class _Clock:
+    """นาฬิกาปลอม เดินเฉพาะเมื่อมีคนเรียก sleep จึงวัดงบได้โดยไม่รอจริง"""
+
+    def __init__(self, t=0.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+
+
+def test_the_budget_stops_the_ladder_before_the_wait_that_would_pass_it():
+    clock = _Clock()
+    send, calls = _ladder([503, 503, 503, 503])
+    try:
+        brief_main.with_retries(send, _Boom, waits=(15, 45, 120),
+                                sleep=clock.sleep, deadline=30, now=clock)
+    except brief_main.ModelUnavailable as exc:
+        assert "งบเวลาหมด" in str(exc), str(exc)
+    else:
+        assert False, "งบหมดแล้วต้องเลิก ไม่ใช่นอนรอต่อจนเลยเพดานสเตป"
+    # รอ 15 ได้ (0+15 <= 30) · รอ 45 ไม่ได้ (15+45 > 30) → ยิงไปสองครั้ง
+    assert calls == [503, 503], calls
+    assert clock() == 15, "ต้องไม่นอนรอรอบที่พางบทะลุ"
+
+
+def test_a_generous_budget_still_walks_the_whole_ladder():
+    """ข้างเขียวของด่านเดียวกัน · ด่านที่ตัดทุกกรณีผ่าน "แดงได้" อย่างสบาย"""
+    clock = _Clock()
+    send, calls = _ladder([503, 503, 503, 200])
+    r = brief_main.with_retries(send, _Boom, waits=(15, 45, 120),
+                                sleep=clock.sleep, deadline=10_000, now=clock)
+    assert r.status_code == 200
+    assert calls == [503, 503, 503, 200], calls
+    assert clock() == 15 + 45 + 120, "ต้องรอครบทุกขั้นของบันได"
+
+
+def test_the_budget_stops_the_chain_before_the_next_model():
+    clock = _Clock()
+    tried = []
+
+    def attempt(model):
+        tried.append(model)
+        clock.sleep(400)
+        raise brief_main.ModelUnavailable(f"{model} ไม่ว่าง")
+
+    try:
+        brief_main.try_models(attempt, ["m1", "m2", "m3"],
+                              deadline=500, now=clock)
+    except brief_main.ModelUnavailable as exc:
+        assert "งบเวลาหมด" in str(exc), str(exc)
+        assert "m1" in str(exc) and "m2" in str(exc), "ต้องบอกว่าลองอะไรไปแล้ว"
+    else:
+        assert False, "งบหมดแล้วต้องไม่ขึ้นรุ่นถัดไป"
+    assert tried == ["m1", "m2"], tried
+
+
+def test_the_first_model_is_tried_even_when_the_budget_is_already_gone():
+    clock = _Clock(1000)
+    tried = []
+
+    def attempt(model):
+        tried.append(model)
+        return "ok"
+
+    out, used = brief_main.try_models(attempt, ["m1", "m2"],
+                                      deadline=0, now=clock)
+    assert (out, used) == ("ok", "m1")
+    assert tried == ["m1"], "งบที่หมดก่อนได้ลองอะไรเลย คือการตั้งงบผิด ไม่ใช่เหตุผลที่จะไม่ลอง"
+
+
+def test_call_model_sets_one_deadline_and_hands_it_to_both_layers():
+    clock = _Clock()
+    seen = []
+
+    def fake_try_models(attempt, models, deadline=None, now=None):
+        seen.append(("chain", deadline))
+        try:
+            attempt(models[0])
+        except _Boom:
+            pass
+        return "raw", models[0]
+
+    def fake_ask(system, user, api_key, model, deadline=None, now=None):
+        seen.append(("ladder", deadline))
+        raise _Boom()
+
+    real_try, real_ask = brief_main.try_models, brief_main._ask_one_model
+    brief_main.try_models, brief_main._ask_one_model = fake_try_models, fake_ask
+    try:
+        brief_main.call_model("s", "u", "k", models=["m1"],
+                              budget_s=600, now=clock)
+    finally:
+        brief_main.try_models, brief_main._ask_one_model = real_try, real_ask
+
+    assert [k for k, _ in seen] == ["chain", "ladder"], seen
+    assert seen[0][1] == seen[1][1] == 600, (
+        "สองชั้นต้องได้ deadline ตัวเดียวกัน · ถ้าแต่ละชั้นตั้งงบเอง "
+        "เวลารวมจะเป็นผลคูณที่ไม่มีใครคุม")
 
 
 # --------------------------------------------------------------------------
@@ -1094,6 +1216,46 @@ def test_weekly_condition_needs_the_weekend_and_this_weeks_data():
     # เสาร์ที่ข้อมูลของสัปดาห์นี้ยังไม่มา (ศุกร์ราคาไม่ครบ ด่านความครบกัน)
     ok, why = brief_main.should_write_weekly("2026-11-06", at(2026, 11, 14))
     assert not ok and "สัปดาห์นี้ยังไม่มา" in why
+
+
+def test_monday_is_a_catch_up_round_for_the_week_that_just_ended():
+    """21 พ.ย. 2026: เสาร์ยิงไม่ติดเพราะ 503 ทั้งสี่รุ่น บทสรุปหายไปทั้งสัปดาห์
+    เพราะหน้าต่างมีแค่เสาร์-อาทิตย์ · เช้าจันทร์ (UTC) ตลาดสหรัฐยังไม่ปิด
+    วันข้อมูลล่าสุดจึงยังเป็นศุกร์ของสัปดาห์ที่จบแล้ว = ยังสรุปได้
+    """
+    from datetime import datetime, timezone
+
+    def at(y, m, d, h=4):
+        return datetime(y, m, d, h, 0, tzinfo=timezone.utc)
+
+    # ศุกร์ 20 พ.ย. 2026 อยู่สัปดาห์ ISO 47 · จันทร์ 23 พ.ย. อยู่สัปดาห์ 48
+    ok, why = brief_main.should_write_weekly("2026-11-20", at(2026, 11, 23))
+    assert ok and why == "", why
+
+
+def test_monday_refuses_once_the_data_has_moved_into_the_new_week():
+    """ขอบของเส้นทางตามเก็บ · พอข้อมูลวันจันทร์ลง วันล่าสุดเข้าสัปดาห์ใหม่
+    เงื่อนไขนี้จึงไม่จริงอีก ซึ่งเป็นเหตุผลที่อังคารขึ้นไปไม่เปิด
+    """
+    from datetime import datetime, timezone
+
+    def at(y, m, d, h=4):
+        return datetime(y, m, d, h, 0, tzinfo=timezone.utc)
+
+    ok, why = brief_main.should_write_weekly("2026-11-23", at(2026, 11, 23))
+    assert not ok and "ตามเก็บ" in why, why
+
+
+def test_the_middle_of_the_week_is_still_closed():
+    from datetime import datetime, timezone
+
+    def at(y, m, d, h=4):
+        return datetime(y, m, d, h, 0, tzinfo=timezone.utc)
+
+    for day in (24, 25, 26, 27):
+        ok, why = brief_main.should_write_weekly("2026-11-20", at(2026, 11, day))
+        assert not ok, f"{day} พ.ย. ต้องไม่เขียน"
+        assert "เสาร์" in why, why
 
 
 def test_a_refusal_by_design_is_not_a_failed_job():

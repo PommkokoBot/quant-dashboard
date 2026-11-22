@@ -108,7 +108,7 @@ MUTATIONS = [
      "503 is the one we actually hit -- the others are the rare ones"),
 
     ("M19", "scripts/brief.py", "retries fire back-to-back",
-     "RETRY_WAITS_S = (15,)", "RETRY_WAITS_S = (0,)",
+     "RETRY_WAITS_S = (15, 45, 120)", "RETRY_WAITS_S = (0, 0, 0)",
      "an instant retry hits the same busy second and fails the same way"),
 
     ("M20", "scripts/brief.py", "timeout stops being retried",
@@ -230,8 +230,8 @@ MUTATIONS = [
      '"+46.24%" tells the model breadth rose 46 points when it is a level'),
 
     ("M41", "scripts/brief.py", "the weekly brief fires any day of the week",
-     "    if now_utc.weekday() not in (5, 6):",
-     "    if False and now_utc.weekday() not in (5, 6):",
+     "    if now_utc.weekday() in (5, 6):",
+     "    if True or now_utc.weekday() in (5, 6):",
      "a weekly brief would go out mid-week with half a week of data"),
 
     ("M42", "scripts/brief.py", "the weekly brief ignores whether the data arrived",
@@ -431,6 +431,42 @@ MUTATIONS = [
      '"gemini-3.7-flash,gemini-3.8-flash,gemini-3.5-flash"',
      '"gemini-3.6-flash,gemini-2.5-flash"',
      "a run with the secret unset would walk straight back into the 404"),
+    # งบเวลาเดินโซ่ และรอบตามเก็บวันจันทร์ (22 พ.ย. 2026)
+    ("M82", "scripts/brief.py", "the ladder stops honouring the budget",
+     "if deadline is not None and now() + waits[i - 1] > deadline:",
+     "if False and deadline is not None and now() + waits[i - 1] > deadline:",
+     "a hung model would sleep past the step's 30-minute cap and the job would "
+     "be cut mid-run instead of reporting that no model answered"),
+
+    ("M83", "scripts/brief.py", "the chain stops honouring the budget",
+     "if tried and deadline is not None and now() >= deadline:",
+     "if False and tried and deadline is not None and now() >= deadline:",
+     "the walk would keep opening new models after the budget was spent"),
+
+    ("M84", "scripts/brief.py", "the budget is checked before the first model too",
+     "if tried and deadline is not None and now() >= deadline:",
+     "if deadline is not None and now() >= deadline:",
+     "a budget already spent by the sheet read would skip every model and "
+     "report 'no model answered' without having asked one"),
+
+    ("M85", "scripts/brief.py", "the budget is raised past the step cap",
+     "WALK_BUDGET_S = 15 * 60", "WALK_BUDGET_S = 28 * 60",
+     "worst case would exceed timeout-minutes: 30 and the step would be cut "
+     "mid-run, which looks like a bug rather than a busy model"),
+
+    ("M86", "scripts/brief.py", "the waits grow past what the budget allows",
+     "RETRY_WAITS_S = (15, 45, 120)", "RETRY_WAITS_S = (15, 45, 120, 600)",
+     "the last step of the ladder could never run: the budget would cut the "
+     "walk first, so the number would be decoration"),
+
+    ("M87", "scripts/brief.py", "Monday stops being a catch-up round",
+     "    if now_utc.weekday() == 0:", "    if False:",
+     "a weekend lost to 503 would lose the week's brief permanently again, "
+     "which is the failure of 21 Nov 2026"),
+
+    ("M88", "scripts/brief.py", "the catch-up round accepts any weekday",
+     "    if now_utc.weekday() == 0:", "    if now_utc.weekday() != 5:",
+     "a Wednesday would write a brief for a week that had not ended"),
 ]
 
 
