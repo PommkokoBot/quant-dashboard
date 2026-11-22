@@ -103,10 +103,28 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 # because a rejected key is global -- walking the chain would turn a problem
 # we must fix into a quiet green run.
 GONE_STATUSES = (404,)
-# Two tries per model rather than four, because the chain now provides the
-# other attempts and they are worth more: the whole walk has to finish inside
-# the step's 30-minute cap.
-RETRY_WAITS_S = (15,)
+# 21 พ.ย. 2026 บทสรุปของสัปดาห์หายไปทั้งสัปดาห์ เพราะทั้งสี่รุ่นตอบ 503
+# ทุกครั้ง · ของเดิมคือ 2 ครั้งต่อรุ่น รอ 15 วินาที = ทั้งโซ่กระจายเวลาได้
+# ราวสองนาที ซึ่งสั้นกว่าช่วงที่ฝั่งโมเดลไม่ว่าง
+#
+# ทางแก้ไม่ใช่เพิ่มจำนวนครั้งเฉย ๆ เพราะเพดานจริงคือเวลา: หนึ่งครั้งที่
+# หมดเวลารอกินเวลาเท่า READ_TIMEOUT_S (180 วินาที) ของเดิมจึงมีกรณีแย่สุด
+# 4 รุ่น × (2 × 180 + 15) = 1,500 วินาที = 25 นาที ชิดเพดาน 30 นาทีของสเตป
+# อยู่แล้ว · เพิ่มเป็น 3 ครั้งโดยไม่คุมเวลาจะได้ 41 นาที = เกินเพดาน
+#
+# จึงคุมด้วย "งบเวลาเดินทั้งโซ่" แทนการนับครั้ง: ลองได้เรื่อย ๆ จนงบหมด
+# 503 ตอบกลับเร็ว (เป็นการปฏิเสธ ไม่ใช่การค้าง) เวลาเกือบทั้งหมดจึงไปอยู่กับ
+# การรอระหว่างครั้ง = 720 วินาที (12 นาที) เทียบกับเดิม 60 วินาที = 12 เท่า
+# ส่วนวันที่โมเดลค้าง งบจะตัดการเดินก่อนถึงเพดานสเตป
+#
+# ทำไม 15 ไม่ใช่ 20: งบตัดได้แค่ "การรอครั้งถัดไป" ไม่ใช่สายที่กำลังค้างอยู่
+# และ _ask_one_model มีทาง with_retries ได้ถึง 3 รอบ (ถอด responseMimeType /
+# ถอด thinkingConfig) ซึ่งรอบที่สองกับสามเริ่มยิงทันทีโดยไม่ผ่านด่านงบ
+# เลวร้ายสุดจึงเป็น งบ + 3 × READ_TIMEOUT_S · ที่ 20 นาทีได้ 29 นาที ชิดเพดาน
+# 30 นาทีเกินไป · ที่ 15 นาทีได้ 24 นาที และยังมากกว่าบันไดรอที่ตั้งใจให้เดิน
+# ครบ (4 รุ่น × 180 วินาที = 12 นาที) จึงไม่ตัดสิ่งที่เพิ่งขยาย
+WALK_BUDGET_S = 15 * 60
+RETRY_WAITS_S = (15, 45, 120)
 
 BANGKOK = timezone(timedelta(hours=7))
 
@@ -133,17 +151,24 @@ def model_chain(primary: str = MODEL, fallbacks=None) -> list[str]:
     return out
 
 
-def try_models(attempt, models):
+def try_models(attempt, models, deadline=None, now=time.monotonic):
     """Runs attempt(model) down the chain, returning (result, the model used).
 
     Which model answered has to travel back to the caller: it is written into
     daily_brief.model, and a row that names the configured model while a
     fallback actually wrote it would quietly corrupt every later comparison
     between models.
+
+    deadline คือค่า now() ที่ห้ามเดินเกิน · ตรวจก่อนจะขึ้นรุ่นถัดไปเท่านั้น
+    ไม่ตัดรุ่นแรก เพราะงบที่หมดก่อนได้ลองอะไรเลยคือการตั้งงบผิด ไม่ใช่เหตุผล
+    ที่จะไม่ลอง · now รับเข้ามาเพื่อให้เทสต์เดินนาฬิกาเองได้
     """
     last = None
     tried = []
     for model in models:
+        if tried and deadline is not None and now() >= deadline:
+            raise ModelUnavailable(
+                f"งบเวลาหมดหลังลอง ({', '.join(tried)}) · ครั้งสุดท้าย: {last}")
         tried.append(model)
         try:
             return attempt(model), model
@@ -180,16 +205,23 @@ def model_unavailable_message(trade_date: str, reason: str) -> str:
             "ข้อมูลในแดชบอร์ดไม่มีปัญหา · สั่งสร้างใหม่ได้ที่ Actions → brief")
 
 
-def with_retries(send, timeout_exc, waits=RETRY_WAITS_S, sleep=time.sleep):
+def with_retries(send, timeout_exc, waits=RETRY_WAITS_S, sleep=time.sleep,
+                 deadline=None, now=time.monotonic):
     """Calls send() until it gives an answer worth keeping.
 
     Takes the sleeper and the timeout class as arguments so a test can run the
     whole ladder in no time at all and without the network -- a retry path that
     has never been exercised is a retry path that does not work.
+
+    deadline ตัดการรอที่จะพาเลยงบ · ตรวจ "เวลานี้บวกเวลารอ" ไม่ใช่ "เวลานี้"
+    เพราะการนอนรอจนเลยงบแล้วค่อยรู้ตัว คือการใช้งบที่ตั้งไว้ไม่ให้ใช้
     """
     note = ""
     for i in range(len(waits) + 1):
         if i:
+            if deadline is not None and now() + waits[i - 1] > deadline:
+                raise ModelUnavailable(
+                    f"งบเวลาหมดก่อนจะลองครบ · ครั้งสุดท้าย: {note}")
             print(f"  {note} · รอ {waits[i - 1]} วินาทีแล้วลองใหม่ "
                   f"(ครั้งที่ {i} จาก {len(waits)})")
             sleep(waits[i - 1])
@@ -254,18 +286,26 @@ def extract_text(data: dict) -> str:
     return text
 
 
-def call_model(system: str, user: str, api_key: str, models=None):
+def call_model(system: str, user: str, api_key: str, models=None,
+               budget_s=WALK_BUDGET_S, now=time.monotonic):
     """Returns (the raw text the model produced, the model that produced it).
 
     The key travels in a header, never in the URL: Actions logs are public on
     this repo and a URL is the easiest thing in the world to end up in one.
+
+    งบเวลาตั้งที่นี่ที่เดียวแล้วส่งต่อลงไปทั้งสองชั้น (เดินโซ่รุ่น และลองซ้ำ
+    ในรุ่นเดียว) เพราะถ้าแต่ละชั้นตั้งงบของตัวเอง เวลารวมจะเป็นผลคูณที่ไม่มี
+    ใครคุม · budget_s=None ปิดการคุมเวลา ใช้ในเทสต์ที่ไม่ได้ตรวจเรื่องนี้
     """
+    deadline = None if budget_s is None else now() + budget_s
     return try_models(
-        lambda model: _ask_one_model(system, user, api_key, model),
-        models or model_chain())
+        lambda model: _ask_one_model(system, user, api_key, model,
+                                     deadline=deadline, now=now),
+        models or model_chain(), deadline=deadline, now=now)
 
 
-def _ask_one_model(system: str, user: str, api_key: str, model: str) -> str:
+def _ask_one_model(system: str, user: str, api_key: str, model: str,
+                   deadline=None, now=time.monotonic) -> str:
     import requests
 
     body = build_body(system, user)
@@ -283,14 +323,14 @@ def _ask_one_model(system: str, user: str, api_key: str, model: str) -> str:
             print(f"  เรียก {model} ใช้เวลา {time.monotonic() - started:.1f} วินาที")
         return resp
 
-    r = with_retries(post, requests.Timeout)
+    r = with_retries(post, requests.Timeout, deadline=deadline, now=now)
 
     # Older endpoints reject responseMimeType. Losing it only means the model
     # may wrap its JSON in prose, which extract_json already copes with, so
     # one retry without it beats failing the day's brief over a field name.
     if r.status_code == 400 and "responseMimeType" in r.text:
         body["generationConfig"].pop("responseMimeType", None)
-        r = with_retries(post, requests.Timeout)
+        r = with_retries(post, requests.Timeout, deadline=deadline, now=now)
 
     # Same reasoning for the thinking level: the field name and its allowed
     # values are model-specific, so a model swap could make it invalid. Losing
@@ -299,7 +339,7 @@ def _ask_one_model(system: str, user: str, api_key: str, model: str) -> str:
     if r.status_code == 400 and "thinking" in r.text.lower():
         print("  รุ่นนี้ไม่รับ thinkingConfig ถอดออกแล้วลองใหม่")
         body["generationConfig"].pop("thinkingConfig", None)
-        r = with_retries(post, requests.Timeout)
+        r = with_retries(post, requests.Timeout, deadline=deadline, now=now)
 
     if is_model_gone(r.status_code):
         raise ModelUnavailable(
@@ -410,17 +450,37 @@ def should_write_weekly(trade_date: str, now_utc: datetime) -> tuple[bool, str]:
     ข้อ 1 อย่างเดียวไม่พอ: เสาร์ที่ข้อมูลวันศุกร์ยังไม่มา จะได้บทสรุปของ
     สัปดาห์ก่อนซ้ำอีกรอบ · ข้อ 2 อย่างเดียวไม่พอ: วันพุธก็อยู่ในสัปดาห์
     เดียวกับข้อมูลวันอังคาร
+
+    และมีเส้นทางที่สาม — วันจันทร์คือรอบตามเก็บ: 21 พ.ย. 2026 ทั้งเสาร์และ
+    อาทิตย์ยิงไม่ติดเพราะฝั่งโมเดลตอบ 503 บทสรุปของสัปดาห์นั้นจึงหายถาวร
+    เพราะหน้าต่างมีแค่สองวัน · เช้าวันจันทร์ (UTC) ตลาดสหรัฐยังไม่ปิด
+    วันข้อมูลล่าสุดจึงยังเป็นศุกร์ของสัปดาห์ที่จบแล้ว = สัปดาห์นั้นยังสรุปได้
+    ให้โอกาสที่สามโดยไม่ต้องรอคนมากดเอง
+    ⚠️ อังคารขึ้นไปไม่เปิด เพราะพอข้อมูลวันจันทร์ลง วันล่าสุดจะขยับเข้า
+    สัปดาห์ใหม่ เงื่อนไขนี้จึงไม่มีทางจริงอีก · การตามเก็บหลังจันทร์ต้อง
+    เลือกวันเป้าหมายเองแทนการใช้วันล่าสุด ซึ่งเป็นงานคนละขนาด (ยังไม่ทำ)
     """
-    if now_utc.weekday() not in (5, 6):
-        return False, "ยังไม่ถึงเสาร์-อาทิตย์ (UTC) — บทสรุปเป็นรายสัปดาห์"
     td = date.fromisoformat(trade_date)
     week_td = td.isocalendar()[:2]
-    week_now = now_utc.date().isocalendar()[:2]
-    if week_td != week_now:
-        return False, (f"ข้อมูลล่าสุด {trade_date} อยู่สัปดาห์ที่ {week_td[1]}/"
-                       f"{week_td[0]} แต่วันนี้สัปดาห์ที่ {week_now[1]}/{week_now[0]}"
-                       " — ข้อมูลของสัปดาห์นี้ยังไม่มา")
-    return True, ""
+    today = now_utc.date()
+    week_now = today.isocalendar()[:2]
+
+    if now_utc.weekday() in (5, 6):
+        if week_td != week_now:
+            return False, (f"ข้อมูลล่าสุด {trade_date} อยู่สัปดาห์ที่ {week_td[1]}/"
+                           f"{week_td[0]} แต่วันนี้สัปดาห์ที่ {week_now[1]}/"
+                           f"{week_now[0]} — ข้อมูลของสัปดาห์นี้ยังไม่มา")
+        return True, ""
+
+    if now_utc.weekday() == 0:
+        week_prev = (today - timedelta(days=3)).isocalendar()[:2]
+        if week_td == week_prev:
+            return True, ""
+        return False, (f"จันทร์เป็นรอบตามเก็บ แต่ข้อมูลล่าสุด {trade_date} "
+                       f"อยู่สัปดาห์ที่ {week_td[1]}/{week_td[0]} ไม่ใช่สัปดาห์ที่"
+                       f" {week_prev[1]}/{week_prev[0]} ที่จบไปแล้ว")
+
+    return False, "ยังไม่ถึงเสาร์-อาทิตย์ (UTC) — บทสรุปเป็นรายสัปดาห์"
 
 
 # เหตุผลที่ build_daily_facts ปฏิเสธ "ตามการออกแบบ" ไม่ใช่เพราะพัง
