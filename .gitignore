@@ -16,3 +16,8 @@ __pycache__/
 
 # ภาพจากการรันเทสต์ในเบราว์เซอร์ (browser-check, shot:heat)
 shot-*.png
+
+# สำเนาที่ tests/mutate_edge_share.js ดัดแปลงแล้ววางไว้ชั่วคราว
+# (ต้องอยู่ใน tools/ เพราะไฟล์นั้น require ../tests/_page.js) — ปกติถูกลบทุก
+# ทางออก บรรทัดนี้กันกรณีถูก kill กลางทาง
+tools/__mutant_edge_share.js

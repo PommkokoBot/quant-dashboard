@@ -74,3 +74,10 @@ jobs:
       # changed, not only on the machine that wrote it.
       - name: The rotation engine suite can go red
         run: node tests/mutate_rotation.js
+
+      # tools/edge-share.js is the verification command for มติ 40. It needs a
+      # login and a network, so it can never run here itself -- which is
+      # exactly why the harness that fakes both has to be proved red-able here.
+      # A verification command nobody can verify is worse than none.
+      - name: The edge-share harness can go red
+        run: node tests/mutate_edge_share.js
