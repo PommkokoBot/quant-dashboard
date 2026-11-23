@@ -545,14 +545,11 @@ async function main() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(smaVals1)), [null, null, 2, 3, 4]);
   console.log("[ok] Momentum: trailing return / SMA trend filter / stdev / weighting / ema+sma (hand-computed)");
 
-  // classifyOctant: angle 0/45/90/180/270 degrees around the (100,100) origin
-  assert.strictEqual(QD.classifyOctant(110, 100), "Leading – Accelerating"); // 0deg
-  assert.strictEqual(QD.classifyOctant(100 + 10 / Math.SQRT2, 100 + 10 / Math.SQRT2), "Leading – Strong"); // 45deg
-  assert.strictEqual(QD.classifyOctant(100, 110), "Improving – Strong"); // 90deg
-  assert.strictEqual(QD.classifyOctant(90, 100), "Lagging – Weak"); // 180deg
-  assert.strictEqual(QD.classifyOctant(100, 90), "Weakening – Strong"); // 270deg
-  assert.strictEqual(QD.classifyOctant(null, 100), null);
-  console.log("[ok] classifyOctant: 8-way angle labels match hand-derived quadrant/octant boundaries");
+  // classifyOctant was removed on 2026-11-23 (มติ 39) -- the zone owns the
+  // first word of the state and Core/Edge the second, so the 8-way angle
+  // label produced nothing anyone saw. Its two most useful fixture points,
+  // (110,100) and (100,90), live on in tests/test_rotation.js, where they
+  // now pin the Core/Edge rule: both sit exactly on an axis.
 
   // rankUniverseFromSeries: filtering (insufficient history excluded, not nulled)
   // + risk-adjusted sort sinks a null score (zero-volatility edge case) to the bottom
@@ -673,13 +670,11 @@ async function main() {
   assert.strictEqual(QD.classifyQuadrant(100, 100), "Lagging", "exactly on the crosshair falls into Lagging (x>100 and y>100 are both strict)");
   assert.strictEqual(QD.classifyQuadrant(null, 110), null);
   assert.strictEqual(QD.classifyQuadrant(105, NaN), null);
-  // the 8-way octant label is angle-based and deliberately straddles the axes,
-  // so near the boundary the two classifications disagree BY DESIGN -- the
-  // scatter follows the zone because that is what its color legend promises
+  // A point just inside Leading but steeply above the crosshair is still
+  // Leading: the zone is read from the signs, never from the angle. This is
+  // the case the deleted 8-way label used to disagree with.
   assert.strictEqual(QD.classifyQuadrant(101, 140), "Leading");
-  assert.ok(QD.classifyOctant(101, 140).startsWith("Improving"),
-    "documented divergence: angle-based octant says Improving where the zone says Leading");
-  console.log("[ok] classifyQuadrant matches the RRG background zones (and its documented divergence from classifyOctant holds)");
+  console.log("[ok] classifyQuadrant ตรงกับโซนพื้นหลังของ RRG และอ่านจากเครื่องหมาย ไม่ใช่จากมุม");
 
   // ---- quadrantMapFromRotation: reads the LAST point of each tail ----
   const rotForQuadrant = { m: 12, k: 8, results: [
@@ -735,7 +730,9 @@ async function main() {
   assert.ok(tip.some((l) => l.includes("+12.50%")), "return is signed and shown as a percent");
   assert.ok(tip.some((l) => l.includes("Volume Z-score: +2.40")));
   assert.ok(tip.some((l) => l.includes("RVOL: 3.10x")));
-  assert.ok(tip.some((l) => l.includes("Quadrant: Leading")));
+  // the scatter now words the state exactly as the summary table does, so
+  // one page cannot have two names for the same thing (บล็อก 3)
+  assert.ok(tip.some((l) => l.includes("สถานะ: Leading")), "falls back to the zone alone when no Core/Edge is known");
   assert.ok(tip.some((l) => l.includes("#1")), "ranks carried through for hover context");
   const unknownTip = QD.formatPvScatterTooltip(byQuadrant.DDD.data[0]);
   assert.ok(unknownTip.some((l) => l.includes("ไม่ทราบ")), "unknown quadrant says so plainly instead of showing blank");
@@ -774,15 +771,33 @@ async function main() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(rrgCbItems.map((i) => i.ticker))), ["AAA", "BBB", "CCC", "ZZZ"], "sorted by Leaderboard rank first, unranked tickers appended alphabetically last");
   assert.strictEqual(rrgCbItems[3].rank, null);
 
+  // points carry the zone + Core/Edge that computeRotationGraphData tagged
+  // them with; `history` is the 24-month window the dwell column counts over.
   const rrgResults = [
-    { instrumentId: 30, ticker: "AAA", points: [{ x: 101, y: 102, octant: "Leading – Strong" }, { x: 103, y: 104, octant: "Leading – Accelerating" }] },
-    { instrumentId: 31, ticker: "BBB", points: [] }, // no points -> excluded from the summary table
-    { instrumentId: 32, ticker: "CCC", points: [{ x: 95, y: 90, octant: "Lagging – Weak" }] } // only 1 point -> T-1 is null
+    { instrumentId: 30, ticker: "AAA",
+      points: [{ x: 101, y: 102, zone: "Leading", edge: "Edge" }, { x: 103, y: 104, zone: "Leading", edge: "Core" }],
+      history: [
+        { x: 100.5, y: 101, zone: "Leading", edge: "Edge", axisIndex: 0 },
+        { x: 101, y: 102, zone: "Leading", edge: "Edge", axisIndex: 1 },
+        { x: 103, y: 104, zone: "Leading", edge: "Core", axisIndex: 2 }
+      ] },
+    { instrumentId: 31, ticker: "BBB", points: [], history: [] }, // no points -> excluded from the summary table
+    { instrumentId: 32, ticker: "CCC",
+      points: [{ x: 95, y: 90, zone: "Lagging", edge: "Core" }],
+      history: [
+        { x: 103, y: 104, zone: "Leading", edge: "Core", axisIndex: 0 },
+        { x: 95, y: 90, zone: "Lagging", edge: "Core", axisIndex: 1 }
+      ] } // only 1 point -> T-1 is null
   ];
   const summaryRows = QD.buildRotationSummaryRows(rrgResults, [30, 32]);
   assert.strictEqual(summaryRows.length, 2, "BBB has no points and is excluded even though selected");
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(summaryRows[0])), { instrumentId: 30, ticker: "AAA", shortName: "AAA", currentState: "Leading – Accelerating", t1State: "Leading – Strong", rsRatio: 103, rsMomentum: 104, volZScore: null, volRvol: null }, "volume columns present but null when no anomaly map is supplied (backward-compatible 2-arg call)");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(summaryRows[0])), { instrumentId: 30, ticker: "AAA", shortName: "AAA", currentState: "Leading – Core", t1State: "Leading – Edge", dwellPeriods: 3, dwellCensored: true, rsRatio: 103, rsMomentum: 104, volZScore: null, volRvol: null }, "volume columns present but null when no anomaly map is supplied (backward-compatible 2-arg call)");
   assert.strictEqual(summaryRows[1].t1State, null, "single-point series has no T-1 state");
+  // CCC's run started inside the window, so its length is known exactly and
+  // must NOT be reported as "at least" -- that distinction is the whole
+  // reason dwellCensored exists.
+  assert.strictEqual(summaryRows[1].dwellPeriods, 1, "CCC only just flipped into Lagging");
+  assert.strictEqual(summaryRows[1].dwellCensored, false, "a run whose start is visible is not censored");
 
   // same call WITH an anomaly map (2026-09 volume overlay) fills the 2 new columns
   const summaryRowsVol = QD.buildRotationSummaryRows(rrgResults, [30, 32], { 30: { zScore: 2.5, rvol: 1.8 } });
@@ -924,9 +939,9 @@ async function main() {
   console.log("[ok] RRG volume halo: ring only on the latest point, never touches the size-encodes-recency channel");
 
   // (e) tooltip text builder
-  const tipPlain = QD.formatRotationTooltip("AAA", { x: 101.234, y: 99.5, octant: "Leading – Strong" });
-  assert.strictEqual(tipPlain, "AAA: (101.2, 99.5) — Leading – Strong", "unchanged for points without volume data");
-  const tipVol = QD.formatRotationTooltip("AAA", { x: 101.2, y: 99.5, octant: "Leading – Strong", volZ: 2.34, volRvol: 1.8 });
+  const tipPlain = QD.formatRotationTooltip("AAA", { x: 101.234, y: 99.5, zone: "Weakening", edge: "Edge" });
+  assert.strictEqual(tipPlain, "AAA: (101.2, 99.5) — Weakening – Edge", "the tooltip says the same two words as the table");
+  const tipVol = QD.formatRotationTooltip("AAA", { x: 101.2, y: 99.5, zone: "Weakening", edge: "Edge", volZ: 2.34, volRvol: 1.8 });
   assert.ok(Array.isArray(tipVol) && tipVol.length === 2);
   assert.strictEqual(tipVol[1], "Volume Z: +2.34 (RVOL 1.80x)");
   assert.strictEqual(QD.formatRotationTooltip("A", { x: 1, y: 2, volZ: -2.5 })[1], "Volume Z: -2.50");
@@ -1483,7 +1498,13 @@ async function main() {
   const longFetch = periodEndClosesCallLog[periodEndClosesCallLog.length - 1].params;
   assert.strictEqual(longFetch.p_granularity, "month");
   assert.strictEqual(longFetch.p_complete_only, true);
-  assert.strictEqual(QD.state.momentum.loadedPricePeriods, 60 + QD.state.momentum.tailLength + 5, "bookkeeping updated");
+  // 2026-11-23: the zone-history strip reads 24 CALENDAR months of rotation
+  // points, and a rotation point needs the RS-Ratio chain to warm up first,
+  // so the fetch floor is now 2m + 2k + 24 + 5 = 120 + 84 + 29 = 233 at
+  // m = 60 -- more than the 77 the charts alone asked for. Spelled out rather
+  // than read back from momentumPriceLookbackPeriods(), which would make this
+  // assertion agree with the code by construction.
+  assert.strictEqual(QD.state.momentum.loadedPricePeriods, 233, "bookkeeping updated (strip floor, not the chart span)");
   assert.deepStrictEqual(QD.state.momentum.selectedIds.slice().sort(), [1, 10], "instrument selection survives a history-only re-fetch");
   assert.deepStrictEqual(QD.state.momentum.rrgSelectedIds, rrgSelBefore, "RRG selection survives too");
   assert.strictEqual(QD.momentumNeedsFetch(), false);

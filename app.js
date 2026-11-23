@@ -143,7 +143,7 @@ window.QD = (function () {
       tailLength: 12,
       seriesByInstrument: {},   // instrumentId -> [{period_end, adj_close}] ascending by period_end
       universeInstruments: [],  // resolved instrument list for the current universe mode
-      rotationData: null,       // { m, k, results: [{instrumentId, ticker, points:[{periodEnd,x,y,octant}]}] } -- unfiltered, full rotation universe
+      rotationData: null,       // { m, k, scale, months, results:[{instrumentId, ticker, points:[{periodEnd,x,y,axisIndex,zone,edge}], history:[same, 24 calendar months]}] } -- unfiltered, full rotation universe
       rrgSelectedIds: [],       // instrumentIds currently checked in the RRG display-selection panel
       rrgSelectionInitialized: false, // reset to false on each fresh data fetch so the Top-N default re-applies
 
@@ -1275,11 +1275,6 @@ window.QD = (function () {
   // table's CURRENT sort order.
   const MOMENTUM_CHART_TOP_N = 20;
 
-  const OCTANT_LABELS = [
-    "Leading – Accelerating", "Leading – Strong", "Improving – Strong", "Improving – Early",
-    "Lagging – Weak", "Lagging – Weakening", "Weakening – Strong", "Weakening – Early"
-  ];
-
   const CHART_ROTATION_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
 
   // The 4 RRG quadrants. These colors are NOT new -- they are exactly the
@@ -1288,6 +1283,29 @@ window.QD = (function () {
   // (RRG *lines* are colored per-instrument from CHART_ROTATION_COLORS, which
   // is a different encoding entirely -- do not conflate the two.)
   const QUADRANT_ORDER = ["Leading", "Improving", "Lagging", "Weakening"];
+
+  // The window is CALENDAR months, never a count of periods: "26 periods"
+  // means 6 months weekly but 23 months monthly, a four-fold difference
+  // nobody chose (มติ 35). Monthly cells for every timeframe, because weekly
+  // would spend 104 cells showing roughly one zone flip (มติ 38).
+  const ZONE_STRIP_MONTHS = 24;
+
+  // Under this many observed transitions a base rate is a dash, not a number.
+  // 30 holds the standard error of a proportion under ~9 points even at the
+  // worst case p = 0.5, and the denominator swings by an order of magnitude
+  // across universes and timeframes (6 funds monthly vs 54 funds weekly), so
+  // the floor has to be stated rather than assumed. The denominator is shown
+  // beside the number either way (มติ 37).
+  const ZONE_BASE_RATE_MIN_N = 30;
+
+  // The RRG math treats period_end as an opaque, sortable label and never
+  // parses it -- the test suite relies on that, using "P0", "P1", ... . Only
+  // the calendar strip needs real months, so it asks here and gets null when
+  // the label is not a date, instead of building an Invalid Date.
+  const ymOf = (periodEnd) => {
+    const m = /^(\d{4})-(\d{2})/.exec(String(periodEnd));
+    return m ? m[1] + "-" + m[2] : null;
+  };
   const QUADRANT_COLORS = {
     Leading: "#059669", Improving: "#2563eb", Lagging: "#dc2626", Weakening: "#d97706"
   };
@@ -1498,8 +1516,16 @@ window.QD = (function () {
   // RS-Ratio/RS-Momentum, lookback window tied to the Week/Month selector
   // (params.m) instead of a hardcoded 14/10 period. Rendered as a Cartesian
   // scatter with a quadrant-background plugin (Leading/Improving/Lagging/
-  // Weakening) and an 8-octant label surfaced both in the tooltip and the
-  // summary table below the chart -- it does not change the (x,y) geometry.
+  // Weakening). The state shown in the tooltip and the summary table is the
+  // zone plus Core/Edge; neither changes the (x,y) geometry.
+  //
+  // The 8-way angle label that used to supply that state (classifyOctant /
+  // OCTANT_LABELS) was removed on 2026-11-23: 4 of its 8 sectors straddle a
+  // zone boundary exactly, splitting it 22.5/22.5 degrees, so it could never
+  // own the first word, and once the zone owned the first word and Core/Edge
+  // the second, nothing on screen came from it any more. Direction is still
+  // readable -- from the tail on the chart and from the RS-Ratio /
+  // RS-Momentum columns.
   //
   // NOTE: the Strategy Preview backtest that used to live in this section
   // (simulateTopNStrategy/computeEquityCurveSummary/computeWeights/
@@ -1539,25 +1565,15 @@ window.QD = (function () {
     return out;
   }
 
-  // Angle-derived descriptive label -- borrows TrendSpider's finer 8-way
-  // classification without adopting its polar geometry (10.6, point 3).
-  function classifyOctant(x, y) {
-    if (x == null || y == null) return null;
-    let angle = Math.atan2(y - 100, x - 100) * 180 / Math.PI;
-    if (angle < 0) angle += 360;
-    const idx = Math.floor(((angle + 22.5) % 360) / 45) % 8;
-    return OCTANT_LABELS[idx];
-  }
-
   // Strict sign-based quadrant, matching the background zones drawn by
   // rrgQuadrantPlugin() cell for cell (x>100 & y>100 = Leading, etc.).
   //
-  // NOTE this deliberately does NOT reuse classifyOctant()'s prefix: the
-  // 8-way label is angle-based and straddles the axes, so a point at
-  // x=101,y=140 (angle ~76 deg) is labelled "Improving – Strong" while
-  // sitting geometrically inside the green Leading zone. Both are correct
-  // for what they measure; the scatter follows the zone because that is the
-  // promise its color legend makes ("same color as the RRG background").
+  // The comparison is STRICT on purpose and the rest of the block leans on
+  // it: a point exactly at 100 is not above 100, so it is Lagging, and its
+  // distance to the axis is 0, which makes it Edge with no special case
+  // written anywhere. Loosening either ">" to ">=" moves points between
+  // zones AND silently changes what Core/Edge means. tests/test_rotation.js
+  // and tests/test_app.js both pin it; mutant R10 proves they go red.
   function classifyQuadrant(x, y) {
     if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return null;
     if (y > 100) return x > 100 ? "Leading" : "Improving";
@@ -1580,13 +1596,32 @@ window.QD = (function () {
     return out;
   }
 
+  // instrumentId -> the full two-word state of its latest rotation point.
+  // Separate from quadrantMapFromRotation because the two are used for
+  // different things and must not be swapped: the ZONE buckets the scatter
+  // into its four coloured groups (the legend promises the RRG's colours),
+  // while the STATE is what the reader is shown in words. One page, one
+  // wording -- the summary table, the RRG tooltip and this tooltip all say
+  // the same two words for the same fund.
+  function stateMapFromRotation(rotationData) {
+    const out = {};
+    if (!rotationData || !Array.isArray(rotationData.results)) return out;
+    rotationData.results.forEach((r) => {
+      if (!r || !Array.isArray(r.points) || r.points.length === 0) return;
+      const label = stateLabelOf(r.points[r.points.length - 1]);
+      if (label) out[r.instrumentId] = label;
+    });
+    return out;
+  }
+
   // Chart.js datasets for the Price-Volume scatter: one dataset per quadrant
   // (plus an "unknown" gray group) so the legend reads as the 4 quadrant
   // names. A row needs BOTH axes to be plottable -- a row with only momentum
   // or only volume has no position on this plane and is skipped (it is still
   // in the table, which is the union view).
-  function buildPriceVolumeScatterDatasets(rows, quadrantById) {
+  function buildPriceVolumeScatterDatasets(rows, quadrantById, stateById) {
     const qById = quadrantById || {};
+    const sById = stateById || {};
     const buckets = new Map();
     QUADRANT_ORDER.forEach((q) => buckets.set(q, []));
     buckets.set(QUADRANT_UNKNOWN_LABEL, []);
@@ -1602,6 +1637,7 @@ window.QD = (function () {
         ticker: r.ticker,
         shortName: r.shortName,
         quadrant: q,
+        state: sById[r.instrumentId] || null,
         rvol: r.rvol,
         volRank: r.volRank,
         momRank: r.momRank
@@ -1630,7 +1666,10 @@ window.QD = (function () {
     lines.push(`Trailing Return: ${point.x >= 0 ? "+" : ""}${point.x.toFixed(2)}%`);
     lines.push(`Volume Z-score: ${point.y >= 0 ? "+" : ""}${point.y.toFixed(2)}`);
     if (point.rvol != null) lines.push(`RVOL: ${point.rvol.toFixed(2)}x`);
-    lines.push(`Quadrant: ${point.quadrant || "ไม่ทราบ (ยังไม่คำนวณ RRG หรือประวัติราคาไม่พอ)"}`);
+    // The same label the summary table shows. Falls back to the zone alone
+    // when there is no Core/Edge threshold yet, and never invents a second
+    // word.
+    lines.push(`สถานะ: ${point.state || point.quadrant || "ไม่ทราบ (ยังไม่คำนวณ RRG หรือประวัติราคาไม่พอ)"}`);
     if (point.momRank != null) lines.push(`อันดับ Momentum: #${point.momRank}`);
     if (point.volRank != null) lines.push(`อันดับ Volume: #${point.volRank}`);
     return lines;
@@ -1655,10 +1694,10 @@ window.QD = (function () {
   // weekly convention (m=14, k=10) while scaling with whatever m the user picks.
   function computeRotationGraphData(instruments, seriesByInstrumentId, benchSeries, m, tailLength) {
     const k = Math.max(2, Math.round(m * 0.7));
-    if (!benchSeries || benchSeries.length < 2) return { m, k, results: [] };
-    const results = instruments.map((inst) => {
+    if (!benchSeries || benchSeries.length < 2) return { m, k, scale: emptyStepScale(), results: [] };
+    const computed = instruments.map((inst) => {
       const series = seriesByInstrumentId[inst.id];
-      if (!series || series.length < 2) return { instrumentId: inst.id, ticker: inst.ticker, points: [] };
+      if (!series || series.length < 2) return { instrumentId: inst.id, ticker: inst.ticker, all: [] };
       const { axis, instVals, benchVals } = alignTwoSeries(series, benchSeries);
       const rs = instVals.map((v, i) => (v != null && benchVals[i] != null && benchVals[i] !== 0) ? (v / benchVals[i]) * 100 : null);
       const emaRs = ema(rs, m);
@@ -1670,12 +1709,199 @@ window.QD = (function () {
       const points = [];
       for (let i = 0; i < axis.length; i++) {
         if (rsRatio[i] != null && rsMomentum[i] != null) {
-          points.push({ periodEnd: axis[i], x: rsRatio[i], y: rsMomentum[i], octant: classifyOctant(rsRatio[i], rsMomentum[i]) });
+          // axisIndex is what makes "the next period" checkable later: two
+          // points next to each other in this array are NOT necessarily
+          // neighbouring periods -- a hole in the prices leaves no point at
+          // all -- and a step or a transition measured across a hole is not
+          // one period of movement.
+          points.push({ periodEnd: axis[i], x: rsRatio[i], y: rsMomentum[i], axisIndex: i });
         }
       }
-      return { instrumentId: inst.id, ticker: inst.ticker, points: points.slice(-tailLength) };
+      return { instrumentId: inst.id, ticker: inst.ticker, all: points };
     });
-    return { m, k, results };
+
+    // The calendar window every statistic beside the chart reads (มติ 35, 38).
+    const lastYm = computed.reduce((acc, r) => {
+      const last = r.all[r.all.length - 1];
+      const ym = last ? ymOf(last.periodEnd) : null;
+      return ym && (!acc || ym > acc) ? ym : acc;
+    }, null);
+    const windowMonths = zoneStripMonths(lastYm, ZONE_STRIP_MONTHS);
+    const firstYm = windowMonths.length ? windowMonths[0] : null;
+    // Without parseable months there is no calendar window, so the window is
+    // simply everything computed. The strip cannot be drawn (no months to put
+    // it on) but the dwell count, the Edge threshold and the base rates still
+    // have their input -- and none of them becomes tail-dependent, which is
+    // the property มติ 36 protects.
+    computed.forEach((r) => {
+      r.history = firstYm
+        ? r.all.filter((p) => { const ym = ymOf(p.periodEnd); return ym && ym >= firstYm; })
+        : r.all.slice();
+    });
+
+    // One threshold per run, from the whole window and every instrument in it
+    // (มติ 32: the universe does not need its own yardstick, the axis does).
+    const scale = rotationStepScale(computed.map((r) => r.history));
+
+    const results = computed.map((r) => {
+      const label = (p) => ({
+        periodEnd: p.periodEnd, x: p.x, y: p.y, axisIndex: p.axisIndex,
+        zone: classifyQuadrant(p.x, p.y), edge: classifyEdge(p.x, p.y, scale)
+      });
+      return {
+        instrumentId: r.instrumentId, ticker: r.ticker,
+        points: r.all.slice(-tailLength).map(label),
+        history: (r.history || []).map(label)
+      };
+    });
+    return { m, k, scale, months: windowMonths, results };
+  }
+
+  // ---------------------------------------------------------------------
+  // Zone history, Core/Edge and base rates  (มติ 31, 32, 37, 38)
+  // ---------------------------------------------------------------------
+
+  // The N calendar months ending at `lastYm`, oldest first. Anchored to the
+  // calendar rather than to "whichever months have data", because columns
+  // that shift between rows cannot be read downwards -- and reading a column
+  // downwards is the entire point of the strip (มติ 38).
+  function zoneStripMonths(lastYm, months) {
+    const parsed = /^(\d{4})-(\d{2})$/.exec(String(lastYm));
+    if (!parsed) return [];
+    const y = Number(parsed[1]), m = Number(parsed[2]);
+    if (!y || m < 1 || m > 12) return [];
+    const out = [];
+    const n = months || ZONE_STRIP_MONTHS;
+    for (let i = n - 1; i >= 0; i--) {
+      out.push(new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7));
+    }
+    return out;
+  }
+
+  function emptyStepScale() {
+    return { rsStep: null, momStep: null, rsEdge: null, momEdge: null, nSteps: 0 };
+  }
+
+  function medianOf(values) {
+    const s = values.slice().sort((a, b) => a - b);
+    if (!s.length) return null;
+    const h = Math.floor(s.length / 2);
+    return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+  }
+
+  // Median absolute movement per period, per axis, over the calendar window.
+  // Deliberately NOT over the chart's tail: tail length is a visual
+  // preference, and if the Edge threshold moved with it, dragging the tail
+  // shorter would silently relabel funds (มติ 36). Steps across a hole in the
+  // prices are skipped -- a three-month jump is not one period of movement.
+  function rotationStepScale(histories) {
+    const dx = [], dy = [];
+    (histories || []).forEach((pts) => {
+      if (!Array.isArray(pts)) return;
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i].axisIndex - pts[i - 1].axisIndex !== 1) continue;
+        dx.push(Math.abs(pts[i].x - pts[i - 1].x));
+        dy.push(Math.abs(pts[i].y - pts[i - 1].y));
+      }
+    });
+    if (!dx.length) return emptyStepScale();
+    const rsStep = medianOf(dx), momStep = medianOf(dy);
+    return { rsStep, momStep, rsEdge: 2 * rsStep, momEdge: 2 * momStep, nSteps: dx.length };
+  }
+
+  // Distance to the NEAREST axis, each axis measured with its own yardstick,
+  // because the two axes do not move at the same speed (มติ 31, 32). Asks
+  // "how close to flipping zone", not "how extreme" -- (110,110) and
+  // (110,100.5) are equally far from the centre but the second is half a step
+  // from changing its label. A point exactly on an axis has distance 0 and is
+  // therefore Edge, with no special case written for it.
+  function classifyEdge(x, y, scale) {
+    if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return null;
+    if (!scale || scale.rsEdge == null || scale.momEdge == null) return null;
+    return (Math.abs(x - 100) < scale.rsEdge || Math.abs(y - 100) < scale.momEdge) ? "Edge" : "Core";
+  }
+
+  // The two-word state: the zone owns the first word, Core/Edge the second
+  // (มติ 30, 31). Without a usable scale the second word is simply absent --
+  // never guessed, and never filled in with the 8-way angle label, which
+  // straddles the zone boundaries and would contradict the first word.
+  function rotationStateLabel(x, y, scale) {
+    const zone = classifyQuadrant(x, y);
+    if (!zone) return null;
+    const edge = classifyEdge(x, y, scale);
+    return edge ? zone + " – " + edge : zone;
+  }
+
+  // Same label, read off a point that computeRotationGraphData already tagged.
+  // Everything on the page goes through one of these two so the table, the
+  // tooltip, the scatter and the export cannot word the state differently.
+  function stateLabelOf(point) {
+    if (!point || !point.zone) return null;
+    return point.edge ? point.zone + " – " + point.edge : point.zone;
+  }
+
+  // How many periods the current zone has held, counted backwards from the
+  // newest point. `censored` means the run reaches the start of the window:
+  // the zone is AT LEAST this old and the window cannot see further, so the
+  // UI must show "≥ n" instead of claiming a number it does not have.
+  // A hole in the prices ends the count -- across a gap we do not know.
+  // Unit is the periods of the CURRENT timeframe, not months; the strip
+  // beside it samples the same run monthly, so the two agree in monthly mode
+  // and differ by design in weekly and daily (see the column header).
+  function zoneDwell(history) {
+    if (!Array.isArray(history) || !history.length) return { periods: null, censored: false };
+    const now = history[history.length - 1].zone || classifyQuadrant(history[history.length - 1].x, history[history.length - 1].y);
+    if (!now) return { periods: null, censored: false };
+    let n = 1;
+    for (let i = history.length - 2; i >= 0; i--) {
+      const z = history[i].zone || classifyQuadrant(history[i].x, history[i].y);
+      if (z !== now || history[i + 1].axisIndex - history[i].axisIndex !== 1) {
+        return { periods: n, censored: false };
+      }
+      n++;
+    }
+    return { periods: n, censored: true };
+  }
+
+  // P(still in this zone next period | in it now), per zone, over the window.
+  // Counts transitions, so n periods give at most n-1 observations per fund,
+  // and only between NEIGHBOURING periods -- a gap is not a transition.
+  //
+  // This is a base rate of our own list over the past two years. It is not a
+  // forecast and must never be written as one (มติ 37).
+  function zoneBaseRates(histories) {
+    const stay = {}, total = {};
+    QUADRANT_ORDER.forEach((z) => { stay[z] = 0; total[z] = 0; });
+    (histories || []).forEach((pts) => {
+      if (!Array.isArray(pts)) return;
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i].axisIndex - pts[i - 1].axisIndex !== 1) continue;
+        const from = pts[i - 1].zone || classifyQuadrant(pts[i - 1].x, pts[i - 1].y);
+        const to = pts[i].zone || classifyQuadrant(pts[i].x, pts[i].y);
+        if (!from || !to || !(from in total)) continue;
+        total[from]++;
+        if (from === to) stay[from]++;
+      }
+    });
+    return QUADRANT_ORDER.map((z) => ({
+      zone: z, stayed: stay[z], n: total[z],
+      pStay: total[z] >= ZONE_BASE_RATE_MIN_N ? stay[z] / total[z] : null
+    }));
+  }
+
+  // One cell per calendar month, oldest first, reading the LAST period that
+  // ends inside that month. Sampling, not a new definition of the word zone:
+  // "the zone most often seen during the month" would be a second definition
+  // needing its own name and its own guard against drifting from the first
+  // (มติ 38). Months with no data are null, and stay in place -- the strip is
+  // never shifted right to close a gap.
+  function zoneHistoryStrip(history, months) {
+    const byMonth = new Map();
+    (history || []).forEach((p) => { byMonth.set(ymOf(p.periodEnd), p); });
+    return (months || []).map((ym) => {
+      const p = byMonth.get(ym);
+      return p ? { ym, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd } : { ym, zone: null, edge: null, periodEnd: null };
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -1767,7 +1993,31 @@ window.QD = (function () {
   // bounding it to what the longest window touches brings that to ~4.
   function momentumPriceLookbackPeriods() {
     const m = state.momentum;
-    return Math.max(m.lookbackPeriods || 0, m.smaPeriods || 0) + (m.tailLength || 12) + 5;
+    const forCharts = Math.max(m.lookbackPeriods || 0, m.smaPeriods || 0) + (m.tailLength || 12) + 5;
+    return Math.max(forCharts, zoneStripPricePeriods());
+  }
+
+  // Roughly how many periods of the chosen timeframe fit in a month. Used
+  // only to size the FETCH, never to compute a value -- the strip itself
+  // always reads real period_end dates, so an imprecise figure here costs a
+  // few extra rows, never a wrong cell.
+  const ZONE_STRIP_PERIODS_PER_MONTH = { day: 21, week: 4.35, month: 1 };
+
+  // The strip reads 24 calendar months of ROTATION POINTS, and a rotation
+  // point only exists after the RS-Ratio chain has warmed up: ema(m), then
+  // sma(m) over that, then a k-period ROC, then ema(k) over that. Measured
+  // warm-up at the three defaults was 37 / 173 / 211 periods, which this
+  // formula reproduces (2m + 2k).
+  //
+  // Without this the strip would simply be mostly empty at day and week
+  // granularity -- silently, because an empty cell is a legitimate value.
+  function zoneStripPricePeriods() {
+    const m = state.momentum;
+    const look = m.lookbackPeriods || 0;
+    const k = Math.max(2, Math.round(look * 0.7));
+    const warmUp = 2 * look + 2 * k;
+    const perMonth = ZONE_STRIP_PERIODS_PER_MONTH[m.timeframe] || 1;
+    return warmUp + Math.ceil(ZONE_STRIP_MONTHS * perMonth) + 5;
   }
 
   // True when the loaded price history cannot serve the current parameters:
@@ -2749,12 +2999,15 @@ window.QD = (function () {
         const last = r.points[r.points.length - 1];
         const prev = r.points.length >= 2 ? r.points[r.points.length - 2] : null;
         const anomaly = anomalies[r.instrumentId] || null;
+        const dwell = zoneDwell(r.history);
         return {
           instrumentId: r.instrumentId,
           ticker: r.ticker,
           shortName: tickerShortName(r.ticker),
-          currentState: last.octant,
-          t1State: prev ? prev.octant : null,
+          currentState: stateLabelOf(last),
+          t1State: prev ? stateLabelOf(prev) : null,
+          dwellPeriods: dwell.periods,
+          dwellCensored: dwell.censored,
           rsRatio: last.x,
           rsMomentum: last.y,
           volZScore: anomaly ? anomaly.zScore : null,
@@ -2813,7 +3066,8 @@ window.QD = (function () {
     // would otherwise show up as a misleading gray "unknown" dot.
     const rows = (state.momentum.rows || []).filter((r) => r.instrumentId !== state.momentum.benchmarkAssetId);
     const quadrantById = quadrantMapFromRotation(state.momentum.rotationData);
-    const datasets = buildPriceVolumeScatterDatasets(rows, quadrantById);
+    const stateById = stateMapFromRotation(state.momentum.rotationData);
+    const datasets = buildPriceVolumeScatterDatasets(rows, quadrantById, stateById);
     const plotted = datasets.reduce((n, d) => n + d.data.length, 0);
 
     const emptyEl = byId("momPvScatterEmpty");
@@ -2893,14 +3147,64 @@ window.QD = (function () {
     return null;
   }
 
+  // Size still encodes recency. An Edge point is drawn smaller than a Core
+  // point of the same age -- a quieter dot for a label that is one step from
+  // changing. This rides on the RADIUS channel on purpose: the border channel
+  // already carries the volume halo, and the two readings must stay separable
+  // (a fund can be Edge and have a volume spike at the same time).
+  const RRG_EDGE_RADIUS_FACTOR = 0.65;
+
   function buildRotationPointStyles(points, baseColor, anomaly) {
     const n = points.length;
     const halo = volumeHaloColor(anomaly);
     return {
       pointBackgroundColor: points.map((p, i) => hexToRgba(baseColor, 0.3 + 0.7 * ((i + 1) / n))),
-      pointRadius: points.map((p, i) => 2 + 5 * ((i + 1) / n)),
+      pointRadius: points.map((p, i) => {
+        const r = 2 + 5 * ((i + 1) / n);
+        return p && p.edge === "Edge" ? r * RRG_EDGE_RADIUS_FACTOR : r;
+      }),
       pointBorderColor: points.map((p, i) => (i === n - 1 && halo ? halo : "rgba(0,0,0,0)")),
       pointBorderWidth: points.map((p, i) => (i === n - 1 && halo ? 3 : 0))
+    };
+  }
+
+  // Dashed band around the crosshair showing WHERE the Edge rule bites: two
+  // steps either side of each axis, each axis with its own width. Drawing the
+  // rule rather than only its verdict is what lets a reader check the label
+  // instead of trusting it -- and it makes visible that the band is a cross,
+  // not a circle, because the rule is "near EITHER axis" (มติ 31, 32).
+  //
+  // Separate plugin from rrgQuadrantPlugin on purpose: the zones and the band
+  // answer different questions and one must be removable without the other.
+  function rrgEdgeBandPlugin(scale) {
+    return {
+      id: "rrgEdgeBand",
+      beforeDatasetsDraw(chart) {
+        if (!scale || scale.rsEdge == null || scale.momEdge == null) return;
+        const { ctx, chartArea, scales } = chart;
+        if (!scales || !scales.x || !scales.y) return;
+        ctx.save();
+        ctx.strokeStyle = "rgba(100,116,139,0.55)";
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        [100 - scale.rsEdge, 100 + scale.rsEdge].forEach((vx) => {
+          const px = scales.x.getPixelForValue(vx);
+          if (px < chartArea.left || px > chartArea.right) return;
+          ctx.beginPath();
+          ctx.moveTo(px, chartArea.top);
+          ctx.lineTo(px, chartArea.bottom);
+          ctx.stroke();
+        });
+        [100 - scale.momEdge, 100 + scale.momEdge].forEach((vy) => {
+          const py = scales.y.getPixelForValue(vy);
+          if (py < chartArea.top || py > chartArea.bottom) return;
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, py);
+          ctx.lineTo(chartArea.right, py);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
     };
   }
 
@@ -2925,8 +3229,8 @@ window.QD = (function () {
         // Volume figures ride on the LAST point only: the anomaly is measured
         // "as of now", not per historical tail point.
         data: r.points.map((p, i) => (i === n - 1 && anomaly
-          ? { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd, volZ: anomaly.zScore, volRvol: anomaly.rvol }
-          : { x: p.x, y: p.y, octant: p.octant, periodEnd: p.periodEnd })),
+          ? { x: p.x, y: p.y, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd, volZ: anomaly.zScore, volRvol: anomaly.rvol }
+          : { x: p.x, y: p.y, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd })),
         showLine: true,
         borderColor: color,
         pointBackgroundColor: styles.pointBackgroundColor,
@@ -2938,15 +3242,18 @@ window.QD = (function () {
     });
   }
 
-  // Tooltip text for one RRG point: quadrant/octant label plus, on the
-  // latest point only, the volume-anomaly reading.
+  // Tooltip text for one RRG point: the two-word state (the same words the
+  // summary table and the Price-Volume scatter use -- one page must not have
+  // two ways of naming a state) plus, on the latest point only, the
+  // volume-anomaly reading.
   function formatRotationTooltip(datasetLabel, p) {
     const point = p || {};
     const base = `${datasetLabel}: (${point.x != null ? point.x.toFixed(1) : "—"}, ${point.y != null ? point.y.toFixed(1) : "—"})`;
-    const withOctant = point.octant ? `${base} — ${point.octant}` : base;
-    if (point.volZ == null) return withOctant;
+    const label = stateLabelOf(point);
+    const withState = label ? `${base} — ${label}` : base;
+    if (point.volZ == null) return withState;
     const sign = point.volZ >= 0 ? "+" : "";
-    return [withOctant, `Volume Z: ${sign}${point.volZ.toFixed(2)}${point.volRvol != null ? ` (RVOL ${point.volRvol.toFixed(2)}x)` : ""}`];
+    return [withState, `Volume Z: ${sign}${point.volZ.toFixed(2)}${point.volRvol != null ? ` (RVOL ${point.volRvol.toFixed(2)}x)` : ""}`];
   }
 
   function renderRotationGraph(rotationData, selectedIds) {
@@ -2959,7 +3266,7 @@ window.QD = (function () {
     momRotationChartInstance = new Chart(canvas.getContext("2d"), {
       type: "scatter",
       data: { datasets },
-      plugins: [rrgQuadrantPlugin()],
+      plugins: [rrgQuadrantPlugin(), rrgEdgeBandPlugin(rotationData && rotationData.scale)],
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
@@ -3012,10 +3319,121 @@ window.QD = (function () {
     if (!state.momentum.rotationData) return;
     renderRotationGraph(state.momentum.rotationData, state.momentum.rrgSelectedIds);
     renderRotationSummaryTable(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    renderZoneHistoryStrip(state.momentum.rotationData, state.momentum.rrgSelectedIds);
+    renderZoneBaseRateTable(state.momentum.rotationData);
     // Quadrant colors only exist once rotationData does -- repaint the
     // scatter here so it stops showing everything as "unknown" gray.
     renderPriceVolumeScatter();
     updateMomExportAvailability();
+  }
+
+  // The unit of the dwell column follows the TIMEFRAME, not the strip.
+  //
+  // มติ 34 was written when the strip was expected to use the timeframe's own
+  // periods, and said the number at the end of a strip row equals this
+  // column. มติ 38 then made the strip 24 monthly cells for every timeframe,
+  // so the two now agree in monthly mode only. Counting the dwell in months
+  // regardless would read "3 months" for what is actually 63 trading days, so
+  // the column keeps the timeframe's periods and states its unit here.
+  const DWELL_UNIT_LABELS = { day: "วันทำการ", week: "สัปดาห์", month: "เดือน" };
+
+  function dwellUnitLabel() {
+    return DWELL_UNIT_LABELS[state.momentum.timeframe] || "งวด";
+  }
+
+  // "≥ 24" is a different claim from "24": the window cannot see past its own
+  // start, so a run that reaches the start is reported as a lower bound.
+  function formatDwell(row) {
+    if (!row || row.dwellPeriods == null) return "—";
+    return (row.dwellCensored ? "≥ " : "") + row.dwellPeriods;
+  }
+
+  function zoneCellColor(zone) {
+    return (zone && QUADRANT_COLORS[zone]) || null;
+  }
+
+  // One row per instrument currently ticked in the graph (มติ 34), each a run
+  // of 24 month cells that line up vertically because they are keyed to the
+  // calendar, not to whichever months that instrument happens to have.
+  function renderZoneHistoryStrip(rotationData, selectedIds) {
+    const host = byId("momZoneStrip");
+    if (!host) return;
+    const note = byId("momZoneStripNote");
+    const months = (rotationData && rotationData.months) || [];
+    const idSet = new Set(selectedIds || []);
+    const rows = ((rotationData && rotationData.results) || []).filter((r) => idSet.has(r.instrumentId));
+
+    if (!months.length || !rows.length) {
+      host.innerHTML = '<p class="text-slate-400 text-xs">ยังไม่ได้เลือกตัวแสดง หรือยังไม่มีข้อมูลเพียงพอ</p>';
+      if (note) note.textContent = "";
+      return;
+    }
+    if (note) {
+      note.textContent = `${months[0]} ถึง ${months[months.length - 1]} · อ่านค่าที่งวดสุดท้ายของแต่ละเดือน · `
+        + `ค่าในช่องคำนวณด้วย Lookback ของกรอบเวลาที่เลือกอยู่ สลับกรอบเวลาแล้วสีเปลี่ยนได้`;
+    }
+    // Only every 3rd month is labelled: 24 labels do not fit, and the quarter
+    // marks are enough to find a column.
+    const axis = months.map((ym, i) => {
+      const show = i % 3 === 0 || i === months.length - 1;
+      return `<span class="inline-block w-5 text-center text-[9px] text-slate-400 align-bottom">${show ? escapeHtml(ym.slice(2)) : ""}</span>`;
+    }).join("");
+
+    const body = rows.map((r) => {
+      const cells = zoneHistoryStrip(r.history, months).map((c) => {
+        const bg = zoneCellColor(c.zone);
+        const style = bg ? ` style="background-color:${bg};"` : "";
+        const cls = bg ? "" : " bg-slate-100 border-slate-200";
+        const tip = c.zone
+          ? `${r.ticker} ${c.ym} · ${escapeHtml(stateLabelOf(c) || c.zone)} (งวด ${escapeHtml(String(c.periodEnd))})`
+          : `${r.ticker} ${c.ym} · ไม่มีข้อมูล`;
+        return `<span class="inline-block w-5 h-4 mr-px rounded-sm border border-transparent${cls}"${style} title="${escapeHtml(tip)}"></span>`;
+      }).join("");
+      const dwell = zoneDwell(r.history);
+      return `<div class="flex items-center gap-2 mb-1">
+        <span class="w-14 shrink-0 font-medium text-slate-700">${escapeHtml(r.ticker)}</span>
+        <span class="whitespace-nowrap">${cells}</span>
+        <span class="shrink-0 text-[10px] text-slate-400">${formatDwell({ dwellPeriods: dwell.periods, dwellCensored: dwell.censored })} ${escapeHtml(dwellUnitLabel())}</span>
+      </div>`;
+    }).join("");
+
+    host.innerHTML = body + `<div class="flex items-center gap-2 mt-1">
+      <span class="w-14 shrink-0"></span><span class="whitespace-nowrap">${axis}</span></div>`;
+  }
+
+  // P(still in this zone next period | in it now) over the same 24-month
+  // window, for the WHOLE universe rather than the ticked subset: a base rate
+  // computed from 5 hand-picked funds would move every time someone ticks a
+  // box. Shows the denominator always, and a dash rather than a number when
+  // it is too small to mean anything (มติ 37).
+  function renderZoneBaseRateTable(rotationData) {
+    const table = byId("momZoneBaseRateTable");
+    if (!table) return;
+    const results = (rotationData && rotationData.results) || [];
+    const rates = zoneBaseRates(results.map((r) => r.history));
+    const total = rates.reduce((a, r) => a + r.n, 0);
+    if (!total) {
+      table.innerHTML = `<tbody><tr><td class="px-3 py-4 text-slate-400 text-xs">ยังไม่มีข้อมูลเพียงพอ</td></tr></tbody>`;
+      return;
+    }
+    const head = `<thead><tr>
+        <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">โซน</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">โอกาสอยู่โซนเดิมงวดถัดไป</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">ตัวหาร (การเปลี่ยนงวดที่สังเกตได้)</th>
+      </tr></thead>`;
+    const body = rates.map((r) => {
+      const bg = zoneCellColor(r.zone);
+      const dot = bg ? `<span class="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style="background-color:${bg};"></span>` : "";
+      const pct = r.pStay == null
+        ? `<span title="ตัวหารน้อยกว่า ${ZONE_BASE_RATE_MIN_N} จึงยังไม่แสดงตัวเลข">—</span>`
+        : (r.pStay * 100).toFixed(1) + "%";
+      return `<tr class="border-b border-slate-100">
+        <td class="px-3 py-1.5 text-slate-700">${dot}${escapeHtml(r.zone)}</td>
+        <td class="text-right px-2 py-1.5 text-slate-700">${pct}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${r.n}</td>
+      </tr>`;
+    }).join("");
+    table.innerHTML = head + `<tbody>${body}</tbody>`;
   }
 
   function renderRotationSummaryTable(rotationData, selectedIds) {
@@ -3032,6 +3450,7 @@ window.QD = (function () {
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">ชื่อย่อ</th>
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">Current State</th>
         <th class="text-left px-2 py-2 bg-slate-50 border-b border-slate-200">T-1 State</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">อยู่มานาน (${escapeHtml(dwellUnitLabel())})</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Ratio ล่าสุด</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">RS-Momentum ล่าสุด</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">Volume Z-score</th>
@@ -3045,6 +3464,7 @@ window.QD = (function () {
         <td class="px-2 py-1.5 text-slate-500">${r.shortName}</td>
         <td class="px-2 py-1.5 text-slate-700">${r.currentState || "—"}</td>
         <td class="px-2 py-1.5 text-slate-500">${r.t1State || "—"}</td>
+        <td class="text-right px-2 py-1.5 text-slate-500">${formatDwell(r)}</td>
         <td class="text-right px-2 py-1.5 text-slate-500">${r.rsRatio != null ? r.rsRatio.toFixed(2) : "—"}</td>
         <td class="text-right px-2 py-1.5 text-slate-500">${r.rsMomentum != null ? r.rsMomentum.toFixed(2) : "—"}</td>
         <td class="text-right px-2 py-1.5"${volStyle}>${r.volZScore != null ? r.volZScore.toFixed(2) : "—"}</td>
@@ -3140,12 +3560,34 @@ window.QD = (function () {
       sheets.leaderboard = [header].concat(rows);
     }
     if (selections.rotation && state.momentum.rotationData) {
-      const header = ["Ticker", "ชื่อย่อ", "Period End", "RS-Ratio", "RS-Momentum", "8-Group Label"];
+      const rot = state.momentum.rotationData;
+      // The label column changed CONTENT on 2026-11-23: it used to carry the
+      // 8-way angle label ("Leading – Accelerating") and now carries the zone
+      // plus Core/Edge ("Leading – Core"). An old file and a new file do not
+      // read the same; that is intended (มติ 39), so the header says which it
+      // is rather than staying generic.
+      const header = ["Ticker", "ชื่อย่อ", "Period End", "RS-Ratio", "RS-Momentum", "สถานะ (โซน – Core/Edge)"];
       const rows = [];
-      (state.momentum.rotationData.results || []).forEach((r) => {
-        r.points.forEach((p) => rows.push([r.ticker, tickerShortName(r.ticker), p.periodEnd, p.x, p.y, p.octant]));
+      (rot.results || []).forEach((r) => {
+        r.points.forEach((p) => rows.push([r.ticker, tickerShortName(r.ticker), p.periodEnd, p.x, p.y, stateLabelOf(p)]));
       });
       sheets.rotation = [header].concat(rows);
+
+      // Second sheet under the SAME checkbox, as the Heat Calendar export
+      // already does: what is on screen has to be in the file, and the strip
+      // and the dwell column are per-instrument, not per-point -- repeating
+      // an as-of-now number on every historical row would read as if it
+      // varied by row.
+      const months = rot.months || [];
+      const zHeader = ["Ticker", "ชื่อย่อ", "สถานะล่าสุด", "อยู่มานาน (" + dwellUnitLabel() + ")", "ถูกตัดปลาย (อยู่มาตั้งแต่ก่อนช่วงนี้)"]
+        .concat(months);
+      const zRows = (rot.results || []).filter((r) => (r.history || []).length).map((r) => {
+        const last = r.points.length ? r.points[r.points.length - 1] : r.history[r.history.length - 1];
+        const d = zoneDwell(r.history);
+        return [r.ticker, tickerShortName(r.ticker), stateLabelOf(last) || "", d.periods, d.censored ? "ใช่" : "ไม่"]
+          .concat(zoneHistoryStrip(r.history, months).map((c) => (c.zone ? stateLabelOf(c) || c.zone : "")));
+      });
+      if (months.length && zRows.length) sheets.zoneHistory = [zHeader].concat(zRows);
     }
     const corr = state.momentum.corr;
     if (selections.corrMatrix && corr.matrix) {
@@ -3214,6 +3656,7 @@ window.QD = (function () {
     const wb = XLSX.utils.book_new();
     if (sheets.leaderboard) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.leaderboard), "Leaderboard");
     if (sheets.rotation) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.rotation), "Rotation");
+    if (sheets.zoneHistory) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.zoneHistory), "Zone History");
     if (sheets.corrMatrix) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrMatrix), "Correlation Matrix");
     if (sheets.corrAvg) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.corrAvg), "Correlation Avg");
     if (sheets.drilldown) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheets.drilldown), "Volume History");
@@ -3325,7 +3768,11 @@ window.QD = (function () {
     { label: "ATR % และ ATR เทียบตัวเอง", desc: "ATR(14) คือระยะที่ราคาเดินได้จริงในหนึ่งวันโดยเฉลี่ย รวมช่วงที่กระโดดข้ามคืน (true range) — ต่างจาก SD ของราคาปิดที่มองข้ามการเหวี่ยงระหว่างวัน · \"ATR %\" คือ ATR เทียบกับราคา จึงเทียบข้าม instrument ได้ · \"เทียบตัวเอง 1 ปี\" คือเปอร์เซ็นไทล์ของ ATR % วันนี้เทียบกับ 252 วันทำการที่ผ่านมาของตัวมันเอง — 90% แปลว่าตอนนี้ผันผวนกว่าปกติของตัวเองมาก แม้ค่าดิบจะดูไม่สูงเมื่อเทียบกับตัวอื่น · คำนวณจากราคาที่ปรับปันผลแล้ว (view ohlcv_adj)" },
     { label: "ตำแหน่งในกรอบ 52 สัปดาห์", desc: "0% = อยู่ที่จุดต่ำสุดของ 52 สัปดาห์พอดี · 100% = อยู่ที่จุดสูงสุดพอดี · ใช้ high/low ที่ปรับปันผลแล้ว ไม่ใช่ราคาปิด · คู่กับคอลัมน์ \"ห่างจากจุดสูงสุด\" ที่บอกว่าต้องขึ้นอีกกี่ % ถึงจะกลับไปจุดเดิม" },
     { label: "Price–Volume Scatter", desc: "ภาพนิ่งของงวดล่าสุด วางทุก instrument บนระนาบ Trailing Return (แกนนอน) × Volume Z-score (แกนตั้ง) — ใช้ตอบคำถามว่า \"ราคาที่วิ่งอยู่ มี volume หนุนหรือไม่\" สีของจุดคือ quadrant ของ RRG ณ จุดล่าสุด (เขียว Leading / น้ำเงิน Improving / แดง Lagging / ส้ม Weakening / เทา = ยังไม่ได้คำนวณ RRG หรือประวัติราคาไม่พอ) instrument ที่มีข้อมูลด้านเดียว (เช่นมีราคาแต่ไม่มี volume) จะไม่ปรากฏบนกราฟนี้เพราะไม่มีพิกัดครบ แต่ยังอยู่ในตาราง" },
-    { label: "Quadrant / ป้าย 8 กลุ่ม", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 quadrant มาตรฐาน (Leading/Improving/Lagging/Weakening) ตามตำแหน่ง (100,100) ส่วนป้ายละเอียดขึ้นเป็น 8 กลุ่มย่อยจากมุมของจุด แสดงทั้งใน tooltip และตารางสรุปด้านล่างกราฟ (Current State / T-1 State) — กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
+    { label: "โซน (คำแรกของสถานะ)", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 โซนมาตรฐาน (Leading/Improving/Lagging/Weakening) ตัดกันที่ (100,100) โดยอ่านจากเครื่องหมาย ไม่ใช่จากมุมของจุด — จุดที่อยู่บนเส้นพอดีไม่ถือว่าอยู่เหนือเส้น จึงตกเป็น Lagging · กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
+    { label: "Core / Edge (คำที่สองของสถานะ)", desc: "บอกว่าป้ายโซนนั้นเชื่อได้แค่ไหน ไม่ได้บอกว่าแข็งแกร่งแค่ไหน — วัดจากระยะถึง \"เส้นที่ใกล้ที่สุด\" (ไม่ใช่ระยะจากจุดกลาง) แล้วเทียบกับการเดินตามปกติ 2 งวดของแกนนั้น ถ้าใกล้กว่านั้นคือ Edge · ทั้งสองแกนใช้ไม้วัดของตัวเอง เพราะโดยปกติ RS-Ratio กับ RS-Momentum เดินต่องวดไม่เท่ากัน · เส้นประในกราฟคือขอบของเกณฑ์นี้ และจุด Edge จะถูกวาดเล็กลง · เกณฑ์ไม่ใช่ค่าตายตัว มันคำนวณใหม่จากข้อมูลของรอบนั้นทุกครั้ง ค่าจึงต่างกันระหว่างกรอบเวลา" },
+    { label: "อยู่มานาน", desc: "จำนวนงวดที่กองนั้นอยู่ในโซนเดิมติดต่อกัน นับย้อนจากงวดล่าสุด และนับ\"เป็นงวดของกรอบเวลาที่เลือกอยู่\" (รายเดือนนับเดือน รายวันนับวันทำการ) · เครื่องหมาย ≥ หมายถึงโซนนั้นอยู่มาตั้งแต่ก่อนช่วง 2 ปีที่มองเห็น จึงบอกได้แค่ว่าอย่างน้อยเท่านี้ · ถ้าช่วงไหนข้อมูลขาด การนับจะหยุดที่นั่น ไม่ลากข้ามรู" },
+    { label: "ประวัติโซน 2 ปี (แถบ)", desc: "หนึ่งแถวต่อหนึ่งกองตามที่ติ๊กไว้ในกราฟ แต่ละแถวมี 24 ช่องเสมอ = 24 เดือนปฏิทินย้อนหลัง ทุกกรอบเวลา · แต่ละช่องอ่านค่าที่งวดสุดท้ายของเดือนนั้น (เป็นการสุ่มตัวอย่าง ไม่ใช่นิยามใหม่ของคำว่าโซน) · เดือนที่ไม่มีข้อมูลเว้นว่าง\"อยู่ที่เดิม\" ไม่ขยับชิดขวา เพื่อให้กวาดตาลงมาเทียบเดือนเดียวกันข้ามแถวได้ · สลับกรอบเวลาแล้วสีเปลี่ยนได้ เพราะค่าในช่องยังคำนวณด้วย Lookback ของกรอบเวลานั้น" },
+    { label: "ฐานอัตราในอดีต", desc: "สัดส่วนที่เคยเกิดขึ้นในอดีตว่า \"อยู่โซนนี้แล้วงวดถัดไปยังอยู่โซนเดิม\" นับจากทุกกองใน Universe ที่เลือก ในช่วง 24 เดือนเดียวกับแถบ · ⚠️ เป็นสถิติย้อนหลังของลิสต์ที่เราเลือกเอง ไม่ใช่ความน่าจะเป็นไปข้างหน้า และไม่ใช่คำทำนาย · ตัวหารคือจำนวนการเปลี่ยนงวดที่สังเกตได้ (ไม่ใช่จำนวนกอง) และจะแสดงเสมอ · ถ้าตัวหารต่ำกว่า 30 จะขึ้นขีดกลางแทนตัวเลข เพราะเล็กเกินกว่าจะอ่านได้" },
     { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },
     { label: "วงแหวน Volume บนกราฟ RRG", desc: "จุดล่าสุดของแต่ละเส้นจะมีวงแหวนสีเมื่อ volume งวดล่าสุดผิดปกติเทียบกับฐานของตัวเอง (ส้ม = พุ่ง Z ≥ 2, น้ำเงิน = แห้ง Z ≤ −2) ใช้เป็นสัญญาณยืนยันว่าการหมุนของ RS เกิดขึ้นพร้อมกับปริมาณซื้อขายที่ผิดปกติหรือไม่ — ขนาดจุดยังคงหมายถึงความเก่า-ใหม่ของ tail เหมือนเดิม ไม่ได้แปลว่า volume" },
     { label: "Correlation Matrix", desc: "ค่าสหสัมพันธ์ของผลตอบแทนระหว่างคู่สินทรัพย์ในหน้าต่างล่าสุดที่กำหนด (แดง = เคลื่อนไหวไปด้วยกัน, น้ำเงิน = สวนทางกัน) คลิกช่องใดก็ได้เพื่อดูกราฟ rolling correlation ย้อนหลังของคู่นั้น" },
@@ -6854,8 +7301,12 @@ window.QD = (function () {
     // Momentum & Rotation (Phase 2) -- pure helpers (unit-testable)
     getUniverseInstruments, computeTrailingReturn, computeSMASignal, computeReturnSeries, stdevSample,
     computePeriodicVolatility, computeWindowVolatility, computeRiskAdjustedScore,
-    ema, sma, classifyOctant, classifyQuadrant, alignTwoSeries, computeRotationGraphData,
-    quadrantMapFromRotation, buildPriceVolumeScatterDatasets, formatPvScatterTooltip,
+    ema, sma, classifyQuadrant, alignTwoSeries, computeRotationGraphData,
+    ZONE_STRIP_MONTHS, ZONE_BASE_RATE_MIN_N, zoneStripMonths, rotationStepScale,
+    classifyEdge, rotationStateLabel, stateLabelOf, zoneDwell, zoneBaseRates, zoneHistoryStrip,
+    dwellUnitLabel, formatDwell, renderZoneHistoryStrip, renderZoneBaseRateTable,
+    RRG_EDGE_RADIUS_FACTOR, rrgEdgeBandPlugin, zoneStripPricePeriods,
+    quadrantMapFromRotation, stateMapFromRotation, buildPriceVolumeScatterDatasets, formatPvScatterTooltip,
     renderPriceVolumeScatter, QUADRANT_ORDER, QUADRANT_COLORS, QUADRANT_UNKNOWN_LABEL, QUADRANT_UNKNOWN_COLOR,
     rankUniverseFromSeries, rankUniverseNow,
     buildLeaderboardChartDatasets, momentumRankParams, computeMomentumFetchKey,
