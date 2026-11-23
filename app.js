@@ -3343,9 +3343,24 @@ window.QD = (function () {
 
   // "≥ 24" is a different claim from "24": the window cannot see past its own
   // start, so a run that reaches the start is reported as a lower bound.
-  function formatDwell(row) {
+  //
+  // The number counts periods of the CHOSEN timeframe while the strip beside
+  // it is always months (มติ 38, 42), so at day and week granularity the two
+  // speak different units. Rather than convert -- which would report 85
+  // trading days as "4 months" and throw away the resolution the user picked
+  // -- the month figure rides along in brackets, and only when it is at least
+  // one whole month. The conversion reuses the same table the price fetch
+  // sizes itself with, so there is no second set of numbers to drift.
+  function formatDwell(row, withApprox) {
     if (!row || row.dwellPeriods == null) return "—";
-    return (row.dwellCensored ? "≥ " : "") + row.dwellPeriods;
+    const head = (row.dwellCensored ? "≥ " : "") + row.dwellPeriods;
+    if (!withApprox) return head; // the summary table puts the unit in its header
+    const withUnit = `${head} ${dwellUnitLabel()}`;
+    const perMonth = ZONE_STRIP_PERIODS_PER_MONTH[state.momentum.timeframe] || 1;
+    if (perMonth <= 1) return withUnit; // monthly: the strip already reads in months
+    const months = row.dwellPeriods / perMonth;
+    if (months < 1) return withUnit;    // under a month, the rounded figure says nothing
+    return `${withUnit} (~${Math.round(months)} เดือน)`;
   }
 
   function zoneCellColor(zone) {
@@ -3393,11 +3408,17 @@ window.QD = (function () {
       return `<div class="flex items-center gap-2 mb-1">
         <span class="w-14 shrink-0 font-medium text-slate-700">${escapeHtml(r.ticker)}</span>
         <span class="whitespace-nowrap">${cells}</span>
-        <span class="shrink-0 text-[10px] text-slate-400">${formatDwell({ dwellPeriods: dwell.periods, dwellCensored: dwell.censored })} ${escapeHtml(dwellUnitLabel())}</span>
+        <span class="shrink-0 text-[10px] text-slate-400">${escapeHtml(formatDwell({ dwellPeriods: dwell.periods, dwellCensored: dwell.censored }, true))}</span>
       </div>`;
     }).join("");
 
-    host.innerHTML = body + `<div class="flex items-center gap-2 mt-1">
+    const headSpacer = months.map(() => '<span class="inline-block w-5 h-0 mr-px"></span>').join("");
+    const head = `<div class="flex items-center gap-2 mb-1">
+      <span class="w-14 shrink-0"></span>
+      <span class="whitespace-nowrap">${headSpacer}</span>
+      <span class="shrink-0 text-[10px] font-medium text-slate-500">อยู่มานาน</span>
+    </div>`;
+    host.innerHTML = head + body + `<div class="flex items-center gap-2 mt-1">
       <span class="w-14 shrink-0"></span><span class="whitespace-nowrap">${axis}</span></div>`;
   }
 
@@ -3418,14 +3439,17 @@ window.QD = (function () {
     }
     const head = `<thead><tr>
         <th class="text-left px-3 py-2 bg-slate-50 border-b border-slate-200">โซน</th>
-        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">โอกาสอยู่โซนเดิมงวดถัดไป</th>
+        <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">โอกาสอยู่โซนเดิม${escapeHtml(dwellUnitLabel())}ถัดไป</th>
         <th class="text-right px-2 py-2 bg-slate-50 border-b border-slate-200">ตัวหาร (การเปลี่ยนงวดที่สังเกตได้)</th>
       </tr></thead>`;
     const body = rates.map((r) => {
       const bg = zoneCellColor(r.zone);
       const dot = bg ? `<span class="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style="background-color:${bg};"></span>` : "";
+      // The reason the number is missing has to be ON SCREEN. Hiding it in a
+      // title attribute reads as "the value disappeared" -- which is exactly
+      // how it was read the first time this fired on real data.
       const pct = r.pStay == null
-        ? `<span title="ตัวหารน้อยกว่า ${ZONE_BASE_RATE_MIN_N} จึงยังไม่แสดงตัวเลข">—</span>`
+        ? `<span class="text-slate-400">— <span class="text-[10px]">(ตัวหาร &lt; ${ZONE_BASE_RATE_MIN_N})</span></span>`
         : (r.pStay * 100).toFixed(1) + "%";
       return `<tr class="border-b border-slate-100">
         <td class="px-3 py-1.5 text-slate-700">${dot}${escapeHtml(r.zone)}</td>
@@ -3770,7 +3794,7 @@ window.QD = (function () {
     { label: "Price–Volume Scatter", desc: "ภาพนิ่งของงวดล่าสุด วางทุก instrument บนระนาบ Trailing Return (แกนนอน) × Volume Z-score (แกนตั้ง) — ใช้ตอบคำถามว่า \"ราคาที่วิ่งอยู่ มี volume หนุนหรือไม่\" สีของจุดคือ quadrant ของ RRG ณ จุดล่าสุด (เขียว Leading / น้ำเงิน Improving / แดง Lagging / ส้ม Weakening / เทา = ยังไม่ได้คำนวณ RRG หรือประวัติราคาไม่พอ) instrument ที่มีข้อมูลด้านเดียว (เช่นมีราคาแต่ไม่มี volume) จะไม่ปรากฏบนกราฟนี้เพราะไม่มีพิกัดครบ แต่ยังอยู่ในตาราง" },
     { label: "โซน (คำแรกของสถานะ)", desc: "พื้นหลังกราฟแบ่งสีเป็น 4 โซนมาตรฐาน (Leading/Improving/Lagging/Weakening) ตัดกันที่ (100,100) โดยอ่านจากเครื่องหมาย ไม่ใช่จากมุมของจุด — จุดที่อยู่บนเส้นพอดีไม่ถือว่าอยู่เหนือเส้น จึงตกเป็น Lagging · กราฟยังเป็นแกน x-y ปกติ ไม่ใช่กราฟทรงขั้ว (polar/spiral) แบบ TrendSpider" },
     { label: "Core / Edge (คำที่สองของสถานะ)", desc: "บอกว่าป้ายโซนนั้นเชื่อได้แค่ไหน ไม่ได้บอกว่าแข็งแกร่งแค่ไหน — วัดจากระยะถึง \"เส้นที่ใกล้ที่สุด\" (ไม่ใช่ระยะจากจุดกลาง) แล้วเทียบกับการเดินตามปกติ 2 งวดของแกนนั้น ถ้าใกล้กว่านั้นคือ Edge · ทั้งสองแกนใช้ไม้วัดของตัวเอง เพราะโดยปกติ RS-Ratio กับ RS-Momentum เดินต่องวดไม่เท่ากัน · เส้นประในกราฟคือขอบของเกณฑ์นี้ และจุด Edge จะถูกวาดเล็กลง · เกณฑ์ไม่ใช่ค่าตายตัว มันคำนวณใหม่จากข้อมูลของรอบนั้นทุกครั้ง ค่าจึงต่างกันระหว่างกรอบเวลา" },
-    { label: "อยู่มานาน", desc: "จำนวนงวดที่กองนั้นอยู่ในโซนเดิมติดต่อกัน นับย้อนจากงวดล่าสุด และนับ\"เป็นงวดของกรอบเวลาที่เลือกอยู่\" (รายเดือนนับเดือน รายวันนับวันทำการ) · เครื่องหมาย ≥ หมายถึงโซนนั้นอยู่มาตั้งแต่ก่อนช่วง 2 ปีที่มองเห็น จึงบอกได้แค่ว่าอย่างน้อยเท่านี้ · ถ้าช่วงไหนข้อมูลขาด การนับจะหยุดที่นั่น ไม่ลากข้ามรู" },
+    { label: "อยู่มานาน", desc: "จำนวนงวดที่กองนั้นอยู่ในโซนเดิมติดต่อกัน นับย้อนจากงวดล่าสุด และนับ\"เป็นงวดของกรอบเวลาที่เลือกอยู่\" (รายเดือนนับเดือน รายวันนับวันทำการ) · เครื่องหมาย ≥ หมายถึงโซนนั้นอยู่มาตั้งแต่ก่อนช่วง 2 ปีที่มองเห็น จึงบอกได้แค่ว่าอย่างน้อยเท่านี้ · ถ้าช่วงไหนข้อมูลขาด การนับจะหยุดที่นั่น ไม่ลากข้ามรู · ⚠️ ตัวเลขท้ายแถบประวัติเป็นตัวเดียวกับคอลัมน์นี้ แต่**แถบนับเป็นเดือนเสมอ** จึงมีเดือนโดยประมาณในวงเล็บกำกับให้ในโหมดรายวันและรายสัปดาห์ เพื่อให้เทียบกับช่องได้ — ตัวเลขหลักยังเป็นงวดของกรอบเวลา ไม่ได้ถูกแปลงหน่วย" },
     { label: "ประวัติโซน 2 ปี (แถบ)", desc: "หนึ่งแถวต่อหนึ่งกองตามที่ติ๊กไว้ในกราฟ แต่ละแถวมี 24 ช่องเสมอ = 24 เดือนปฏิทินย้อนหลัง ทุกกรอบเวลา · แต่ละช่องอ่านค่าที่งวดสุดท้ายของเดือนนั้น (เป็นการสุ่มตัวอย่าง ไม่ใช่นิยามใหม่ของคำว่าโซน) · เดือนที่ไม่มีข้อมูลเว้นว่าง\"อยู่ที่เดิม\" ไม่ขยับชิดขวา เพื่อให้กวาดตาลงมาเทียบเดือนเดียวกันข้ามแถวได้ · สลับกรอบเวลาแล้วสีเปลี่ยนได้ เพราะค่าในช่องยังคำนวณด้วย Lookback ของกรอบเวลานั้น" },
     { label: "ฐานอัตราในอดีต", desc: "สัดส่วนที่เคยเกิดขึ้นในอดีตว่า \"อยู่โซนนี้แล้วงวดถัดไปยังอยู่โซนเดิม\" นับจากทุกกองใน Universe ที่เลือก ในช่วง 24 เดือนเดียวกับแถบ · ⚠️ เป็นสถิติย้อนหลังของลิสต์ที่เราเลือกเอง ไม่ใช่ความน่าจะเป็นไปข้างหน้า และไม่ใช่คำทำนาย · ตัวหารคือจำนวนการเปลี่ยนงวดที่สังเกตได้ (ไม่ใช่จำนวนกอง) และจะแสดงเสมอ · ถ้าตัวหารต่ำกว่า 30 จะขึ้นขีดกลางแทนตัวเลข เพราะเล็กเกินกว่าจะอ่านได้" },
     { label: "เลือกตัวแสดงในกราฟ", desc: "Checkbox panel เหนือกราฟ RRG ใช้กำหนดว่าจะพล็อตตัวไหนบ้าง ค่าเริ่มต้นคือ Top 5 ตาม Trailing Return ของรอบคำนวณล่าสุด — การติ๊ก/ล้างมีผลทันทีโดยไม่ต้องกด \"คำนวณ\" ซ้ำ (กรองจากข้อมูลที่คำนวณไว้แล้ว)" },

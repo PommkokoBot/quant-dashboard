@@ -562,7 +562,9 @@ const byTicker = (out) => {
   assert.strictEqual(bodyRows.length, 4, "all four zones listed, every time");
   const cellsOf = (tr) => Array.from(tr.querySelectorAll("td")).map((td) => td.textContent.trim());
   const leading = bodyRows.map(cellsOf).find((c) => c[0] === "Leading");
-  assert.strictEqual(leading[1], "—", "3 transitions is far below the floor of 30 -> a dash");
+  // the dash now carries its own reason on screen, not in a title attribute
+  assert.ok(/^—/.test(leading[1]), "3 transitions is far below the floor of 30 -> a dash");
+  assert.ok(leading[1].includes("30"), "...and the cell itself says what the floor is");
   assert.strictEqual(leading[2], "3", "...but the denominator is shown so the dash is explainable (AAA 2 + BBB 1)");
   const lagging = bodyRows.map(cellsOf).find((c) => c[0] === "Lagging");
   assert.strictEqual(lagging[2], "0", "a zone with no observations is 0, not missing");
@@ -610,6 +612,111 @@ const byTicker = (out) => {
   assert.ok(!/8 กลุ่ม|8-Group|octant/i.test(text),
     "and must no longer promise an 8-group label, which the page cannot produce any more");
   console.log("[ok] คำอธิบายบนหน้าเว็บ: นิยาม Core/Edge · หน่วยของอยู่มานาน · ช่วงของแถบ · คำเตือนว่าฐานอัตราไม่ใช่คำทำนาย + เกณฑ์ขีดกลาง · ไม่เหลือคำว่า 8 กลุ่ม");
+}
+
+// ---------------------------------------------------------------------------
+// 15. หน่วยต้องอ่านได้โดยไม่ต้องแปลงในหัว (23 พ.ย. · รอบเล็กหลังเห็นของจริง)
+//
+// แถบเป็นเดือนเสมอ แต่ตัวเลขข้างมันเป็นงวดของกรอบเวลา — พอเปิดโหมดรายวันจริง
+// มันอ่านว่า "85 วันทำการ" ข้างแถวที่มี 24 ช่องเดือน ซึ่งเทียบกันด้วยตาไม่ได้
+// ---------------------------------------------------------------------------
+{
+  const dom = loadPage();
+  const Q = dom.window.QD;
+  const doc = dom.window.document;
+  const set = (tf) => { Q.state.momentum.timeframe = tf; };
+  const d = (periods, censored) => ({ dwellPeriods: periods, dwellCensored: !!censored });
+
+  // ตารางสรุปไม่ต่อหน่วย เพราะหน่วยอยู่ในหัวคอลัมน์อยู่แล้ว
+  set("day");
+  assert.strictEqual(Q.formatDwell(d(85)), "85", "ในตารางสรุปยังเป็นตัวเลขเปล่า");
+  assert.strictEqual(Q.formatDwell(d(85, true)), "≥ 85", "และยังบอกว่าถูกตัดปลาย");
+
+  // ท้ายแถบพกหน่วยมาเอง และเติมเดือนโดยประมาณเมื่อหน่วยไม่ตรงกับช่อง
+  assert.strictEqual(Q.formatDwell(d(85), true), "85 วันทำการ (~4 เดือน)");
+  assert.strictEqual(Q.formatDwell(d(85, true), true), "≥ 85 วันทำการ (~4 เดือน)",
+    "เครื่องหมาย ≥ ครอบทั้งก้อน ไม่ใช่ครอบแค่ตัวเลขหน้า");
+  assert.strictEqual(Q.formatDwell(d(14), true), "14 วันทำการ",
+    "ไม่ถึงหนึ่งเดือน ไม่ต้องเติมวงเล็บ เพราะ ~0 เดือน ไม่ได้บอกอะไร");
+  assert.strictEqual(Q.formatDwell(d(1), true), "1 วันทำการ");
+
+  set("week");
+  assert.strictEqual(Q.formatDwell(d(30), true), "30 สัปดาห์ (~7 เดือน)");
+  assert.strictEqual(Q.formatDwell(d(3), true), "3 สัปดาห์", "ต่ำกว่าหนึ่งเดือน");
+
+  set("month");
+  assert.strictEqual(Q.formatDwell(d(12), true), "12 เดือน",
+    "รายเดือนไม่มีวงเล็บ เพราะช่องกับตัวเลขเป็นหน่วยเดียวกันอยู่แล้ว");
+  assert.strictEqual(Q.formatDwell(d(12, true), true), "≥ 12 เดือน");
+
+  assert.strictEqual(Q.formatDwell(null, true), "—", "ไม่มีค่าก็ยังไม่ throw");
+  assert.strictEqual(Q.formatDwell({ dwellPeriods: null }, true), "—");
+  console.log("[ok] อยู่มานาน: ท้ายแถบพกหน่วย + เดือนโดยประมาณ · ตารางสรุปเป็นเลขเปล่า · ต่ำกว่า 1 เดือนไม่เติมวงเล็บ · รายเดือนไม่เติม");
+
+  // หน่วยในหัวคอลัมน์ฐานอัตราต้องเดินตามกรอบเวลาด้วย ไม่งั้น 98.6% ในรายวัน
+  // กับ 91.2% ในรายเดือน อ่านเหมือนเป็นคำถามเดียวกันทั้งที่คนละคำถาม
+  const rates = { months: [], scale: null, results: [] };
+  const fake = (zone, n) => {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push({ x: 110, y: 110, zone, axisIndex: i });
+    return out;
+  };
+  rates.results = [{ instrumentId: 1, ticker: "AAA", points: [], history: fake("Leading", 40) }];
+  for (const [tf, word] of [["day", "วันทำการ"], ["week", "สัปดาห์"], ["month", "เดือน"]]) {
+    set(tf);
+    Q.renderZoneBaseRateTable(rates);
+    const head = doc.getElementById("momZoneBaseRateTable").querySelectorAll("thead th")[1].textContent;
+    assert.ok(head.includes(word), `หัวคอลัมน์ต้องบอกว่า "${word}ถัดไป" ในโหมด ${tf} · ได้ "${head}"`);
+  }
+  console.log("[ok] หัวคอลัมน์ฐานอัตราเปลี่ยนหน่วยตามกรอบเวลา (วันทำการ / สัปดาห์ / เดือน)");
+
+  // ขีดกลางต้องอธิบายตัวเองบนจอ ไม่ใช่ซ่อนเหตุผลไว้ใน title
+  set("month");
+  rates.results = [{ instrumentId: 1, ticker: "AAA", points: [], history: fake("Leading", 5) }];
+  Q.renderZoneBaseRateTable(rates);
+  const leadCells = Array.from(doc.getElementById("momZoneBaseRateTable").querySelectorAll("tbody tr"))
+    .map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => td.textContent.trim()))
+    .find((c) => c[0] === "Leading");
+  assert.strictEqual(leadCells[2], "4", "4 การเปลี่ยนงวด");
+  assert.ok(/^—/.test(leadCells[1]) && leadCells[1].includes(String(Q.ZONE_BASE_RATE_MIN_N)),
+    `ขีดกลางต้องพกเกณฑ์มาด้วยในตัวเซลล์เอง · ได้ "${leadCells[1]}"`);
+  console.log("[ok] ขีดกลางเขียนเกณฑ์ไว้ในเซลล์ อ่านได้โดยไม่ต้องเอาเมาส์ไปชี้");
+}
+
+// ---------------------------------------------------------------------------
+// 16. แถบมีหัวคอลัมน์ และหัวต้องไม่ไปกวนการนับแถว
+// ---------------------------------------------------------------------------
+{
+  const dom = loadPage();
+  const Q = dom.window.QD;
+  const doc = dom.window.document;
+  Q.state.momentum.timeframe = "month";
+  Q.state.momentum.volumeAnomalyById = {};
+  const months = Q.zoneStripMonths("2026-11", 24);
+  const hist = (n) => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      out.push({ periodEnd: months[months.length - n + i] + "-28", x: 110, y: 110, zone: "Leading", edge: "Core", axisIndex: i });
+    }
+    return out;
+  };
+  const rot = { months, scale: { rsEdge: 1, momEdge: 1 }, results: [
+    { instrumentId: 1, ticker: "AAA", points: [], history: hist(4) },
+    { instrumentId: 2, ticker: "BBB", points: [], history: hist(2) }
+  ] };
+  Q.renderZoneHistoryStrip(rot, [1, 2]);
+  const strip = doc.getElementById("momZoneStrip");
+
+  assert.ok(strip.textContent.includes("อยู่มานาน"), "แถบมีหัวบอกว่าคอลัมน์ขวาสุดคืออะไร");
+
+  // หัวใช้ช่องล่องหนเพื่อจัดคอลัมน์ จึงต้องมีจำนวนเท่าเดือน แต่ต้องไม่ถูกนับเป็นช่องข้อมูล
+  const dataRows = Array.from(strip.children).filter((el) => el.querySelectorAll("span.w-5.h-4").length > 0);
+  assert.strictEqual(dataRows.length, 2, "ยังนับได้ 2 แถวข้อมูล หัวกับแกนไม่ถูกนับ");
+  const headRow = strip.children[0];
+  assert.strictEqual(headRow.querySelectorAll("span.w-5.h-4").length, 0, "หัวไม่มีช่องข้อมูล");
+  assert.strictEqual(headRow.querySelectorAll("span.w-5").length, months.length,
+    "แต่มีช่องล่องหนครบ 24 ช่อง เพื่อให้คำว่า 'อยู่มานาน' อยู่ตรงคอลัมน์เดียวกับตัวเลข");
+  console.log("[ok] แถบมีหัวคอลัมน์ · จัดตรงด้วยช่องล่องหนที่นับจากเดือนจริง · ไม่กวนการนับแถวข้อมูล");
 }
 
 console.log("\nALL ROTATION ENGINE TESTS PASSED");

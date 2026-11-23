@@ -55,8 +55,11 @@ const server = http.createServer((req, res) => {
       // purpose, so the blank-cells-stay-in-place case is in the picture.
       const skip = i === 0 ? 7 : (i === 1 ? 3 : 0);
       let z = ZONES[i % 4];
+      // กองที่ 3 ไม่พลิกเลยทั้งแถบ เพื่อให้มีช่วงยาวพอที่วงเล็บ "(~N เดือน)"
+      // จะขึ้นในโหมดรายวัน — ซึ่งเป็นข้อความที่ยาวที่สุดที่คอลัมน์ขวาต้องรับ
+      const neverFlips = i === 2;
       const history = months.slice(skip).map((ym, j) => {
-        if (rnd() < 0.18) z = ZONES[Math.floor(rnd() * 4)];
+        if (!neverFlips && rnd() < 0.18) z = ZONES[Math.floor(rnd() * 4)];
         const x = 100 + (z === "Leading" || z === "Weakening" ? 1 : -1) * (0.2 + rnd() * 6);
         const y = 100 + (z === "Leading" || z === "Improving" ? 1 : -1) * (0.2 + rnd() * 5);
         return { periodEnd: ym + "-28", x, y, axisIndex: skip + j, zone: Q.classifyQuadrant(x, y) };
@@ -117,6 +120,37 @@ const server = http.createServer((req, res) => {
   const rrg = page.locator("#momZoneStrip").locator("xpath=ancestor::section[1]");
   await rrg.screenshot({ path: path.join(ROOT, "shot-rotation.png") });
 
+  // โหมดรายวันทำให้ข้อความท้ายแถบยาวที่สุด ("≥ 85 วันทำการ (~4 เดือน)")
+  // ซึ่งเป็นกรณีเดียวที่ทำให้คอลัมน์ขวาดันแถบจนล้นได้ · jsdom วัดไม่ได้
+  const dayMode = await page.evaluate(() => {
+    const Q = window.QD;
+    Q.state.momentum.timeframe = "day";
+    Q.renderRotationSummaryTable(Q.state.momentum.rotationData, Q.state.momentum.rrgSelectedIds);
+    Q.renderZoneHistoryStrip(Q.state.momentum.rotationData, Q.state.momentum.rrgSelectedIds);
+    Q.renderZoneBaseRateTable(Q.state.momentum.rotationData);
+    const strip = document.getElementById("momZoneStrip");
+    const box = strip.parentElement;
+    const rows = Array.from(strip.children).filter((d) => d.querySelectorAll("span.w-5.h-4").length === 24);
+    const tails = rows.map((r) => r.lastElementChild.textContent.trim());
+    return {
+      longestTail: tails.reduce((a, b) => (b.length > a.length ? b : a), ""),
+      hasApproxMonths: tails.some((t) => /~\d+ เดือน/.test(t)),
+      baseRateHeader: document.getElementById("momZoneBaseRateTable").querySelectorAll("thead th")[1].textContent,
+      summaryDwellHeader: document.getElementById("momRotationSummaryTable").querySelectorAll("thead th")[4].textContent,
+      stripScrollWidth: strip.scrollWidth,
+      boxClientWidth: box.clientWidth,
+      overflowsHorizontally: strip.scrollWidth > box.clientWidth + 1,
+      column7LeftEdges: Array.from(new Set(rows.map((r) => Math.round(r.querySelectorAll("span.w-5.h-4")[7].getBoundingClientRect().left))))
+    };
+  });
+  await rrg.screenshot({ path: path.join(ROOT, "shot-rotation-day.png") });
+  await page.evaluate(() => {
+    window.QD.state.momentum.timeframe = "month";
+    window.QD.renderRotationSummaryTable(window.QD.state.momentum.rotationData, window.QD.state.momentum.rrgSelectedIds);
+    window.QD.renderZoneHistoryStrip(window.QD.state.momentum.rotationData, window.QD.state.momentum.rrgSelectedIds);
+    window.QD.renderZoneBaseRateTable(window.QD.state.momentum.rotationData);
+  });
+
   await page.setViewportSize({ width: 390, height: 900 });
   const narrow = await page.evaluate(() => {
     const strip = document.getElementById("momZoneStrip");
@@ -145,6 +179,7 @@ const server = http.createServer((req, res) => {
   server.close();
 
   console.log("desktop 1280px:", measured);
+  console.log("day mode (ข้อความยาวสุด):", dayMode);
   console.log("narrow 390px:", narrow);
   console.log("console errors:", errors.filter((e) => !/404/.test(e)));
 
@@ -160,6 +195,11 @@ const server = http.createServer((req, res) => {
   if (perRow > 26) problems.push(`the strip costs ${perRow.toFixed(1)}px per row -- more than one line of text`);
   if (!narrow.scrollableInsideItsBox) problems.push("at 390px the strip is not scrollable inside its own box");
   if (narrow.widthWeAdded > 0) problems.push(`the new block widened the PAGE by ${narrow.widthWeAdded}px at 390px`);
+  if (!dayMode.hasApproxMonths) problems.push("day mode shows no '(~N เดือน)' beside the period count");
+  if (!/วันทำการถัดไป/.test(dayMode.baseRateHeader)) problems.push(`base-rate header does not carry the day unit: ${dayMode.baseRateHeader}`);
+  if (!/วันทำการ/.test(dayMode.summaryDwellHeader)) problems.push(`summary dwell header does not follow the timeframe: ${dayMode.summaryDwellHeader}`);
+  if (dayMode.overflowsHorizontally) problems.push("the longer day-mode tail makes the strip overflow its box");
+  if (dayMode.column7LeftEdges.length !== 1) problems.push("day mode: cell #7 stopped lining up across rows");
 
   if (problems.length) {
     console.error("\nROTATION LAYOUT CHECK FAILED");

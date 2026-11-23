@@ -160,7 +160,30 @@ const MUTATIONS = [
   { id: "R20", name: "the strip drops empty months instead of leaving them blank",
     why: "rows stop lining up, so scanning a column downwards -- the point of the strip -- reads the wrong months",
     apply: () => swap("      return p ? { ym, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd } : { ym, zone: null, edge: null, periodEnd: null };\n    });",
-                      "      return p ? { ym, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd } : null;\n    }).filter((c) => c);") }
+                      "      return p ? { ym, zone: p.zone, edge: p.edge, periodEnd: p.periodEnd } : null;\n    }).filter((c) => c);") },
+
+  // ---- กติกาเรื่องหน่วย เพิ่ม 23 พ.ย. หลังเห็นของจริง ----
+
+  { id: "R21", name: "the strip drops the approximate month beside the period count",
+    why: "back to '85 วันทำการ' sitting next to 24 monthly cells -- the reader has to convert in their head",
+    apply: () => swap("    return `${withUnit} (~${Math.round(months)} เดือน)`;", "    return withUnit;") },
+
+  { id: "R22", name: "the approximate month is printed even under one month",
+    why: "'1 วันทำการ (~0 เดือน)' reads as if the fund has been nowhere",
+    apply: () => swap("    if (months < 1) return withUnit;", "    if (months < 0) return withUnit;") },
+
+  { id: "R23", name: "the base-rate header says a generic 'งวด' instead of the timeframe's unit",
+    why: "98.6% daily and 91.2% monthly then look like answers to the same question",
+    apply: () => swap("โอกาสอยู่โซนเดิม${escapeHtml(dwellUnitLabel())}ถัดไป", "โอกาสอยู่โซนเดิมงวดถัดไป") },
+
+  { id: "R24", name: "the withheld base rate hides its reason in a title attribute again",
+    why: "the dash then reads as 'the value disappeared', which is how it was read the first time",
+    apply: () => swap('`<span class="text-slate-400">— <span class="text-[10px]">(ตัวหาร &lt; ${ZONE_BASE_RATE_MIN_N})</span></span>`',
+                      '`<span title="ตัวหารน้อยกว่า ${ZONE_BASE_RATE_MIN_N}">—</span>`') },
+
+  { id: "R25", name: "the strip header pads with a fixed 24 instead of the months actually drawn",
+    why: "any change to the window length silently un-aligns the header from its column",
+    apply: () => swap("const headSpacer = months.map(() =>", "const headSpacer = Array.from({ length: 12 }).map(() =>") }
 ];
 
 restore();
