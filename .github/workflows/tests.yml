@@ -67,3 +67,10 @@ jobs:
       # CI breaks the page on purpose and fails if a break goes unnoticed.
       - name: The security suite can go red
         run: node tests/mutate_security.js
+
+      # The rotation engine's numbers are golden values, so the only thing that
+      # makes them a test rather than a comment is proof that changing the
+      # formula turns them red. That proof has to run where the formula is
+      # changed, not only on the machine that wrote it.
+      - name: The rotation engine suite can go red
+        run: node tests/mutate_rotation.js
