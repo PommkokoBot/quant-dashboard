@@ -91,10 +91,10 @@ const MUTATIONS = [
     apply: () => swap('Authorization: "Bearer " + (accessToken || KEY),',
                       'Authorization: "Bearer " + KEY,') },
 
-  { id: "E8", name: "ไม่ส่ง Range header ตอนเรียก period_end_closes",
-    why: "PostgREST ตัดที่ 1,000 แถวเงียบ ๆ และตัดกองทิ้งทั้งกอง — บั๊กเดิมของโปรเจกต์นี้",
-    apply: () => swap("const h = range ? headers({ Range: range.from + \"-\" + range.to }) : headers();",
-                      "const h = headers();") },
+  { id: "E8", name: "ไม่ส่งพารามิเตอร์แบ่งหน้าเลย",
+    why: "ไม่มี offset/limit = เซิร์ฟเวอร์คืนทั้งชุดทุกครั้ง ลูปใน app.js วนไม่รู้จบ",
+    apply: () => swap('        const url = BASE + "/rest/v1/rpc/" + name + (range ? "?" + qs.toString() : "");',
+                      '        const url = BASE + "/rest/v1/rpc/" + name;') },
 
   { id: "E9", name: "ไม่มีจุดให้นับ ถือว่าผ่าน",
     why: "universe ที่โหลดไม่สำเร็จจะรายงาน 0% เหมือนกับ universe ที่ Edge จริง 0 กอง",
@@ -109,6 +109,15 @@ const MUTATIONS = [
     why: "shim ตอบ getSession ผิดรูปแล้ว bootDashboard จะไม่ถูกเรียก แต่หน้าเว็บไม่ error",
     apply: () => swap("      async getSession() { return { data: { session } }; },",
                       "      async getSession() { return { data: { session: null } }; },") },
+
+  { id: "E13", name: "ส่ง `Range` header แทน offset/limit ใน query string",
+    why: "บั๊กจริงของ 24 พ.ย. — เซิร์ฟเวอร์ไม่สนใจ header นั้น คืนแถวมาทั้งหมดทุกหน้า ลูปใน app.js จึงวนไม่รู้จบ",
+    apply: () => swap('          qs.set("offset", String(range.from));\n          qs.set("limit", String(range.to - range.from + 1));',
+                      '          qs.set("rangeHeaderInstead", String(range.from));') },
+
+  { id: "E14", name: "ถอดด่านกันวนไม่รู้จบออก",
+    why: "ถ้าวันหนึ่งการแบ่งหน้าพังอีก ต้องมีอะไรดังทันที ไม่ใช่ปล่อยให้เครื่องเงียบสิบนาที",
+    apply: () => swap("    if (res.data.length > asked) {", "    if (false) {") },
 
   { id: "E12", name: "นับ Core เป็น Edge ในสถิติทั้งหน้าต่าง",
     why: "สองสัดส่วนในตารางจะขัดกันเอง และคนอ่านจะเชื่อตัวที่ผิด",
