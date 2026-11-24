@@ -31,7 +31,11 @@
  *
  * วิธีรัน
  * ------
- *   QD_EMAIL=... QD_PASSWORD=... node tools/edge-share.js
+ *   bash/zsh    QD_EMAIL=... QD_PASSWORD=... node tools/edge-share.js
+ *   PowerShell  $env:QD_EMAIL='...'; $env:QD_PASSWORD='...'; npm run edge:share
+ *
+ * ⚠️ `npm run edge:share --json` ส่งธงไม่ถึงสคริปต์ (npm กินไปเอง) ต้องเขียน
+ *    `npm run edge:share -- --json` หรือเรียก node ตรง ๆ
  *
  * ตาราง `instruments` เปิดให้อ่านเฉพาะ role `authenticated` (ตรวจ pg_policies
  * 23 พ.ย. 2026) จึงต้องล็อกอิน · รหัสผ่านอ่านจาก environment variable เท่านั้น
@@ -67,6 +71,10 @@ function pickFromApp(re, what) {
 const BASE = (process.env.QD_REST_BASE || pickFromApp(/const SUPABASE_URL = "([^"]+)"/, "SUPABASE_URL")).replace(/\/+$/, "");
 const KEY = process.env.QD_REST_KEY || pickFromApp(/const SUPABASE_ANON_KEY = "([^"]+)"/, "SUPABASE_ANON_KEY");
 
+// คำขอเดียวไม่ควรใช้เกินนี้ · ชุดที่หนักที่สุด (day × thematic) แบ่งเป็น 10 หน้า
+// หน้าละไม่กี่วินาที ถ้าหน้าไหนเกิน 60 วินาทีแปลว่ามีอะไรผิด ไม่ใช่แค่ช้า
+const REQUEST_TIMEOUT_MS = Number(process.env.QD_TIMEOUT_MS || 60000);
+
 // ---------------------------------------------------------------------------
 // Supabase client ขนาดเล็กที่สุดที่โค้ดหน้าเว็บเรียกได้
 // รองรับเท่าที่ app.js ใช้จริง: auth 3 ตัว, from().select().eq().order().limit(),
@@ -83,9 +91,13 @@ function makeRestClient(accessToken, session) {
   async function call(url, opts) {
     let res;
     try {
-      res = await fetch(url, opts);
+      // timeout เพื่อให้คำขอที่ค้างกลายเป็น error ที่อ่านได้ ไม่ใช่เครื่องเงียบไปเฉย ๆ
+      res = await fetch(url, Object.assign({ signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }, opts));
     } catch (e) {
-      return { data: null, error: { message: "ต่อ " + url + " ไม่ได้: " + (e.message || e) } };
+      const why = (e && e.name === "TimeoutError")
+        ? "ไม่ตอบใน " + (REQUEST_TIMEOUT_MS / 1000) + " วินาที"
+        : (e.message || e);
+      return { data: null, error: { message: "ต่อ " + url + " ไม่ได้: " + why } };
     }
     const text = await res.text();
     if (!res.ok) return { data: null, error: { message: "HTTP " + res.status + " " + url + " — " + text.slice(0, 300) } };
@@ -97,18 +109,51 @@ function makeRestClient(accessToken, session) {
     }
   }
 
+  // 🔴 `.range()` ต้องเป็น "พารามิเตอร์ใน URL" ไม่ใช่ HTTP header `Range`
+  //
+  // ฉบับแรกของไฟล์นี้ส่ง header `Range: 0-3999` ตามที่ผมเข้าใจว่า PostgREST ใช้ ·
+  // ของจริงในไลบรารีที่หน้าเว็บโหลด (`vendor/supabase.js`) เขียนไว้ว่า
+  //     range(from, to) → searchParams.set("offset", from)
+  //                       searchParams.set("limit",  to - from + 1)
+  // **ไม่มีคำว่า Range-Unit หรือ header Range อยู่ในไลบรารีเลย**
+  //
+  // ผลของการส่งผิด: เซิร์ฟเวอร์ไม่สนใจ header นั้นแล้วคืนแถวมาทั้งหมดทุกครั้ง ·
+  // ลูปแบ่งหน้าใน `app.js` หยุดก็ต่อเมื่อได้แถวน้อยกว่า 4,000 จึง **วนไม่รู้จบ**
+  // ทันทีที่ชุดข้อมูลเกิน 4,000 แถว (เจอจริง 24 พ.ย. ที่ month/thematic = 7,614 แถว)
+  //
+  // นี่เป็นบทเรียนของการ "เขียนตามที่เข้าใจ" แทนการ "อ่านของจริงก่อน" — ไลบรารีอยู่ในrepo
+  // ให้เปิดดูได้ตลอดเวลา และใช้เวลาอ่านน้อยกว่าเวลาที่เสียไปกับการค้าง
   function rpc(name, params) {
     let range = null;
     const builder = {
       range(from, to) { range = { from, to }; return builder; },
       then(ok, bad) {
-        const h = range ? headers({ Range: range.from + "-" + range.to }) : headers();
-        return call(BASE + "/rest/v1/rpc/" + name, {
-          method: "POST", headers: h, body: JSON.stringify(params || {})
-        }).then(ok, bad);
+        const qs = new URLSearchParams();
+        if (range) {
+          qs.set("offset", String(range.from));
+          qs.set("limit", String(range.to - range.from + 1));
+        }
+        const url = BASE + "/rest/v1/rpc/" + name + (range ? "?" + qs.toString() : "");
+        return call(url, {
+          method: "POST", headers: headers(), body: JSON.stringify(params || {})
+        }).then((res) => guardPaging(res, name, range)).then(ok, bad);
       }
     };
     return builder;
+  }
+
+  // ด่านกันวนไม่รู้จบ: ถ้าขอมา N แถวแล้วได้กลับมามากกว่า N แปลว่าการแบ่งหน้า
+  // "ไม่ถูกนำไปใช้" ซึ่งเป็นสภาพเดียวกับที่ทำให้ลูปใน app.js วนตลอดกาล ·
+  // ดังขึ้นมาทันทีดีกว่าปล่อยให้เครื่องเงียบไปสิบนาทีแล้วไม่มีใครรู้ว่าเกิดอะไร
+  function guardPaging(res, name, range) {
+    if (!range || res.error || !Array.isArray(res.data)) return res;
+    const asked = range.to - range.from + 1;
+    if (res.data.length > asked) {
+      return { data: null, error: { message:
+        "การแบ่งหน้าไม่ถูกนำไปใช้ที่ " + name + ": ขอ " + asked +
+        " แถว ได้กลับมา " + res.data.length + " แถว — ถ้าปล่อยไว้ลูปใน app.js จะวนไม่รู้จบ" } };
+    }
+    return res;
   }
 
   function from(table) {
@@ -146,7 +191,8 @@ function makeRestClient(accessToken, session) {
 async function signIn(email, password) {
   const res = await fetch(BASE + "/auth/v1/token?grant_type=password", {
     method: "POST",
-    headers: { apikey: KEY, "Content-Type": "application/json" },
+    // ไลบรารีจริงตั้งทั้งสอง header ตอนสร้าง auth client — ส่งให้ตรงกัน
+    headers: { apikey: KEY, Authorization: "Bearer " + KEY, "Content-Type": "application/json" },
     body: JSON.stringify({ email, password })
   });
   const text = await res.text();
@@ -206,8 +252,10 @@ async function main() {
   if (!email || !password) {
     console.error("ต้องมี QD_EMAIL และ QD_PASSWORD ใน environment");
     console.error("ตาราง instruments เปิดให้อ่านเฉพาะ role authenticated จึงต้องล็อกอินก่อน");
-    console.error("ตัวอย่าง:  QD_EMAIL=you@example.com QD_PASSWORD='...' node tools/edge-share.js");
-    process.exit(2);
+    console.error("PowerShell:  $env:QD_EMAIL='you@example.com'; $env:QD_PASSWORD='...'; npm run edge:share");
+    console.error("bash/zsh  :  QD_EMAIL=you@example.com QD_PASSWORD='...' node tools/edge-share.js");
+    process.exitCode = 2;
+    return;
   }
 
   console.log("ปลายทาง : " + BASE);
@@ -255,7 +303,15 @@ async function main() {
       setPicker(tfEl, tf);
       const started = Date.now();
       await QD.runMomentumCalculate();
-      const errText = (window.document.getElementById("momCalculateError") || {}).textContent || "";
+      // หน้าเว็บมีช่อง error สามช่อง และแต่ละชั้นเขียนคนละช่อง —
+      // `loadMomentumUniverseData` (ชั้นดึงข้อมูล) เขียนที่ `momLeaderboardError`
+      // ส่วน `runMomentumCalculate` เขียนที่ `momCalculateError` ·
+      // ฉบับแรกอ่านแค่ช่องเดียว ทำให้ "ดึงข้อมูลไม่สำเร็จ" ผ่านไปเป็นผลสำเร็จ
+      // ที่วาดได้ 0 กอง โดยไม่มีอะไรบอก (เจอ 24 พ.ย. ตอนทดสอบด่านกันวนไม่รู้จบ)
+      const errText = ["momCalculateError", "momLeaderboardError", "momParamError"]
+        .map((id) => ((window.document.getElementById(id) || {}).textContent || "").trim())
+        .filter(Boolean)
+        .join(" · ");
       const rd = QD.state.momentum.rotationData;
       const c = countEdge(rd);
       const scale = (rd && rd.scale) || {};
@@ -343,16 +399,30 @@ async function main() {
   });
   console.log("\nธงเตือนทั้งหมด: " + flags + " จาก " + rows.length + " ชุด");
 
+  // ชุดไหนคำนวณไม่ผ่าน = ตัวเลขของชุดนั้นเชื่อไม่ได้ · ต้องออกด้วยรหัสไม่เป็นศูนย์
+  // ไม่ใช่พิมพ์ตารางสวย ๆ แล้วจบแบบสำเร็จ ซึ่งคนอ่านจะไม่ทันสังเกต
+  const broken = rows.filter((r) => r.error);
+  if (broken.length) {
+    console.error("\n" + broken.length + " ชุดคำนวณไม่ผ่าน — ตัวเลขของชุดนั้นใช้ไม่ได้:");
+    broken.forEach((r) => console.error("  " + r.timeframe + " / " + r.universe + ": " + r.error));
+    process.exitCode = 1;
+  }
+
   if (wantJson) console.log("\n" + JSON.stringify({ base: BASE, measuredAt: new Date().toISOString(), rows }, null, 2));
 
   dom.window.close();
-  process.exitCode = 0;
+  // ⛔ ห้ามตั้ง process.exitCode = 0 ตรงนี้ — มันจะลบรหัส 1 ที่ตั้งไว้ตอนเจอชุดที่
+  // คำนวณไม่ผ่านด้านบน แล้วรอบที่พังจะจบแบบ "สำเร็จ" (เจอจริงตอนเขียนด่าน 24 พ.ย.)
+  // ค่าเริ่มต้นของ Node เป็น 0 อยู่แล้ว จึงไม่ต้องตั้งเอง
 }
 
 if (require.main === module) {
   main().catch((e) => {
     console.error("\nล้มเหลว: " + (e && e.stack ? e.stack : e));
-    process.exit(1);
+    // ห้าม process.exit() ตรงนี้ — บน Windows การตัดจบขณะที่ handle ของ fetch
+    // ยังไม่ปิด ทำให้ libuv ขึ้น `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`
+    // ต่อท้ายข้อความ error (เจอจริง 23 พ.ย.) · ตั้ง exitCode แล้วปล่อยให้ Node เก็บของเอง
+    process.exitCode = 1;
   });
 }
 

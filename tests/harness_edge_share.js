@@ -9,6 +9,7 @@
  *
  * สิ่งที่ไฟล์นี้พิสูจน์
  *   1. ชั้นนับ (countEdge) นับถูก — ตรวจตรงด้วย rotationData ที่เขียนมือ
+ *   5. เซิร์ฟเวอร์ที่ไม่สนใจ offset/limit ทำให้เครื่องมือดังทันที ไม่ค้าง (บั๊ก 24 พ.ย.)
  *   2. ทั้งเส้นเดินจบ: ล็อกอิน -> QD.init -> bootDashboard -> เปลี่ยน
  *      <select> -> runMomentumCalculate -> อ่าน rotationData -> พิมพ์ตาราง
  *   3. ตัวเลขที่ออกมาจากข้อมูลชุดเดิมไม่เปลี่ยน (golden pin)
@@ -32,6 +33,8 @@ const ROOT = path.resolve(__dirname, "..");
 // QD_EDGE_TOOL ให้ tests/mutate_edge_share.js ชี้ไปสำเนาที่ถูกดัดแปลง
 // (ต้องอยู่ในโฟลเดอร์ tools/ เหมือนกัน เพราะไฟล์นั้น require ../tests/_page.js)
 const TOOL = path.resolve(ROOT, process.env.QD_EDGE_TOOL || path.join("tools", "edge-share.js"));
+// เพดานเวลาของลูกหนึ่งตัว · รอบปกติใช้ไม่ถึง 10 วินาที ตั้ง 90 ให้เผื่อเครื่องช้า
+const CHILD_TIMEOUT_MS = Number(process.env.QD_CHILD_TIMEOUT_MS || 90000);
 const { countEdge } = require(TOOL);
 
 let checks = 0;
@@ -69,16 +72,20 @@ function ok(msg) { checks++; console.log("[ok] " + msg); }
 // ราคาเดินด้วย LCG ที่ seed จาก id จึงได้ตัวเลขเดิมทุกครั้ง ไม่มี Math.random
 const INSTRUMENTS = [{ id: 1, ticker: "SPY", name: "bench", category: "broad_market" }];
 for (let i = 0; i < 11; i++) INSTRUMENTS.push({ id: 100 + i, ticker: "S" + (i + 1), name: "sector " + (i + 1), category: "us_sector" });
-for (let i = 0; i < 3; i++) INSTRUMENTS.push({ id: 200 + i, ticker: "T" + (i + 1), name: "theme " + (i + 1), category: "thematic" });
+// thematic ต้องมีสมาชิกมากพอให้ "ราคาทั้งชุด" ทะลุ 4,000 แถว (30 กอง + SPY × 160 งวด
+// = 4,960) ไม่งั้นลูปแบ่งหน้าใน app.js จะจบที่หน้าแรกเสมอ และด่านนี้จะไม่เคยเห็น
+// หน้าที่สองเลย — ซึ่งเป็นช่องที่ทำให้บั๊ก 24 พ.ย. หลุดออกไปถึงมือ Peat
+const THEMATIC_N = 30;
+for (let i = 0; i < THEMATIC_N; i++) INSTRUMENTS.push({ id: 200 + i, ticker: "T" + (i + 1), name: "theme " + (i + 1), category: "thematic" });
 // T4 มีราคาแค่ 3 งวด: อยู่ในรายชื่อ universe แต่สั้นเกินกว่าจะมีจุด RRG
 // มีไว้เพื่อให้ "จำนวนสมาชิก" กับ "จำนวนที่วาดได้" ไม่เท่ากัน — ไม่งั้นการหาร
 // ด้วยตัวหารผิดจะมองไม่ออกเลยในข้อมูลสังเคราะห์
 // ต้องมีทั้งใน us_sector (ซึ่ง Edge > 0) และ thematic (ซึ่ง Edge = 0) เพราะถ้า
 // กองที่วาดไม่ได้ไปอยู่แต่ใน universe ที่ Edge = 0 ตัวหารผิดก็ยังให้ 0%
 // เหมือนกัน และการตรวจก็ไม่มีฟัน (เจอตอนรัน mutate_edge_share.js รอบแรก)
-INSTRUMENTS.push({ id: 203, ticker: "T4", name: "theme newly listed", category: "thematic" });
+INSTRUMENTS.push({ id: 299, ticker: "TNEW", name: "theme newly listed", category: "thematic" });
 INSTRUMENTS.push({ id: 111, ticker: "S12", name: "sector newly listed", category: "us_sector" });
-const SHORT_HISTORY = new Set([203, 111]);
+const SHORT_HISTORY = new Set([299, 111]);
 
 const PERIODS = { month: 160, week: 460, day: 1000 };
 
@@ -100,7 +107,27 @@ function closesFor(id, granularity) {
   return out;
 }
 
-const seen = { paths: [], ranges: [] };
+const seen = { paths: [], pages: [] };
+// สวิตช์จำลอง "เซิร์ฟเวอร์ไม่สนใจการแบ่งหน้า" ซึ่งคือสภาพจริงของบั๊ก 24 พ.ย.
+let ignorePaging = false;
+
+// 🔴 แบ่งหน้าแบบ PostgREST จริง: อ่าน `offset` และ `limit` จาก **query string**
+//
+// ฉบับแรกของไฟล์นี้อ่าน HTTP header `Range` ตามที่ผมเข้าใจผิด · เซิร์ฟเวอร์ปลอม
+// จึงยืนยันความเข้าใจผิดอันเดียวกับที่อยู่ในเครื่องมือ แทนที่จะหักล้างมัน
+// ผลคือด่านเขียวสนิทแต่ของจริงวนไม่รู้จบที่ชุดแรกที่เกิน 4,000 แถว (24 พ.ย.)
+//
+// **ของปลอมต้องเลียนแบบของจริง ไม่ใช่เลียนแบบสิ่งที่เราเชื่อว่าของจริงทำ** —
+// ที่มาของพฤติกรรมนี้คือ `range()` ใน `vendor/supabase.js` ซึ่งอยู่ใน repo ให้เปิดอ่านได้
+function paginate(rows, url) {
+  const off = url.searchParams.get("offset");
+  const lim = url.searchParams.get("limit");
+  if (off == null && lim == null) return rows;          // ไม่ขอแบ่งหน้า = ส่งทั้งหมด
+  seen.pages.push([Number(off || 0), Number(lim || 0)]);
+  if (ignorePaging) return rows;                        // แกล้งไม่สนใจ (ดูกลุ่มทดสอบท้ายไฟล์)
+  const from = Number(off || 0);
+  return rows.slice(from, from + Number(lim || rows.length));
+}
 
 function body(req) {
   return new Promise((res) => {
@@ -149,17 +176,22 @@ const server = http.createServer(async (req, res) => {
         rows.push({ instrument_id: id, period_end: p.period_end, adj_close: p.adj_close });
       });
     });
-    // เลียนแบบ Range header ของ PostgREST เพื่อให้เส้นทางแบ่งหน้าได้ถูกเดิน
-    const range = req.headers.range;
-    if (range) {
-      const [from, to] = String(range).split("-").map(Number);
-      seen.ranges.push([from, to]);
-      rows = rows.slice(from, to + 1);
-    }
-    return send(rows);
+    return send(paginate(rows, url));
   }
 
-  // ที่เหลือ (overview, heat calendar, breadth, risk, volume, events, brief)
+  if (url.pathname === "/rest/v1/rpc/period_volume_series") {
+    const b = JSON.parse(await body(req) || "{}");
+    const rows = [];
+    (b.p_instrument_ids || []).forEach((id) => {
+      closesFor(id, b.p_granularity).forEach((p) => {
+        if (b.p_start_date && p.period_end < b.p_start_date) return;
+        rows.push({ instrument_id: id, period_end: p.period_end, volume: 1000 + (id % 7) });
+      });
+    });
+    return send(paginate(rows, url));
+  }
+
+  // ที่เหลือ (overview, heat calendar, breadth, risk, events, brief)
   // ตอบว่างให้หน้าเว็บ degrade ตามที่มันออกแบบไว้
   return send([]);
 });
@@ -177,10 +209,23 @@ function run(args, envOverride) {
   }, envOverride || {});
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [TOOL].concat(args), { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "", err = "";
+    let out = "", err = "", timedOut = false;
+    // 🔴 ต้องมี timeout — mutant ที่ถอดด่านกันวนไม่รู้จบออก ทำให้ลูกวนตลอดกาลจริง ๆ
+    // ฉบับแรกไม่มี แล้ว harness ก็นั่งรอไปเรื่อย ๆ · บนเครื่องที่ RAM น้อยมันจบเพราะ
+    // หน่วยความจำเต็ม แต่บนเครื่องที่ RAM เยอะมันค้างยาว (เจอจริงบนเครื่อง Peat 24 พ.ย.)
+    // "จับได้เพราะหน่วยความจำเต็ม" ไม่ใช่ด่าน มันคือความบังเอิญที่ขึ้นกับเครื่อง
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, CHILD_TIMEOUT_MS);
     child.stdout.on("data", (c) => (out += c));
     child.stderr.on("data", (c) => (err += c));
-    child.on("close", (code) => resolve({ code, out, err }));
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        err += "\n[harness] ลูกไม่จบใน " + (CHILD_TIMEOUT_MS / 1000) + " วินาที จึงถูกฆ่า — ถือว่าล้มเหลว";
+        resolve({ code: 124, out, err });
+        return;
+      }
+      resolve({ code, out, err });
+    });
   });
 }
 
@@ -201,8 +246,10 @@ async function main() {
   assert.ok(seen.paths.includes("/rest/v1/instruments"), "ต้องโหลด instruments จาก REST");
   assert.ok(seen.paths.filter((p) => p === "/rest/v1/rpc/period_end_closes").length >= 4,
     "4 ชุด (2 กรอบเวลา x 2 universe) ต้องดึงราคาอย่างน้อย 4 ครั้ง");
-  assert.ok(seen.ranges.length > 0 && seen.ranges[0][1] - seen.ranges[0][0] === 3999,
-    "ต้องส่ง Range header ขนาด 4000 แถวเหมือนที่หน้าเว็บส่ง");
+  assert.ok(seen.pages.length > 0, "ต้องขอแบ่งหน้าด้วย offset/limit ใน query string ไม่ใช่ header Range");
+  assert.ok(seen.pages.some((p) => p[1] === 4000), "หน้าแรกต้องขอ limit = 4000 เท่ากับที่ app.js ตั้งไว้");
+  assert.ok(seen.pages.some((p) => p[0] === 4000),
+    "ต้องมีการขอ **หน้าที่สอง** (offset 4000) จริง — ถ้าไม่มี แปลว่าชุดข้อมูลทดสอบเล็กเกินกว่าจะเดินเส้นทางแบ่งหน้า และบั๊กแบบ 24 พ.ย. จะหลุดอีก");
   ok("เส้นทางเต็ม: ล็อกอิน -> init -> bootDashboard -> runMomentumCalculate -> ตาราง");
 
   const json = JSON.parse(out.slice(out.indexOf("\n{") + 1));
@@ -227,11 +274,11 @@ async function main() {
 
   // ---- สมาชิกถูกตัวและ benchmark ไม่ถูกวาด ----
   assert.strictEqual(byKey["month/us_sector"].members, 12, "us_sector ต้องได้ 12 กองจาก category (รวม S12 ที่ประวัติสั้น)");
-  assert.strictEqual(byKey["month/thematic"].members, 4, "thematic ต้องได้ 4 กองจาก category (รวม T4 ที่ประวัติสั้น)");
+  assert.strictEqual(byKey["month/thematic"].members, THEMATIC_N + 1, "thematic ต้องได้ " + (THEMATIC_N + 1) + " กองจาก category (รวม TNEW ที่ประวัติสั้น)");
   assert.strictEqual(byKey["month/us_sector"].plotted, 11, "S12 มีราคา 3 งวด จึงไม่มีจุด RRG");
-  assert.strictEqual(byKey["month/thematic"].plotted, 3, "T4 มีราคา 3 งวด จึงไม่มีจุด RRG");
+  assert.strictEqual(byKey["month/thematic"].plotted, THEMATIC_N, "TNEW มีราคา 3 งวด จึงไม่มีจุด RRG");
   assert.ok(byKey["month/us_sector"].edgeTickers.every((t) => t !== "SPY"), "benchmark ต้องไม่อยู่ในกองที่ถูกวาด");
-  ok("resolve universe ด้วยโค้ดหน้าเว็บ: us_sector 12 (วาดได้ 11) · thematic 4 (วาดได้ 3) · benchmark ไม่ถูกวาด");
+  ok("resolve universe ด้วยโค้ดหน้าเว็บ: us_sector 12 (วาดได้ 11) · thematic " + (THEMATIC_N + 1) + " (วาดได้ " + THEMATIC_N + ") · benchmark ไม่ถูกวาด");
 
   // ---- ตัวหารของสัดส่วนต้องเป็น "กองที่วาดได้" ไม่ใช่ "กองในรายชื่อ" ----
   json.rows.forEach((r) => {
@@ -252,9 +299,9 @@ async function main() {
   // จับค่าจาก app.js md5 3647dd95ea63b32cc61c429f99d20788 (23 พ.ย. 2026)
   const GOLDEN = {
     "month/us_sector": { currentEdge: 4, currentCore: 7, historyPoints: 264, historyEdge: 99, nSteps: 253, rsEdge: 0.3693633606312403, momEdge: 0.36724392520457627 },
-    "month/thematic": { currentEdge: 0, currentCore: 3, historyPoints: 72, historyEdge: 17, nSteps: 69, rsEdge: 0.2619293670813647, momEdge: 0.1996200061517186 },
-    "week/us_sector": { currentEdge: 3, currentCore: 8, historyPoints: 1133, historyEdge: 85, nSteps: 1122, rsEdge: 0.21799860140089322, momEdge: 0.18502078271572486 },
-    "week/thematic": { currentEdge: 0, currentCore: 3, historyPoints: 309, historyEdge: 56, nSteps: 306, rsEdge: 0.17555798617466678, momEdge: 0.13755428100401446 }
+    "month/thematic": { currentEdge: 11, currentCore: 19, historyPoints: 720, historyEdge: 246, nSteps: 690, rsEdge: 0.31752218818570555, momEdge: 0.3269277947615308 },
+    "week/us_sector": { currentEdge: 3, currentCore: 8, historyPoints: 1133, historyEdge: 85, nSteps: 1122, rsEdge: 0.21799529359890357, momEdge: 0.1850263073184948 },
+    "week/thematic": { currentEdge: 2, currentCore: 28, historyPoints: 3090, historyEdge: 337, nSteps: 3060, rsEdge: 0.18417267338269028, momEdge: 0.1890526404081072 }
   };
   // QD_CAPTURE=1 พิมพ์ค่าที่วัดได้ให้เอาไปแปะเป็น GOLDEN ชุดใหม่ ตอนที่
   // "ตั้งใจ" เปลี่ยนข้อมูลสังเคราะห์ด้านบน — มันพิมพ์เพิ่ม ไม่ได้ข้ามการตรวจ
@@ -282,13 +329,13 @@ async function main() {
   // ---- ตารางและคำตัดสินถูกพิมพ์ออกมา ----
   assert.ok(/สัดส่วน Edge แยก Universe/.test(out), "ต้องพิมพ์หัวตาราง");
   assert.ok(/เกณฑ์ยอมรับของมติ 40/.test(out), "ต้องเทียบกับเกณฑ์ของมติ 40");
-  // thematic สองกรอบเวลา Edge = 0 ทั้งคู่ (ต่ำกว่าขอบ 2%) จึงต้องได้ 2 ธง
-  // นับตรง ๆ ไม่ใช่ \d+ เพราะ \d+ ผ่านได้แม้ตัวนับธงจะไม่ทำงานเลย
+  // นับธงที่ "ควรได้" จากข้อมูลเอง แล้วเทียบกับเลขที่เครื่องมือพิมพ์ —
+  // ไม่ใช้ regex \\d+ เพราะมันผ่านได้แม้ตัวนับธงไม่ทำงานเลย (mutant E9 เคยหลุดเพราะเหตุนี้)
+  // ส่วนเคส "ธง > 0" อยู่ในรอบ universe ว่างด้านล่าง ซึ่งต้องได้ 1 จาก 1
   const expectedFlags = json.rows.filter((r) => r.currentEdgePct == null || r.currentEdgePct < 2 || r.currentEdgePct > 40).length;
-  assert.strictEqual(expectedFlags, 2, "ข้อมูลชุดนี้ต้องมี 2 ชุดที่เข้าเงื่อนไขธงเตือน");
-  assert.ok(out.includes("ธงเตือนทั้งหมด: 2 จาก 4 ชุด"),
-    "ต้องรายงานธงเตือน 2 จาก 4 — ได้: " + (/ธงเตือนทั้งหมด:.*/.exec(out) || ["(ไม่พบบรรทัด)"])[0]);
-  ok("พิมพ์ตาราง เกณฑ์ และนับธงเตือนได้ตรง (2 จาก 4)");
+  assert.ok(out.includes("ธงเตือนทั้งหมด: " + expectedFlags + " จาก 4 ชุด"),
+    "ต้องรายงานธงเตือน " + expectedFlags + " จาก 4 — ได้: " + (/ธงเตือนทั้งหมด:.*/.exec(out) || ["(ไม่พบบรรทัด)"])[0]);
+  ok("พิมพ์ตาราง เกณฑ์ และนับธงเตือนได้ตรง (" + expectedFlags + " จาก 4)");
 
   // ---- universe ว่างต้องไม่เงียบ ----
   const out2 = must(await run(["--timeframe=month", "--universe=asset_class"]), "รอบ universe ว่าง");
@@ -305,6 +352,19 @@ async function main() {
   assert.strictEqual(noCred.code, 2, "ไม่มี credential ต้องออกด้วยรหัส 2");
   assert.ok(/QD_EMAIL/.test(noCred.err), "ต้องบอกว่าต้องตั้ง environment variable อะไร");
   ok("ไม่มี QD_EMAIL/QD_PASSWORD ต้องหยุดด้วยรหัส 2 และบอกวิธี");
+
+  // ---- เซิร์ฟเวอร์ไม่สนใจการแบ่งหน้า ต้องดังทันที ไม่ใช่ค้าง ----
+  // นี่คือสภาพจริงของบั๊ก 24 พ.ย.: ขอ 4,000 แถวแล้วได้กลับมาทั้งชุด ลูปใน app.js
+  // จึงไม่มีวันจบ · ด่านกันวนไม่รู้จบใน edge-share.js ต้องเปลี่ยนมันเป็น error ที่อ่านได้
+  ignorePaging = true;
+  // ต้องเลือกชุดที่ทะลุ 4,000 แถวจริง ไม่งั้นลูปจบที่หน้าแรกและด่านไม่มีโอกาสทำงาน
+  // (month/thematic = 31 x 69 = 2,139 แถว ยังไม่ถึง · week/thematic = 31 x 286 ถึงแน่)
+  const stuck = await run(["--timeframe=week", "--universe=thematic"]);
+  ignorePaging = false;
+  assert.notStrictEqual(stuck.code, 0, "ชุดที่คำนวณไม่ผ่านต้องทำให้ออกด้วยรหัสไม่เป็นศูนย์");
+  assert.ok(/การแบ่งหน้าไม่ถูกนำไปใช้/.test(stuck.out + stuck.err),
+    "ต้องบอกตรง ๆ ว่าการแบ่งหน้าไม่ถูกนำไปใช้ — ได้: " + (stuck.out + stuck.err).slice(-300));
+  ok("เซิร์ฟเวอร์ที่ไม่สนใจ offset/limit ทำให้เครื่องมือดังทันที ไม่ค้าง");
 
   // ---- รหัสผ่านผิด ต้องดังไม่ใช่เดินต่อด้วย anon ----
   const badCred = await run([], { QD_PASSWORD: "ผิด" });
