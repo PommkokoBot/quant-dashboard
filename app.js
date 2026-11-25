@@ -6,8 +6,8 @@ window.QD = (function () {
   // ---------------------------------------------------------------------
   // Version is shown in the header and written into every Excel export, so a
   // report can always be traced back to the build that produced it.
-  const APP_VERSION = "1.0.3";
-  const APP_BUILD_DATE = "2026-11-17";
+  const APP_VERSION = "1.1.0";
+  const APP_BUILD_DATE = "2026-11-24";
 
   const SUPABASE_URL = "https://nsbreucmgfmphmfewnbw.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_7KHllF7ZjELjitvKTo0-ag_3GWgKtZp";
@@ -1298,6 +1298,15 @@ window.QD = (function () {
   // beside the number either way (มติ 37).
   const ZONE_BASE_RATE_MIN_N = 30;
 
+  // How many typical per-period steps a point may sit from the nearest axis
+  // and still count as Edge (มติ 32). Two, because one step is the walk the
+  // point takes anyway and would label half the board, while three reaches
+  // past the spread the axis actually covers. Named rather than written as a
+  // bare 2 beside the multiplication: this is a calibrated threshold, and
+  // มติ 33 keeps every calibrated threshold in a name of its own so that
+  // changing it is one obvious edit rather than a hunt through arithmetic.
+  const RRG_EDGE_STEP_MULTIPLIER = 2;
+
   // The RRG math treats period_end as an opaque, sortable label and never
   // parses it -- the test suite relies on that, using "P0", "P1", ... . Only
   // the calendar strip needs real months, so it asks here and gets null when
@@ -1806,7 +1815,12 @@ window.QD = (function () {
     });
     if (!dx.length) return emptyStepScale();
     const rsStep = medianOf(dx), momStep = medianOf(dy);
-    return { rsStep, momStep, rsEdge: 2 * rsStep, momEdge: 2 * momStep, nSteps: dx.length };
+    return {
+      rsStep, momStep,
+      rsEdge: RRG_EDGE_STEP_MULTIPLIER * rsStep,
+      momEdge: RRG_EDGE_STEP_MULTIPLIER * momStep,
+      nSteps: dx.length
+    };
   }
 
   // Distance to the NEAREST axis, each axis measured with its own yardstick,

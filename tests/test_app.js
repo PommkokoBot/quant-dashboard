@@ -1272,7 +1272,7 @@ async function main() {
   efaTableRow.dispatchEvent(new window.Event("click", { bubbles: true }));
   await flush(4);
   assert.strictEqual(periodVolumeCallLog.length, volFetchesAfterDrill, "re-clicking the same instrument uses the cache");
-  console.log("[ok] drill-down loads on click for ONE instrument and caches it (no upfront全-universe history pull)");
+  console.log("[ok] drill-down loads on click for ONE instrument and caches it (no upfront full-universe history pull)");
 
   // ---- drill-down bands are multiplicative (log-space), never negative ----
   const drillPts = QD.state.momentum.drilldownPoints;
