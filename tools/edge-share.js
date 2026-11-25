@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * วัดสัดส่วน Core/Edge แยก Universe × Timeframe จากข้อมูลจริง — คำสั่งตรวจของมติ 40
+ * เกณฑ์ธงเตือนเป็นของมติ 46 อยู่ในฟังก์ชันล้วน judgeRow() ซึ่งเทสต์ยิงตรงได้
  *
  * ทำไมไฟล์นี้ไม่ใช่ไฟล์ .sql
  * -------------------------
@@ -26,6 +27,9 @@
  * -------------------------
  *   · ไม่พิสูจน์ว่าเกณฑ์ Edge ถูก — พิสูจน์แค่ว่ามันให้สัดส่วนเท่าไรในแต่ละ
  *     Universe ซึ่งเป็นข้อมูลให้คนตัดสิน ไม่ใช่คำตัดสิน
+ *   · ธงเตือนของมติ 46 ไม่ได้บอกว่าสัดส่วนดีหรือไม่ดี มันถามคำถามเดียวคือ
+ *     "ป้าย Core/Edge ยังแยกแยะอะไรได้อยู่ไหม" — ดังเมื่อแปะเกือบทุกกอง
+ *     หรือไม่เคยแปะเลย ซึ่งทั้งสองทางคือป้ายที่เลิกมีประโยชน์
  *   · ไม่ใช่ชุดเทสต์ ไม่เข้า `npm test` และ CI รันไม่ได้ (ต้องมีเน็ตและต้อง
  *     ล็อกอิน) — ชุดเทสต์ของ engine คือ tests/test_rotation.js
  *
@@ -45,6 +49,9 @@
  *   --json         พิมพ์ผลเป็น JSON ต่อท้ายตาราง (เอาไปเทียบรอบหน้าได้)
  *   --universe=x   วัดเฉพาะ universe นั้น (คั่นด้วย , ได้)
  *   --timeframe=x  วัดเฉพาะกรอบเวลานั้น (คั่นด้วย , ได้)
+ *
+ * รหัสออก: 0 = วัดครบทุกชุด · 1 = มีชุดที่คำนวณไม่ผ่าน (ตัวเลขของชุดนั้นใช้ไม่ได้)
+ *          2 = ไม่ได้ตั้ง QD_EMAIL/QD_PASSWORD
  *
  * QD_REST_BASE / QD_REST_KEY ใช้ชี้ไปเซิร์ฟเวอร์อื่นได้ มีไว้ให้
  * tests/harness_edge_share.js ทดสอบตัวไฟล์นี้โดยไม่ต้องแตะฐานข้อมูลจริง
@@ -232,6 +239,43 @@ function countEdge(rotationData) {
   return out;
 }
 
+// ===== เกณฑ์ธงเตือนของมติ 46 =====
+//
+// 🔴 ธงนี้ตอบคำถามเดียว: **ป้าย Core/Edge ยังแยกแยะอะไรได้อยู่ไหม**
+// ไม่ได้ตอบว่า "สัดส่วนวันนี้สวยไหม" ซึ่งเป็นคนละคำถามและไม่มีใครต้องการคำตอบ
+//
+// ป้ายเลิกมีความหมายได้สองทาง และมีแค่สองทางนี้:
+//   · แปะเกือบทุกกอง  → เปิดหน้าเว็บมาเห็น Edge เต็มไปหมด แยกไม่ออกว่าตัวไหนน่าจับตา
+//   · ไม่เคยแปะเลย    → คอลัมน์ว่างถาวร เป็นฟีเจอร์ตายที่กินที่บนจอ
+//
+// ⚠️ ฉบับแรก (23 พ.ย.) ตั้งขอบบนไว้ที่ 40% โดยอ้างว่ามาจากตัวอย่างในมติ 40 ที่เขียนว่า
+// "Thematic ได้ 40 จาก 54" — **แต่ 40 จาก 54 คือ 74% ไม่ใช่ 40%** คือหยิบจำนวนกอง
+// มาใส่เป็นเปอร์เซ็นต์ · ขอบจึงไปตกกลางฐานปกติของรายเดือน (วัด 24 พ.ย. 2026: 32.5-37.7%
+// ทุก universe) แล้วดังใส่พฤติกรรมปกติ ซึ่งชนกติกา §7.5 "ด่านที่ดังทุกวันคือด่านที่เลิกถูกอ่าน"
+//
+// และตัดสินจาก **ค่าตลอดหน้าต่าง ZONE_STRIP_MONTHS เดือน ไม่ใช่ค่าวันเดียว** —
+// ค่าวันเดียวแกว่งแรงเกินจะเป็นสัญญาณ (asset_class วัดวันนั้นได้ 0% ขณะที่ค่าตลอด
+// หน้าต่างของมันคือ 5.1%)
+const LABEL_USELESS_HIGH = 70;   // ≥ นี้ = แปะเกือบทุกกอง
+// กลุ่มที่วาดได้น้อยกว่านี้ ห้ามตีเป็นเปอร์เซ็นต์และไม่ขึ้นธง (มติ 46): 5 กองมีค่าได้แค่
+// 0/20/40/60/80/100% ซึ่งไม่มีค่าไหนตกในช่วงที่เคย calibrate ไว้เลย (9.1-18.2%)
+// การพิมพ์ % ของกลุ่มขนาดนี้จึงหลอกตาคนอ่านว่าตัวเลขละเอียดกว่าที่เป็น
+const SMALL_UNIVERSE_N = 10;
+
+// ฟังก์ชันล้วน — รับแถวผล คืนคำตัดสิน ไม่แตะ I/O ไม่แตะเวลา
+// (มติ 44: ด่านตรวจต้องเป็นฟังก์ชันล้วนที่เทสต์ยิงตรงได้ ไม่ใช่ตรรกะฝังในลูปพิมพ์)
+function judgeRow(r) {
+  const small = r.plotted > 0 && r.plotted < SMALL_UNIVERSE_N;
+  if (r.error) return { small, flagged: true, reason: "error", text: "คำนวณไม่ผ่าน" };
+  if (r.plotted === 0) return { small, flagged: true, reason: "no_points", text: "ไม่มีจุดให้นับ" };
+  if (small) return { small, flagged: false, reason: "small_universe", text: "กลุ่มเล็ก — รายงานเป็นจำนวน ไม่ตัดสินด้วยสัดส่วน" };
+  const w = r.historyEdgePct;
+  if (w == null) return { small, flagged: false, reason: "no_history", text: "ยังไม่มีประวัติพอจะตัดสิน" };
+  if (w >= LABEL_USELESS_HIGH) return { small, flagged: true, reason: "label_everywhere", text: "⚠ ป้ายแปะเกือบทุกกอง — ให้กลับมาคิดเรื่องเกณฑ์" };
+  if (w === 0) return { small, flagged: true, reason: "label_never", text: "⚠ ป้ายไม่เคยขึ้นเลยในหน้าต่างนี้ — ให้กลับมาคิดเรื่องเกณฑ์" };
+  return { small, flagged: false, reason: "ok", text: "ป้ายยังแยกแยะได้" };
+}
+
 const pct = (a, b) => (b ? (100 * a / b) : null);
 const fmtPct = (v) => (v == null ? "—" : v.toFixed(1) + "%");
 const fmtNum = (v, d) => (v == null ? "—" : Number(v).toFixed(d == null ? 2 : d));
@@ -358,6 +402,13 @@ async function main() {
     s = String(s);
     return right ? s.padStart(n) : s.padEnd(n);
   };
+  const isSmall = (r) => judgeRow(r).small;
+  // ช่องสัดส่วน: กลุ่มเล็กแสดงเป็นจำนวน n/N ไม่ใช่ %
+  const cellCurrent = (r) => (isSmall(r) ? r.currentEdge + "/" + r.plotted : fmtPct(r.currentEdgePct));
+  const cellWindow = (r) => (isSmall(r)
+    ? (r.historyPoints ? r.historyEdge + "/" + r.historyPoints : "-")
+    : fmtPct(r.historyEdgePct));
+
   console.log("\n" + "=".repeat(118));
   console.log("สัดส่วน Edge แยก Universe × Timeframe — เกณฑ์ Edge = 2 x ค่ากลางการขยับต่องวด (ต่อแกน) ในหน้าต่าง " + QD.ZONE_STRIP_MONTHS + " เดือน");
   console.log("=".repeat(118));
@@ -370,32 +421,28 @@ async function main() {
   rows.forEach((r) => {
     console.log([
       pad(r.timeframe, 10), pad(r.universe, 14), pad(r.members, 7, true), pad(r.plotted, 7, true),
-      pad(r.currentEdge, 6, true), pad(r.currentCore, 6, true), pad(fmtPct(r.currentEdgePct), 8, true),
-      pad(fmtPct(r.historyEdgePct), 16, true), pad(fmtNum(r.rsEdge), 9, true), pad(fmtNum(r.momEdge), 9, true),
+      pad(r.currentEdge, 6, true), pad(r.currentCore, 6, true), pad(cellCurrent(r), 8, true),
+      pad(cellWindow(r), 16, true), pad(fmtNum(r.rsEdge), 9, true), pad(fmtNum(r.momEdge), 9, true),
       pad(r.nSteps, 8, true)
     ].join(" "));
   });
   console.log("-".repeat(118));
 
-  // ----- เทียบเกณฑ์ยอมรับของมติ 40 -----
-  // เกณฑ์ที่เคาะไว้วัดจาก us_sector (11 กอง) ได้ Edge 1-2 กอง = 9.1% - 18.2%
-  // Universe อื่นมีสมาชิกไม่เท่ากัน สิ่งที่เทียบกันได้จึงเป็นสัดส่วน ไม่ใช่จำนวนกอง
-  // ขอบ 40% เป็นตัวเลขที่มติ 40 เขียนไว้เองเป็นตัวอย่างของ "สัญญาณให้กลับมาคิด"
-  // (Thematic ได้ 40 จาก 54) — ไม่ใช่ค่าที่คำนวณมาจากอะไร
-  const BAND_LOW = 100 / 11, BAND_HIGH = 200 / 11, RETHINK_HIGH = 40, RETHINK_LOW = 2;
-  console.log("\nเกณฑ์ยอมรับของมติ 40: us_sector ได้ Edge 1-2 จาก 11 = " + fmtPct(BAND_LOW) + " - " + fmtPct(BAND_HIGH));
-  console.log("ธงเตือน: สัดส่วนปัจจุบันเกิน " + RETHINK_HIGH + "% หรือต่ำกว่า " + RETHINK_LOW + "% = สัญญาณให้กลับมาคิดเรื่องเกณฑ์\n");
+  // ----- เทียบเกณฑ์ของมติ 46 (ตรรกะอยู่ใน judgeRow ด้านบน) -----
+  console.log("\nเกณฑ์มติ 46 — ธงดังเมื่อป้าย Core/Edge เลิกแยกแยะ:");
+  console.log("  · สัดส่วนตลอด " + QD.ZONE_STRIP_MONTHS + " เดือน ≥ " + LABEL_USELESS_HIGH + "%  (แปะเกือบทุกกอง)");
+  console.log("  · สัดส่วนตลอด " + QD.ZONE_STRIP_MONTHS + " เดือน = 0   (ไม่เคยแปะเลย)");
+  console.log("  · กลุ่มที่วาดได้ < " + SMALL_UNIVERSE_N + " กอง รายงานเป็นจำนวน ไม่ตีเป็นเปอร์เซ็นต์และไม่ขึ้นธง");
+  console.log("  (อ้างอิง: us_sector ที่ใช้ calibrate ได้ Edge 1-2 จาก 11 ณ วันที่เคาะ)\n");
+
   let flags = 0;
   rows.forEach((r) => {
-    const v = r.currentEdgePct;
-    let verdict;
-    if (r.error) { verdict = "คำนวณไม่ผ่าน"; flags++; }
-    else if (v == null) { verdict = "ไม่มีจุดให้นับ"; flags++; }
-    else if (v > RETHINK_HIGH || v < RETHINK_LOW) { verdict = "⚠ นอกช่วง — ให้กลับมาคิด"; flags++; }
-    else if (v >= BAND_LOW && v <= BAND_HIGH) verdict = "ตรงช่วงที่เคาะไว้";
-    else verdict = "ต่างจากช่วงที่เคาะไว้แต่ยังไม่ถึงธงเตือน";
-    console.log("  " + pad(r.timeframe + " / " + r.universe, 26) + " " + pad(fmtPct(v), 8, true) + "  " + verdict +
-      (r.edgeTickers.length ? "   [" + r.edgeTickers.join(" ") + "]" : ""));
+    const j = judgeRow(r);
+    r.verdict = j.reason;          // ลง JSON ด้วย เพื่อให้รอบหน้าเทียบด้วยเครื่องได้
+    r.flagged = j.flagged;
+    if (j.flagged) flags++;
+    console.log("  " + pad(r.timeframe + " / " + r.universe, 26) + " " + pad(cellWindow(r), 12, true) +
+      "  " + j.text + (r.edgeTickers.length ? "   [" + r.edgeTickers.join(" ") + "]" : ""));
   });
   console.log("\nธงเตือนทั้งหมด: " + flags + " จาก " + rows.length + " ชุด");
 
@@ -426,4 +473,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { countEdge, makeRestClient };
+module.exports = { countEdge, makeRestClient, judgeRow, LABEL_USELESS_HIGH, SMALL_UNIVERSE_N };

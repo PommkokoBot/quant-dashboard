@@ -159,9 +159,15 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/rest/v1/rpc/universe_tickers") {
     const b = JSON.parse(await body(req) || "{}");
-    // broad_market = SPY เท่านั้น · asset_class = ไม่มีสมาชิก (ทดสอบเคสว่าง)
+    // broad_market = SPY เท่านั้น → วาดได้ 0 กอง (ทดสอบเคสว่าง)
     if (b.p_universe === "broad_market") return send([{ ticker: "SPY" }]);
-    if (b.p_universe === "asset_class") return send([{ ticker: "SPY" }]);
+    // asset_class = SPY + 4 กอง → วาดได้ 4 กอง ซึ่งต่ำกว่า SMALL_UNIVERSE_N (10)
+    // ใช้ทดสอบกฎ "กลุ่มเล็กรายงานเป็นจำนวน ไม่ตีเป็น % และไม่ขึ้นธง" ของมติ 46 ·
+    // ยืมกอง S1-S4 มาใช้ซ้ำ ไม่แตะ INSTRUMENTS และไม่แตะราคา จึงไม่ขยับค่า GOLDEN ของชุดอื่น
+    // (หน้าเว็บมี universe ให้เลือกแค่ 4 ชื่อ จึงต้องใช้ชื่อจริง ไม่ตั้งชื่อใหม่)
+    if (b.p_universe === "asset_class") {
+      return send([{ ticker: "SPY" }, { ticker: "S1" }, { ticker: "S2" }, { ticker: "S3" }, { ticker: "S4" }]);
+    }
     return send([]);
   }
 
@@ -328,24 +334,99 @@ async function main() {
 
   // ---- ตารางและคำตัดสินถูกพิมพ์ออกมา ----
   assert.ok(/สัดส่วน Edge แยก Universe/.test(out), "ต้องพิมพ์หัวตาราง");
-  assert.ok(/เกณฑ์ยอมรับของมติ 40/.test(out), "ต้องเทียบกับเกณฑ์ของมติ 40");
-  // นับธงที่ "ควรได้" จากข้อมูลเอง แล้วเทียบกับเลขที่เครื่องมือพิมพ์ —
-  // ไม่ใช้ regex \\d+ เพราะมันผ่านได้แม้ตัวนับธงไม่ทำงานเลย (mutant E9 เคยหลุดเพราะเหตุนี้)
-  // ส่วนเคส "ธง > 0" อยู่ในรอบ universe ว่างด้านล่าง ซึ่งต้องได้ 1 จาก 1
-  const expectedFlags = json.rows.filter((r) => r.currentEdgePct == null || r.currentEdgePct < 2 || r.currentEdgePct > 40).length;
+  assert.ok(/เกณฑ์มติ 46/.test(out), "ต้องเทียบกับเกณฑ์ของมติ 46");
+  assert.ok(/ป้าย Core\/Edge เลิกแยกแยะ/.test(out), "ต้องบอกว่าธงนี้เฝ้าอะไร ไม่ใช่พิมพ์เลขเปล่า");
+  // นับธงที่ "ควรได้" จากข้อมูลดิบเอง — คำนวณซ้ำด้วยมือที่นี่ ไม่หยิบ r.flagged
+  // ที่เครื่องมือคำนวณมา เพราะนั่นคือการให้จำเลยเป็นพยานให้ตัวเอง ·
+  // และไม่ใช้ regex \\d+ เพราะมันผ่านได้แม้ตัวนับธงไม่ทำงานเลย (mutant E9 เคยหลุดเพราะเหตุนี้)
+  const shouldFlag = (r) => {
+    if (r.error) return true;
+    if (r.plotted === 0) return true;
+    if (r.plotted < 10) return false;                       // กลุ่มเล็ก ไม่ตัดสิน
+    if (r.historyEdgePct == null) return false;
+    return r.historyEdgePct >= 70 || r.historyEdgePct === 0; // ป้ายแปะหมด หรือไม่เคยแปะ
+  };
+  json.rows.forEach((r) => {
+    assert.strictEqual(r.flagged, shouldFlag(r),
+      r.timeframe + "/" + r.universe + ": ธงของเครื่องมือ (" + r.flagged +
+      ") ไม่ตรงกับที่คำนวณจากข้อมูลดิบ (" + shouldFlag(r) + ") · หน้าต่าง = " + r.historyEdgePct + "%");
+    assert.ok(typeof r.verdict === "string" && r.verdict, r.timeframe + "/" + r.universe + ": ต้องมีเหตุผลคำตัดสินใน JSON");
+  });
+  const expectedFlags = json.rows.filter(shouldFlag).length;
   assert.ok(out.includes("ธงเตือนทั้งหมด: " + expectedFlags + " จาก 4 ชุด"),
     "ต้องรายงานธงเตือน " + expectedFlags + " จาก 4 — ได้: " + (/ธงเตือนทั้งหมด:.*/.exec(out) || ["(ไม่พบบรรทัด)"])[0]);
-  ok("พิมพ์ตาราง เกณฑ์ และนับธงเตือนได้ตรง (" + expectedFlags + " จาก 4)");
+  ok("พิมพ์ตาราง เกณฑ์มติ 46 และนับธงเตือนได้ตรง (" + expectedFlags + " จาก 4) · JSON มีเหตุผลคำตัดสินทุกแถว");
 
   // ---- universe ว่างต้องไม่เงียบ ----
-  const out2 = must(await run(["--timeframe=month", "--universe=asset_class"]), "รอบ universe ว่าง");
-  assert.ok(/สมาชิก 1 /.test(out2), "asset_class ในชุดนี้มีแต่ SPY");
+  const out2 = must(await run(["--timeframe=month", "--universe=broad_market"]), "รอบ universe ว่าง");
+  assert.ok(/สมาชิก 1 /.test(out2), "broad_market ในชุดนี้มีแต่ SPY");
   assert.ok(/วาดได้ 0/.test(out2), "SPY เป็น benchmark จึงไม่ถูกวาด เหลือ 0 กอง");
   assert.ok(/ไม่มีจุดให้นับ/.test(out2), "0 กองต้องขึ้นธงเตือน ไม่ใช่รายงาน 0% เงียบ ๆ");
   assert.ok(out2.includes("ธงเตือนทั้งหมด: 1 จาก 1 ชุด"),
     "0 กองต้องถูกนับเป็นธงเตือนจริง ไม่ใช่แค่พิมพ์คำว่าไม่มีจุดให้นับ — ได้: " +
     (/ธงเตือนทั้งหมด:.*/.exec(out2) || ["(ไม่พบบรรทัด)"])[0]);
   ok("universe ที่เหลือ 0 กองหลังตัด benchmark ขึ้นธงเตือนจริง (1 จาก 1)");
+
+  // ---- กลุ่มเล็ก (< 10 กอง) ต้องรายงานเป็นจำนวน ไม่ตีเป็น % และไม่ขึ้นธง ----
+  // มติ 46: 4 กองมีค่าได้แค่ 0/25/50/75/100% ไม่มีค่าไหนตกในช่วงที่ calibrate ไว้
+  // การพิมพ์ % จึงหลอกตา และการตัดสินด้วย % จึงดังหรือเงียบด้วยเหตุผลที่ไม่เกี่ยวกับป้าย
+  const outSmall = must(await run(["--json", "--timeframe=month", "--universe=asset_class"]), "รอบกลุ่มเล็ก");
+  const jsonSmall = JSON.parse(outSmall.slice(outSmall.indexOf("{\n")));
+  const rs = jsonSmall.rows[0];
+  assert.strictEqual(rs.members, 5, "asset_class ต้องได้ 5 กองจาก universe_tickers (รวม SPY)");
+  assert.strictEqual(rs.plotted, 4, "ตัด SPY ที่เป็น benchmark ออก เหลือ 4 กอง");
+  assert.strictEqual(rs.verdict, "small_universe",
+    "4 กองต้องถูกตัดสินเป็น small_universe — ได้: " + rs.verdict);
+  assert.strictEqual(rs.flagged, false, "กลุ่มเล็กต้องไม่ขึ้นธง แม้สัดส่วนจะสุดขอบ");
+  assert.ok(outSmall.includes("ธงเตือนทั้งหมด: 0 จาก 1 ชุด"),
+    "กลุ่มเล็กต้องได้ธง 0 — ได้: " + (/ธงเตือนทั้งหมด:.*/.exec(outSmall) || ["(ไม่พบบรรทัด)"])[0]);
+  assert.ok(/กลุ่มเล็ก — รายงานเป็นจำนวน/.test(outSmall), "ต้องบอกคนอ่านว่าทำไมไม่ตัดสิน");
+  // ช่องสัดส่วนต้องเป็น n/N ไม่ใช่ % — ดูบรรทัดตารางของแถวนี้
+  const smallLine = outSmall.split("\n").filter((l) => /^month\s+asset_class/.test(l))[0] || "";
+  assert.ok(smallLine, "ต้องมีบรรทัดตารางของ month/asset_class");
+  // ต้องมีประวัติให้ตัดสินจริง ๆ แล้วเราเลือกไม่ตัดสินเพราะกลุ่มเล็ก —
+  // ไม่ใช่ผ่านเพราะไม่มีอะไรให้ตัดสินตั้งแต่แรก (เคสนั้นคือ no_history ซึ่งคนละเรื่อง)
+  assert.ok(rs.historyPoints > 0, "กลุ่มเล็กชุดนี้ต้องมีจุดในประวัติ ไม่งั้นเทสต์ไม่ได้ทดสอบกฎกลุ่มเล็ก");
+  assert.ok(new RegExp("\\s" + rs.historyEdge + "/" + rs.historyPoints + "\\s").test(smallLine),
+    "ช่องสัดส่วนตลอดหน้าต่างของกลุ่มเล็กต้องพิมพ์เป็นจำนวน " + rs.historyEdge + "/" + rs.historyPoints +
+    " — ได้: " + smallLine.trim());
+  assert.ok(new RegExp(rs.currentEdge + "/4").test(smallLine),
+    "ช่อง %Edge ของกลุ่มเล็กต้องพิมพ์เป็นจำนวน " + rs.currentEdge + "/4 — ได้: " + smallLine.trim());
+  assert.ok(!/%/.test(smallLine), "บรรทัดตารางของกลุ่มเล็กต้องไม่มีเครื่องหมาย % เลย — ได้: " + smallLine.trim());
+  ok("กลุ่มเล็ก 4 กอง: พิมพ์เป็นจำนวน " + rs.currentEdge + "/4 และ " + rs.historyEdge + "/" + rs.historyPoints + " ในหน้าต่าง ไม่มี % และไม่ขึ้นธง (0 จาก 1)");
+
+  // ---- ยิงเกณฑ์มติ 46 ตรง ๆ ที่ฟังก์ชันล้วน ----
+  // ด่านตรวจเป็นฟังก์ชันล้วนตามมติ 44 จึงยิงที่ขอบเกณฑ์ได้ตรง ๆ โดยไม่ต้อง
+  // ปั้นข้อมูลราคาให้สัดส่วนไปตกตรงขอบพอดี (ซึ่งทำไม่ได้จริงด้วยข้อมูลสังเคราะห์)
+  // require TOOL ไม่ใช่ path ตรง ๆ — ไม่งั้น mutate_edge_share.js ดัดแปลงสำเนา
+  // แล้วกลุ่มนี้ยังยิงไฟล์ต้นฉบับที่ไม่ถูกแตะ ด่านก็เขียวทั้งที่เครื่องมือพัง
+  const { judgeRow, LABEL_USELESS_HIGH, SMALL_UNIVERSE_N } = require(TOOL);
+  assert.strictEqual(LABEL_USELESS_HIGH, 70, "ขอบ 'ป้ายแปะเกือบทุกกอง' ของมติ 46 คือ 70%");
+  assert.strictEqual(SMALL_UNIVERSE_N, 10, "ขอบกลุ่มเล็กของมติ 46 คือ 10 กอง");
+  const BOUNDS = [
+    // [แถวผล, ควรขึ้นธง, เหตุผลที่ควรได้, คำอธิบายเคส]
+    [{ plotted: 11, historyEdgePct: 35, error: "" }, false, "ok", "ฐานปกติรายเดือน 35% ต้องไม่ดัง"],
+    [{ plotted: 11, historyEdgePct: 40, error: "" }, false, "ok", "40% คือค่าที่ฉบับแรกดังผิด — ต้องเงียบแล้ว"],
+    [{ plotted: 11, historyEdgePct: 69.9, error: "" }, false, "ok", "ใต้ขอบ 70 ต้องไม่ดัง"],
+    [{ plotted: 11, historyEdgePct: 70, error: "" }, true, "label_everywhere", "ที่ขอบ 70 พอดีต้องดัง"],
+    [{ plotted: 11, historyEdgePct: 74, error: "" }, true, "label_everywhere", "74% คือ 40 จาก 54 ที่มติ 40 ยกเป็นตัวอย่าง"],
+    [{ plotted: 11, historyEdgePct: 0, error: "" }, true, "label_never", "ป้ายไม่เคยขึ้นเลยต้องดัง"],
+    [{ plotted: 11, historyEdgePct: 0.1, error: "" }, false, "ok", "ขึ้นบ้างแม้น้อยต้องไม่ดัง"],
+    [{ plotted: 10, historyEdgePct: 0, error: "" }, true, "label_never", "10 กองไม่ใช่กลุ่มเล็ก ต้องตัดสิน"],
+    [{ plotted: 9, historyEdgePct: 0, error: "" }, false, "small_universe", "9 กองเป็นกลุ่มเล็ก ไม่ตัดสิน"],
+    [{ plotted: 5, historyEdgePct: 100, error: "" }, false, "small_universe", "กลุ่มเล็กต้องไม่ดังแม้ 100%"],
+    [{ plotted: 0, historyEdgePct: null, error: "" }, true, "no_points", "ไม่มีจุดให้นับต้องดัง"],
+    [{ plotted: 11, historyEdgePct: null, error: "" }, false, "no_history", "ยังไม่มีประวัติ ไม่ตัดสิน"],
+    [{ plotted: 11, historyEdgePct: 35, error: "พัง" }, true, "error", "คำนวณไม่ผ่านต้องดังเสมอ"]
+  ];
+  BOUNDS.forEach(([row, flagged, reason, why]) => {
+    const j = judgeRow(row);
+    assert.strictEqual(j.flagged, flagged, why + " — ได้ flagged=" + j.flagged);
+    assert.strictEqual(j.reason, reason, why + " — ได้ reason=" + j.reason);
+  });
+  // เคสที่ขอบต้องมีอยู่จริงทั้งสองฝั่ง ไม่ใช่ตารางที่เป็น false ล้วน (บทเรียน E9/E3)
+  assert.ok(BOUNDS.some((b) => b[1]) && BOUNDS.some((b) => !b[1]), "ตารางขอบต้องมีทั้งเคสดังและเคสเงียบ");
+  ok("ยิงเกณฑ์มติ 46 ที่ judgeRow ตรง ๆ " + BOUNDS.length + " เคส: ขอบ 70 / ศูนย์ / กลุ่มเล็ก / error ครบ");
 
   // ---- ไม่มีรหัสผ่าน ต้องไม่เดินต่อ ----
   const noCred = await run([], { QD_EMAIL: "", QD_PASSWORD: "" });

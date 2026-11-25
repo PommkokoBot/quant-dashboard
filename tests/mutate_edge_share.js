@@ -98,8 +98,8 @@ const MUTATIONS = [
 
   { id: "E9", name: "ไม่มีจุดให้นับ ถือว่าผ่าน",
     why: "universe ที่โหลดไม่สำเร็จจะรายงาน 0% เหมือนกับ universe ที่ Edge จริง 0 กอง",
-    apply: () => swap('else if (v == null) { verdict = "ไม่มีจุดให้นับ"; flags++; }',
-                      'else if (v == null) { verdict = "ไม่มีจุดให้นับ"; }') },
+    apply: () => swap('  if (r.plotted === 0) return { small, flagged: true, reason: "no_points"',
+                      '  if (r.plotted === 0) return { small, flagged: false, reason: "no_points"') },
 
   { id: "E10", name: "ไม่มี credential ก็เดินต่อ",
     why: "จะไปล้มที่ชั้นล็อกอินด้วยข้อความที่อ่านไม่รู้เรื่อง แทนที่จะบอกว่าต้องตั้งตัวแปรอะไร",
@@ -122,7 +122,35 @@ const MUTATIONS = [
   { id: "E12", name: "นับ Core เป็น Edge ในสถิติทั้งหน้าต่าง",
     why: "สองสัดส่วนในตารางจะขัดกันเอง และคนอ่านจะเชื่อตัวที่ผิด",
     apply: () => swap('      if (p.edge === "Edge") out.historyEdge++;',
-                      '      if (p.edge === "Core") out.historyEdge++;') }
+                      '      if (p.edge === "Core") out.historyEdge++;') },
+
+  // ----- เกณฑ์ธงเตือนของมติ 46 (เพิ่ม 24 พ.ย.) -----
+  // ขอบพวกนี้คือทั้งหมดที่ทำให้ธงมีความหมาย ถ้าขยับได้โดยด่านไม่ดัง ธงก็กลายเป็น
+  // ของประดับ — ซึ่งเป็นสิ่งที่เพิ่งเกิดกับขอบ 40% ฉบับแรกจริง ๆ
+  { id: "E15", name: "ขยับขอบ 'ป้ายแปะเกือบทุกกอง' จาก 70% เป็น 90%",
+    why: "ค่าเกณฑ์ที่ขยับได้เงียบ ๆ คือค่าที่รอบหน้าจะถูกขยับโดยไม่มีใครรู้",
+    apply: () => swap("const LABEL_USELESS_HIGH = 70;", "const LABEL_USELESS_HIGH = 90;") },
+
+  { id: "E16", name: "เปลี่ยน >= เป็น > ที่ขอบ 70%",
+    why: "ความต่างหนึ่งขอบ: ที่ 70.0 พอดีต้องดัง ไม่ใช่เงียบ",
+    apply: () => swap("  if (w >= LABEL_USELESS_HIGH) return", "  if (w > LABEL_USELESS_HIGH) return") },
+
+  { id: "E17", name: "ถอดเคส 'ป้ายไม่เคยขึ้นเลย' ออก",
+    why: "ฟีเจอร์ตายคือครึ่งหนึ่งของคำถามที่ธงนี้ถาม ถอดแล้วเหลือเฝ้าแค่ฝั่งเดียว",
+    apply: () => swap("  if (w === 0) return", "  if (false) return") },
+
+  { id: "E18", name: "ตัดสินกลุ่มเล็กด้วยสัดส่วนเหมือนกลุ่มใหญ่",
+    why: "4-5 กองมีค่าได้แค่ 0/20/25/.../100% ธงจะดังหรือเงียบด้วยขนาดกลุ่ม ไม่ใช่ด้วยพฤติกรรมป้าย",
+    apply: () => swap('  if (small) return { small, flagged: false, reason: "small_universe"',
+                      '  if (false) return { small, flagged: false, reason: "small_universe"') },
+
+  { id: "E19", name: "ตัดสินด้วยสัดส่วนวันเดียวแทนค่าตลอดหน้าต่าง",
+    why: "ค่าวันเดียวแกว่งแรงจนดังเองได้ (asset_class วัดได้ 0% วันนั้น แต่ตลอดหน้าต่าง 5.1%) — มติ 46 เลิกใช้แล้ว",
+    apply: () => swap("  const w = r.historyEdgePct;", "  const w = r.currentEdgePct;") },
+
+  { id: "E20", name: "พิมพ์ % ให้กลุ่มเล็กแทนจำนวน",
+    why: "ตัวเลข 25.0% ของกลุ่ม 4 กองอ่านเหมือนละเอียดกว่าที่เป็น ซึ่งคือเหตุที่มติ 46 ห้ามพิมพ์",
+    apply: () => swap("  const isSmall = (r) => judgeRow(r).small;", "  const isSmall = () => false;") }
 ];
 
 console.log("ตรวจว่า " + SUITE + " แดงได้ — ดัดแปลง tools/edge-share.js " + MUTATIONS.length + " แบบ\n");
